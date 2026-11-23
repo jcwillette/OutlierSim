@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GRAVITY, launchPitch } from './ballistics.ts';
+import { GRAVITY, solveShot, type ShotSolution } from './ballistics.ts';
 import { expandDefinition, type ExpandedGame, type XEndgame, type XStation, type XTarget } from './expand.ts';
 import { ScoreLedger } from './ledger.ts';
 import {
@@ -139,6 +139,7 @@ export class Piece {
   lastTouchAlliance: Alliance | null = null;
   releaseAt = 0;
   releaseExit = 0;
+  grounded = true;
   constructor(
     readonly id: number,
     readonly type: PieceType,
@@ -356,7 +357,7 @@ export class Match {
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(pos.x, pos.y, pos.z)
-        .setLinearDamping(0.15)
+        .setLinearDamping(0.6)
         .setAngularDamping(0.6)
         .setCcdEnabled(true),
     );
@@ -502,6 +503,7 @@ export class Match {
 
     this.world.step();
 
+    this.updatePieceDamping();
     this.trackTouches();
     this.checkApertures();
     this.processRecycle();
@@ -786,12 +788,17 @@ export class Match {
       const aim = t.aimPoint ?? t.aperture.center;
       const d = Math.hypot(aim.x - r.x, aim.y - r.y);
       if (d > sh.maxRange) continue;
-      const arc = t.arc ?? (t.aperture.entry === 'down' ? 'high' : 'low');
-      if (launchPitch(sh.exitSpeed, d, aim.z - sh.height, arc) === null) continue;
+      if (this.shotPitch(r, t, d, aim.z - sh.height) === null) continue;
       out.push({ target: t, pieceType, distance: d });
     }
     const per = this.scoringPeriod;
     return out.sort((a, b) => b.target.points[per] - a.target.points[per] || a.distance - b.distance);
+  }
+
+  private shotPitch(r: Robot, t: XTarget, d: number, h: number): ShotSolution | null {
+    const sh = r.archetype.shooter!;
+    const down = t.aperture?.entry === 'down';
+    return solveShot(sh.exitSpeed, d, h, t.arc ?? (down ? 'high' : 'low'), sh.pitchRangeDeg, down);
   }
 
   private tryShoot(r: Robot): void {
@@ -811,20 +818,19 @@ export class Match {
     const piece = this.pieces.find(
       (p) => p.status === 'held' && p.heldBy === r.id && p.type.id === best.pieceType,
     )!;
-    const clearance = Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2 + piece.radius + 0.03;
-    const ox = r.x + Math.cos(heading) * clearance;
-    const oy = r.y + Math.sin(heading) * clearance;
-    const oz = sh.height;
+    // Launch from above the robot's own frame so the piece never spawns inside it or a field element.
+    const ox = r.x;
+    const oy = r.y;
+    const oz = Math.max(sh.height, r.archetype.frame.height + piece.radius + 0.02);
     const d = Math.hypot(aim.x - ox, aim.y - oy);
-    const arc = t.arc ?? (t.aperture!.entry === 'down' ? 'high' : 'low');
-    const pitch0 = launchPitch(sh.exitSpeed, d, aim.z - oz, arc);
-    if (pitch0 === null) return;
+    const sol = this.shotPitch(r, t, d, aim.z - oz);
+    if (sol === null) return;
     const spread = (sh.spreadDeg * Math.PI) / 180;
     const yaw = Math.atan2(aim.y - oy, aim.x - ox) + gaussian(this.random) * spread;
-    const pitch = pitch0 + gaussian(this.random) * spread;
-    let vx = sh.exitSpeed * Math.cos(pitch) * Math.cos(yaw);
-    let vy = sh.exitSpeed * Math.cos(pitch) * Math.sin(yaw);
-    const vz = sh.exitSpeed * Math.sin(pitch);
+    const pitch = sol.pitch + gaussian(this.random) * spread;
+    let vx = sol.speed * Math.cos(pitch) * Math.cos(yaw);
+    let vy = sol.speed * Math.cos(pitch) * Math.sin(yaw);
+    const vz = sol.speed * Math.sin(pitch);
     if (!sh.shootOnMove) {
       vx += r.vx;
       vy += r.vy;
@@ -859,6 +865,18 @@ export class Match {
   }
 
   // ------------------------------------------------------------------ scoring
+
+  /** No drag in flight (so shots follow the ballistic solution); rolling resistance on the ground. */
+  private updatePieceDamping(): void {
+    for (const p of this.pieces) {
+      if (p.status !== 'field') continue;
+      const grounded = p.body.translation().z < p.radius + 0.05;
+      if (grounded !== p.grounded) {
+        p.grounded = grounded;
+        p.body.setLinearDamping(grounded ? 0.6 : 0);
+      }
+    }
+  }
 
   private trackTouches(): void {
     for (const r of this.robots) {

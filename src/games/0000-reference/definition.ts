@@ -1,0 +1,349 @@
+import type { GameDefinition, Region2D } from '../../engine/sim/types.ts';
+import { rules } from './rules.ts';
+
+/**
+ * Engine reference game. It is FICTIONAL and models no real FRC season. Its only job is to exercise
+ * every engine feature (shooting, placing, both HP station modes, recycling, endgame, awards,
+ * bonus RPs, rules hooks), so engine changes can be checked against a known game.
+ *
+ * Layout (blue half; red is the 180-degree rotation):
+ *   x=0 blue wall | tower (1.4, 4.05) shoot orbs; rack on wall at y 0.3-1.5 for blocks
+ *   x~2.8 robots start | x=5.5 pillars | x~6.6 climb frame (y 6.7) | x=8.25 center line of orbs
+ *   blue human player stations at the RED end (x > 15), low y.
+ */
+
+const L = 16.5;
+const W = 8.1;
+const rect = (x0: number, y0: number, x1: number, y1: number): Region2D => ({
+  kind: 'rect',
+  min: { x: x0, y: y0 },
+  max: { x: x1, y: y1 },
+});
+const SRC = 'fictional (reference game)';
+
+export const definition: GameDefinition = {
+  id: '0000-reference',
+  year: 0,
+  name: 'Reference Game (engine test)',
+  summary:
+    'Fictional game for testing the engine. Shoot orbs into your tower and stack blocks on your wall rack. ' +
+    'Five orbs in teleop trigger Overdrive, doubling tower points for 10 s. Climb the frame in the last 20 s.',
+  timing: { autoSec: 15, transitionSec: 3, teleopSec: 135, endgameSec: 20, source: SRC },
+  field: {
+    length: L,
+    width: W,
+    wallHeight: 0.5,
+    symmetry: 'rotational',
+    carpetColor: '#3d4a3d',
+    source: SRC,
+    elements: [
+      {
+        id: 'tower',
+        name: 'Tower',
+        side: 'blue',
+        shape: { kind: 'cylinder', radius: 0.55, height: 1.9 },
+        position: { x: 1.4, y: 4.05, z: 0.95 },
+        color: 'alliance',
+        source: SRC,
+      },
+      {
+        id: 'rack',
+        name: 'Rack',
+        side: 'blue',
+        shape: { kind: 'box', size: { x: 0.4, y: 1.2, z: 1.2 } },
+        position: { x: 0.2, y: 0.9, z: 0.6 },
+        color: 'alliance',
+        source: SRC,
+      },
+      {
+        id: 'pillar-a',
+        side: 'blue',
+        shape: { kind: 'box', size: { x: 0.6, y: 0.6, z: 1.0 } },
+        position: { x: 5.5, y: 2.0, z: 0.5 },
+        color: 'neutral',
+      },
+      {
+        id: 'pillar-b',
+        side: 'blue',
+        shape: { kind: 'box', size: { x: 0.6, y: 0.6, z: 1.0 } },
+        position: { x: 5.5, y: 6.1, z: 0.5 },
+        color: 'neutral',
+      },
+      {
+        id: 'climb-frame',
+        name: 'Climb frame',
+        side: 'blue',
+        shape: { kind: 'box', size: { x: 1.4, y: 0.2, z: 1.4 } },
+        position: { x: 6.6, y: 6.75, z: 0.7 },
+        color: 'alliance',
+      },
+      {
+        id: 'ramp',
+        name: 'Center ramp',
+        side: 'neutral',
+        shape: {
+          kind: 'hull',
+          vertices: [
+            { x: -0.6, y: -0.5, z: 0 },
+            { x: 0.6, y: -0.5, z: 0 },
+            { x: -0.6, y: 0.5, z: 0 },
+            { x: 0.6, y: 0.5, z: 0 },
+            { x: 0, y: -0.5, z: 0.15 },
+            { x: 0, y: 0.5, z: 0.15 },
+          ],
+        },
+        position: { x: L / 2, y: W / 2, z: 0 },
+        color: 'neutral',
+      },
+    ],
+    zones: [
+      { id: 'start', name: 'Starting zone', side: 'blue', region: rect(0, 0, 3.3, W) },
+      {
+        id: 'base',
+        name: 'Base',
+        side: 'blue',
+        region: { kind: 'circle', center: { x: 1.4, y: 4.05 }, radius: 1.8 },
+      },
+    ],
+  },
+  pieces: [
+    {
+      id: 'orb',
+      name: 'Orb',
+      shape: { kind: 'sphere', radius: 0.12 },
+      mass: 0.25,
+      color: '#f5c518',
+      restitution: 0.5,
+      source: SRC,
+    },
+    {
+      id: 'block',
+      name: 'Block',
+      shape: { kind: 'box', size: { x: 0.3, y: 0.3, z: 0.3 } },
+      mass: 0.6,
+      color: '#8e44ad',
+      restitution: 0.1,
+      source: SRC,
+    },
+  ],
+  staging: [
+    {
+      type: 'orb',
+      side: 'neutral',
+      positions: [0.8, 1.7, 2.6, 3.5, 4.6, 5.5, 6.4, 7.3].map((y) => ({ x: L / 2, y })),
+      source: SRC,
+    },
+    {
+      type: 'orb',
+      side: 'blue',
+      positions: [
+        { x: 4.4, y: 1.0 },
+        { x: 4.4, y: 4.05 },
+        { x: 4.4, y: 7.1 },
+      ],
+      source: SRC,
+    },
+    {
+      type: 'block',
+      side: 'blue',
+      positions: [
+        { x: 7.0, y: 1.5 },
+        { x: 7.0, y: 3.0 },
+        { x: 7.0, y: 4.5 },
+      ],
+      source: SRC,
+    },
+  ],
+  preload: { orb: 1 },
+  startPoses: [
+    { x: 2.8, y: 2.0, yaw: 0 },
+    { x: 2.8, y: 4.05, yaw: 0 },
+    { x: 2.8, y: 6.1, yaw: 0 },
+  ],
+  targets: [
+    {
+      id: 'tower',
+      name: 'Tower',
+      side: 'blue',
+      accepts: ['orb'],
+      points: { auto: 4, teleop: 2 },
+      tags: ['tower'],
+      aperture: { center: { x: 1.4, y: 4.05, z: 2.05 }, size: { x: 0.9, y: 0.9, z: 0.3 }, entry: 'down' },
+      afterScore: {
+        kind: 'recycle',
+        delaySec: 2,
+        exits: [
+          { x: 7.6, y: 3.2, z: 0.4 },
+          { x: 7.6, y: 4.9, z: 0.4 },
+        ],
+        exitVelocity: { x: 1, y: 0, z: 0 },
+      },
+      source: SRC,
+    },
+    {
+      id: 'rack-low',
+      name: 'Rack (low)',
+      side: 'blue',
+      accepts: ['block'],
+      points: { auto: 3, teleop: 2 },
+      tags: ['rack', 'low'],
+      capacity: 6,
+      place: { zone: rect(0.4, 0.3, 1.6, 1.5), facePoint: { x: 0, y: 0.9 }, faceToleranceRad: 0.8 },
+      source: SRC,
+    },
+    {
+      id: 'rack-high',
+      name: 'Rack (high)',
+      side: 'blue',
+      accepts: ['block'],
+      points: { auto: 6, teleop: 5 },
+      tags: ['rack', 'high'],
+      capacity: 6,
+      place: { zone: rect(0.4, 0.3, 1.6, 1.5), facePoint: { x: 0, y: 0.9 }, faceToleranceRad: 0.8 },
+      source: SRC,
+    },
+  ],
+  stations: [
+    {
+      id: 'feeder',
+      name: 'Block feeder',
+      side: 'blue',
+      zone: rect(15.2, 0, L, 1.0),
+      pieceTypes: ['block'],
+      mode: 'direct',
+      feedIntervalSec: 1.5,
+      supply: 10,
+      source: SRC,
+    },
+    {
+      id: 'chute',
+      name: 'Orb chute',
+      side: 'blue',
+      zone: rect(15.2, 1.0, L, 2.2),
+      pieceTypes: ['orb'],
+      mode: 'drop',
+      feedIntervalSec: 2,
+      dropPoint: { x: 16.1, y: 1.6, z: 0.8 },
+      dropVelocity: { x: -1.5, y: 0, z: 0 },
+      supply: 10,
+      source: SRC,
+    },
+  ],
+  endgame: [
+    {
+      id: 'climb',
+      name: 'Climb',
+      side: 'blue',
+      zones: [rect(5.9, 5.8, 6.6, 6.6), rect(6.6, 5.8, 7.3, 6.6)],
+      maxRobotsPerZone: 1,
+      points: 12,
+      source: SRC,
+    },
+  ],
+  awards: [
+    {
+      id: 'leave',
+      name: 'Leave',
+      side: 'blue',
+      kind: 'leaveZoneInAuto',
+      zone: rect(0, 0, 3.3, W),
+      points: 3,
+      source: SRC,
+    },
+    {
+      id: 'park',
+      name: 'Park',
+      side: 'blue',
+      kind: 'inZoneAtEnd',
+      zone: { kind: 'circle', center: { x: 1.4, y: 4.05 }, radius: 1.8 },
+      points: 2,
+      source: SRC,
+    },
+  ],
+  rankingPoints: {
+    win: 3,
+    tie: 1,
+    bonuses: [
+      {
+        id: 'stack',
+        name: 'Stack RP (10 blocks on rack)',
+        rp: 1,
+        kind: 'piecesAtLeast',
+        count: 10,
+        tags: ['rack'],
+      },
+      { id: 'lift', name: 'Lift RP (24 endgame pts)', rp: 1, kind: 'endgamePointsAtLeast', points: 24 },
+    ],
+  },
+  fouls: { minor: 2, major: 6, source: SRC },
+  archetypes: [
+    {
+      id: 'allround',
+      name: 'All-rounder',
+      description: 'Shoots orbs (auto-aligns), places blocks on both rack levels, climbs.',
+      frame: { length: 0.85, width: 0.85, height: 0.4 },
+      mass: 60,
+      drive: { maxSpeed: 4.5, maxAccel: 10, maxOmega: 9 },
+      capacity: { orb: 2, block: 1 },
+      totalCapacity: 2,
+      intake: { pieceTypes: ['orb', 'block'], timeSec: 0.25 },
+      place: { low: 0.6, high: 1.2 },
+      shooter: {
+        pieceTypes: ['orb'],
+        exitSpeed: 9.5,
+        spreadDeg: 1.5,
+        reloadSec: 0.4,
+        maxRange: 6,
+        height: 0.7,
+      },
+      endgame: { climb: 4 },
+    },
+    {
+      id: 'turret',
+      name: 'Turret shooter',
+      description: 'Holds 3 orbs and shoots from anywhere in range without turning. No blocks.',
+      frame: { length: 0.8, width: 0.8, height: 0.45 },
+      mass: 58,
+      drive: { maxSpeed: 4.8, maxAccel: 11, maxOmega: 10 },
+      capacity: { orb: 3 },
+      intake: { pieceTypes: ['orb'], timeSec: 0.2 },
+      shooter: {
+        pieceTypes: ['orb'],
+        exitSpeed: 10,
+        spreadDeg: 2,
+        reloadSec: 0.25,
+        maxRange: 7,
+        height: 0.8,
+        turret: true,
+        shootOnMove: true,
+      },
+      endgame: { climb: 5 },
+    },
+    {
+      id: 'stacker',
+      name: 'Stacker',
+      description: 'Blocks only. Fast placement on both rack levels and a quick climb.',
+      frame: { length: 0.85, width: 0.75, height: 0.4 },
+      mass: 62,
+      drive: { maxSpeed: 4.2, maxAccel: 9, maxOmega: 8 },
+      capacity: { block: 1 },
+      intake: { pieceTypes: ['block'], timeSec: 0.3 },
+      place: { low: 0.5, high: 0.9 },
+      endgame: { climb: 3 },
+    },
+    {
+      id: 'defender',
+      name: 'Defender',
+      description: 'Heavy, high-traction and fast. Built to slow the other alliance down.',
+      frame: { length: 0.9, width: 0.9, height: 0.35 },
+      mass: 70,
+      drive: { maxSpeed: 5, maxAccel: 12, maxOmega: 9, traction: 1.35 },
+      capacity: { orb: 1 },
+      intake: { pieceTypes: ['orb'], timeSec: 0.3 },
+      shooter: { pieceTypes: ['orb'], exitSpeed: 9, spreadDeg: 4, reloadSec: 0.6, maxRange: 4, height: 0.5 },
+    },
+  ],
+  defaultArchetype: 'allround',
+  rules,
+  botHints: { defenseShare: 0 },
+};

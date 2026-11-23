@@ -195,3 +195,15 @@ describe('Match', () => {
     expect(m.ledger.breakdown('blue').penalty).toBe(6);
   });
 });
+
+describe('solveShot', () => {
+  it('finds a descending shot within the hood range and speed limit', async () => {
+    const { solveShot, flightTime } = await import('../src/engine/sim/ballistics.ts');
+    const s = solveShot(9, 3, 1.4, 'high', [10, 80], true)!;
+    expect(s.speed).toBeLessThanOrEqual(9);
+    const t = flightTime(s.speed, s.pitch, 3);
+    expect(s.speed * Math.sin(s.pitch) - 9.81 * t).toBeLessThan(0);
+    expect(s.speed * Math.sin(s.pitch) * t - 0.5 * 9.81 * t * t).toBeCloseTo(1.4, 5);
+    expect(solveShot(5, 10, 2, 'high')).toBeNull();
+  });
+});
