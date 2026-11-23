@@ -48,6 +48,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `CameraRig` has the driver-station, chase and overhead views. It also supplies `driveYaw`, which makes `PlayerController` field-oriented from the active view.
   - `ui/app.ts` holds the `App` (menu, results), `Session` (one match: countdown, the fixed-step `match.advance(dt)`, render) and `Hud`.
   - `Session` calls `attachBots()` for the non-player robots. The player's robot can run a `BotBrain` during auto (the "auto routine" option).
+  - Spectator mode (`Setup.mode === 'watch'`, `?watch=1`): `Session.player` is null and all six robots are bots. `CameraRig` uses `SPECTATOR_CAMERA_MODES`, starting on the sideline view. The followed robot gets the ring (`FieldView.highlight`), and `describeBot()` turns its `BotBrain.currentPlan` into HUD commentary. Playback speed scales `match.advance`.
   - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`. The bot AI uses the same helpers.
 - `src/games/<year>-<slug>/`: one folder per season.
   - `definition.ts`: the `GameDefinition` data (field, elements, pieces, scoring targets, zones, timing, endgame, RPs, robot archetypes).
@@ -55,6 +56,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `botHints` in the definition: optional AI strategy hints (target weights, endgame preference, defense share).
   - `SOURCES.md`: cites the manual for every number.
   - Only when the owner asks for a real-match comparison: `calibration.ts` (a `CalibrationSpec` mapping TBA `score_breakdown` fields to sim metrics, copied from `src/games/_template-calibration/` and registered next to the definition in `src/games/index.ts`) and the generated `CALIBRATION.md`.
+  - `2023-chargedup` (blind stress test) is the worked example of a node grid with adjacency bonuses (`layout.ts`), shelf stations, auto docking and a one-at-a-time Charge Station.
   - `src/games/_template/` is the typechecked starter, and `_template-calibration/` the opt-in calibration starter. Neither is registered.
   - Every game is registered in `src/games/index.ts`.
 
@@ -64,7 +66,11 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
 - **Mechanisms are abstracted** (ADR 0003).
   - Intake is a sensor volume at the front of the robot.
   - Placing and climbing are timed actions inside a target or zone.
+    - An endgame action finished in auto (an auto dock) releases the robot when teleop starts.
+    - `oneAtATime` actions make teammates board a shared platform one by one.
   - Shooting spawns a real ballistic projectile.
+  - Human player shelves: `handoffHeight` needs a tall enough intake, and `handoffSec` is the time to line up and grab.
+  - A target's `display` point draws scored pieces in place. Without one, scored pieces are hidden.
   - When a new game needs something the schema can't express, put it in that game's `rules.ts` first. Promote it into the engine only when a second game needs it.
 - **Rapier**: call `await RAPIER.init()` before creating a world (browser and Node).
 - **IP hygiene**: field and robots use generic primitives and alliance colors, with no _FIRST_ logos or copied assets. The UI says the game is unofficial. Manuals and videos go in the git-ignored `work/` directory and are never committed.

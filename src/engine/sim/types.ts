@@ -114,6 +114,8 @@ export type PieceShape =
   | { kind: 'cylinder'; radius: number; height: number }
   /** Rendered as a ring; physics uses a cylinder of the outer radius. */
   | { kind: 'torus'; outerRadius: number; innerRadius: number; height: number }
+  /** Rendered as a cone (base radius, apex up); physics uses a cylinder of `radius * 0.8`. */
+  | { kind: 'cone'; radius: number; height: number }
   | { kind: 'box'; size: Vec3 };
 
 export interface PieceType {
@@ -182,6 +184,11 @@ export interface ScoringTarget {
   /** Preferred trajectory for shooters. Default 'high' for entry 'down', else 'low'. */
   arc?: 'high' | 'low';
   afterScore?: AfterScore;
+  /**
+   * Visual only: where scored pieces are drawn (piece center). Pieces stack upward by their height
+   * if the target holds several. Omit to hide scored pieces.
+   */
+  display?: Vec3;
   source?: Citation;
 }
 
@@ -204,6 +211,16 @@ export interface HumanPlayerStation {
   dropVelocity?: Vec3;
   /** Pieces available per alliance for the whole match at this station (omit = unlimited). */
   supply?: number;
+  /**
+   * Height (m) at which pieces are handed over (e.g. a shelf). Only robots whose
+   * `intake.maxHeight` reaches it can use the station. Omit for floor-level / any robot.
+   */
+  handoffHeight?: number;
+  /**
+   * 'direct' mode: seconds a robot must stay in the zone intaking before the piece is in it (lining
+   * up on a shelf, grabbing). Default 0 (instant).
+   */
+  handoffSec?: number;
   source?: Citation;
 }
 
@@ -219,9 +236,18 @@ export interface EndgameAction {
   points: number;
   /** Seconds the robot is locked in place performing the action. */
   durationSec?: number;
+  /**
+   * Robots of one alliance perform `oneAtATime` actions one after another (e.g. driving onto a
+   * tilting platform): a robot can't start one while a teammate is mid-way through any of them.
+   */
+  oneAtATime?: boolean;
   /** Available in teleop when remaining teleop time <= this. Default: timing.endgameSec. */
   availableAtRemainingSec?: number;
-  /** Also allowed during autonomous (awarded `autoPoints`, default `points`). */
+  /**
+   * Also allowed during autonomous (awarded `autoPoints`, default `points`). A robot that completes
+   * it in auto is released again when teleop starts. Set `availableAtRemainingSec: -1` for an
+   * auto-only action.
+   */
   allowInAuto?: boolean;
   autoPoints?: number;
   source?: Citation;
@@ -251,6 +277,8 @@ export interface AllianceSummary {
   /** Pieces scored per expanded target id (e.g. 'speaker.blue'), split by phase. */
   targetCounts: Record<string, { auto: number; teleop: number }>;
   endgame: Record<string, number>;
+  /** Points per ledger source (expanded target / action / award id, or a rules source string). */
+  sources: Record<string, number>;
   fouls: { minor: number; major: number };
 }
 
@@ -426,7 +454,10 @@ export interface GameDefinition {
   field: FieldDefinition;
   pieces: PieceType[];
   staging: PieceStaging[];
-  /** Pieces each robot starts holding (must fit its archetype). */
+  /**
+   * Pieces each robot starts holding, handed out in listed order while the robot has room. With a
+   * total capacity of 1, `{ cone: 1, cube: 1 }` means "a cone, or a cube for cube-only robots".
+   */
   preload: Record<string, number>;
   /** Blue start poses (mirrored for red), one per driver station 1..3. */
   startPoses: [StartPose, StartPose, StartPose];

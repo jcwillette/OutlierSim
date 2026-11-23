@@ -8,6 +8,8 @@ Not affiliated with or endorsed by *FIRST*®.
 
 Once Pages is enabled (Settings → Pages → Source: GitHub Actions), the site is published at `https://<owner>.github.io/OutlierSim/` on every merge to `main`. Link students straight to a game with `?game=<id>`, for example `https://<owner>.github.io/OutlierSim/?game=2027-<slug>`.
 
+To watch a match between six bots instead of driving, pick **Watch 6 bots** in the menu or add `&watch=1` to the link. In spectator mode, `1`-`6` or `Tab` follow a robot (a panel says what it's doing), `C` cycles the sideline, overhead, chase and driver-station cameras, and `[` / `]` change the speed from 0.25x to 4x.
+
 Controls: WASD to drive (field-oriented from your driver station), ←/→ or Q/E to rotate, Space to score (auto-aims), G for the endgame action, C to change camera, Esc to pause. A standard gamepad works too.
 
 ## Develop

@@ -70,6 +70,10 @@ export class Robot {
   readonly held: string[] = [];
   action: RobotAction | null = null;
   endgameDone: { actionId: string; zoneIndex: number } | null = null;
+  /** Seconds spent intaking at a station with a `handoffSec`. */
+  stationDwell = 0;
+  /** `endgameDone` happened during auto; the robot is released when teleop starts. */
+  endgameInAuto = false;
   command: RobotCommand = IDLE;
   controller: RobotController | null = null;
   intakeCooldown = 0;
@@ -130,6 +134,11 @@ export class Robot {
 }
 
 export type PieceStatus = 'field' | 'held' | 'scored' | 'queued';
+
+/** Whether a robot's intake reaches a station's handoff height (shelf). */
+export function canReachHandoff(r: Robot, st: { handoffHeight?: number }): boolean {
+  return st.handoffHeight === undefined || (r.archetype.intake?.maxHeight ?? 0.3) >= st.handoffHeight;
+}
 
 export class Piece {
   status: PieceStatus = 'field';
@@ -386,6 +395,13 @@ export class Match {
         radius = s.outerRadius;
         volume = Math.PI * s.outerRadius ** 2 * s.height;
         break;
+      case 'cone': {
+        const cr = s.radius * 0.8;
+        desc = RAPIER.ColliderDesc.cylinder(s.height / 2, cr).setRotation(eulerToQuat({ roll: Math.PI / 2 }));
+        radius = cr;
+        volume = Math.PI * cr ** 2 * s.height;
+        break;
+      }
       case 'box':
         desc = RAPIER.ColliderDesc.cuboid(s.size.x / 2, s.size.y / 2, s.size.z / 2);
         radius = Math.max(s.size.x, s.size.y) / 2;
@@ -449,6 +465,17 @@ export class Match {
     if (prev === 'auto') this.awardLeave();
     if (p === 'post') this.finish();
     this.def.rules?.onPhaseChange?.(this.rulesCtx, p);
+    if (p === 'teleop') this.releaseAutoActions();
+  }
+
+  /** Robots that finished an endgame action in auto (e.g. an auto dock) play on in teleop. */
+  private releaseAutoActions(): void {
+    for (const r of this.robots) {
+      if (!r.endgameDone || !r.endgameInAuto) continue;
+      r.endgameDone = null;
+      r.endgameInAuto = false;
+      r.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    }
   }
 
   // ------------------------------------------------------------------ stepping
@@ -558,8 +585,8 @@ export class Match {
     if (cmd.endgame && this.tryStartEndgame(r)) return;
     if (cmd.intake) {
       this.tryIntake(r);
-      this.tryStation(r);
-    }
+      this.tryStation(r, dt);
+    } else r.stationDwell = 0;
     if (cmd.score) {
       if (!this.tryStartPlace(r)) this.tryShoot(r);
     }
@@ -596,6 +623,7 @@ export class Match {
         r.action = null;
         const ga = this.game.endgame.find((e) => e.id === act.actionId)!;
         r.endgameDone = { actionId: ga.id, zoneIndex: act.zoneIndex };
+        r.endgameInAuto = this.scoringPeriod === 'auto';
         r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
         r.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         r.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
@@ -626,6 +654,7 @@ export class Match {
         if (this.phase !== 'teleop') continue;
         if (this.remaining > (ga.availableAtRemainingSec ?? this.def.timing.endgameSec)) continue;
       }
+      if (ga.oneAtATime && this.teammateMidSequentialAction(r)) continue;
       ga.zones.forEach((z, zoneIndex) => {
         if (!pointInRegion(r, z)) return;
         const occupants = this.robots.filter(
@@ -640,6 +669,15 @@ export class Match {
       });
     }
     return out.sort((a, b) => b.action.points - a.action.points);
+  }
+
+  /** A teammate is in the middle of a `oneAtATime` endgame action. */
+  teammateMidSequentialAction(r: Robot): boolean {
+    return this.robots.some((o) => {
+      if (o === r || o.alliance !== r.alliance || o.action?.kind !== 'endgame') return false;
+      const id = o.action.actionId;
+      return !!this.game.endgame.find((e) => e.id === id)?.oneAtATime;
+    });
   }
 
   private tryStartEndgame(r: Robot): boolean {
@@ -703,13 +741,16 @@ export class Match {
     return this.game.stations.filter(
       (st) =>
         (!st.alliance || st.alliance === r.alliance) &&
+        canReachHandoff(r, st) &&
         pointInRegion(r, st.zone) &&
         st.pieceTypes.some((t) => r.canHold(t)),
     );
   }
 
-  private tryStation(r: Robot): void {
-    for (const st of this.stationsFor(r)) {
+  private tryStation(r: Robot, dt: number): void {
+    const here = this.stationsFor(r);
+    if (here.length === 0) r.stationDwell = 0;
+    for (const st of here) {
       const key = `${st.id}:${r.alliance}`;
       if ((this.stationCooldown.get(key) ?? 0) > 0) continue;
       const used = this.stationUsed.get(key) ?? 0;
@@ -717,6 +758,11 @@ export class Match {
       const type = st.pieceTypes.find((t) => r.canHold(t))!;
       if (st.mode === 'direct') {
         if (r.intakeCooldown > 0 || !r.archetype.intake) continue;
+        if (st.handoffSec) {
+          r.stationDwell += dt; // lining up on the handoff before the piece is in the robot
+          if (r.stationDwell < st.handoffSec) return;
+          r.stationDwell = 0;
+        }
         const p = this.spawnPiece(type, { x: r.x, y: r.y, z: 1 });
         this.holdPiece(r, p);
         r.intakeCooldown = r.archetype.intake.timeSec;
@@ -1058,6 +1104,7 @@ export class Match {
       breakdown: this.ledger.breakdown(alliance),
       targetCounts,
       endgame,
+      sources: this.ledger.bySource(alliance),
       fouls: { ...this.fouls[alliance] },
     };
   }

@@ -45,7 +45,7 @@ Use `mapping-cookbook.md` to decide how each mechanic maps onto the schema, `rul
 ## Step 3: Write the module
 
 1. `cp -r src/games/_template src/games/<id>`. The template is typechecked in CI, so it always matches the schema. Fill in `definition.ts` from the checklist. Remember:
-   - **Coordinates**: WPILib frame (meters, origin at the blue alliance wall corner, +X toward red, +Y left as seen from blue). Author **only the blue half**. Set `field.symmetry` to `'rotational'` or `'mirror'` to match the real field, and check the drawings: 2023 and 2025-style fields are rotational, 2024-style fields are mirrored.
+   - **Coordinates**: WPILib frame (meters, origin at the blue alliance wall corner, +X toward red, +Y left as seen from blue). Author **only the blue half**. Set `field.symmetry` to `'rotational'` or `'mirror'` to match the real field, and check the drawings rather than assuming by season. Ask which side of the field each alliance's scoring structures and loading zones sit on. 2023 (Charged Up) is **mirrored**: both alliances' grids are on the scoring-table side. 2024-style fields are mirrored too.
    - Mark anything that exists once (center-line pieces, shared elements) as `side: 'neutral'`.
    - Every `source` field cites the manual.
    - Model field geometry with the minimum set of boxes, cylinders and hulls that gives the right _driving_ feel: footprints, chokepoints, things to drive around or under, and scoring heights. Elements robots drive under, such as a high stage, need `solid: false` on the overhead part and separate solid legs.

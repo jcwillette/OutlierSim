@@ -162,9 +162,11 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
       if (!allTags.has(tag)) err(path, `place tag '${tag}' matches no target`);
     for (const id of Object.keys(a.endgame ?? {}))
       if (!endgameIds.has(id)) err(path, `endgame '${id}' is not an endgame action`);
-    for (const [type, n] of Object.entries(def.preload)) {
-      if ((a.capacity[type] ?? 0) < n) warn(path, `cannot hold preload of ${n} ${type}`);
-    }
+    // Preload is handed out in listed order while the robot has room, so a robot only needs to be
+    // able to hold one of the listed types (e.g. "1 cone or 1 cube").
+    const preload = Object.entries(def.preload);
+    if (preload.length && !preload.some(([type, n]) => (a.capacity[type] ?? 0) >= Math.min(n, 1)))
+      warn(path, `cannot hold any preload piece (${preload.map(([t]) => t).join(', ')})`);
     if (!a.intake && !a.place && !a.shooter) warn(path, 'robot cannot interact with pieces');
   });
 
