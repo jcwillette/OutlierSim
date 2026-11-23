@@ -14,4 +14,7 @@ Status of the build plan. Update this file in every PR.
 
 ## Known gaps / ideas
 
-- (none yet)
+- No generic foul detection yet (pinning, protected zones, over-capacity). Games can call `ctx.foul()` from `rules.ts`.
+- Robots are boxes with roll and pitch locked, so ramps and charge stations won't tip them realistically.
+- Physics treats torus pieces as solid cylinders.
+- Pieces aren't drawn inside targets after they're scored (they're consumed or recycled).

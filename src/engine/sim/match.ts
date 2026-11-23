@@ -1,0 +1,1160 @@
+import RAPIER from '@dimforge/rapier3d-compat';
+import { GRAVITY, launchPitch } from './ballistics.ts';
+import { expandDefinition, type ExpandedGame, type XEndgame, type XStation, type XTarget } from './expand.ts';
+import { ScoreLedger } from './ledger.ts';
+import {
+  clamp,
+  eulerToQuat,
+  footprint,
+  gaussian,
+  makeRng,
+  pointInRegion,
+  wrapAngle,
+  yawFromQuat,
+} from './math.ts';
+import { assertValid } from './validate.ts';
+import type {
+  Alliance,
+  AllianceSummary,
+  GameDefinition,
+  MatchPhase,
+  PieceType,
+  RobotArchetype,
+  RobotInfo,
+  RulesContext,
+  ScoreCategory,
+  Vec3,
+} from './types.ts';
+
+export const SIM_HZ = 60;
+export const SIM_DT = 1 / SIM_HZ;
+
+/** Per-tick control input. Drive values are field-relative fractions of max speed, -1..1. */
+export interface RobotCommand {
+  vx: number;
+  vy: number;
+  omega: number;
+  intake: boolean;
+  score: boolean;
+  endgame: boolean;
+  eject: boolean;
+  /** Restrict `score` to this expanded target id / `endgame` to this action id. */
+  targetId?: string;
+}
+
+export const IDLE: RobotCommand = Object.freeze({
+  vx: 0,
+  vy: 0,
+  omega: 0,
+  intake: false,
+  score: false,
+  endgame: false,
+  eject: false,
+});
+
+export interface RobotController {
+  command(match: Match, robot: Robot, dt: number): RobotCommand;
+}
+
+export type RobotAction =
+  | { kind: 'place'; targetId: string; pieceType: string; remaining: number; total: number }
+  | { kind: 'endgame'; actionId: string; zoneIndex: number; remaining: number; total: number };
+
+export interface RobotStats {
+  piecesScored: number;
+  shotsTaken: number;
+  intakes: number;
+}
+
+export class Robot {
+  readonly held: string[] = [];
+  action: RobotAction | null = null;
+  endgameDone: { actionId: string; zoneIndex: number } | null = null;
+  command: RobotCommand = IDLE;
+  controller: RobotController | null = null;
+  intakeCooldown = 0;
+  shootCooldown = 0;
+  /** Desired heading set by the shooter auto-align assist this tick. */
+  aimYaw: number | null = null;
+  readonly leftZones = new Set<string>();
+  readonly stats: RobotStats = { piecesScored: 0, shotsTaken: 0, intakes: 0 };
+
+  constructor(
+    readonly id: number,
+    readonly alliance: Alliance,
+    readonly station: number,
+    readonly archetype: RobotArchetype,
+    readonly body: RAPIER.RigidBody,
+  ) {}
+
+  get x(): number {
+    return this.body.translation().x;
+  }
+  get y(): number {
+    return this.body.translation().y;
+  }
+  get z(): number {
+    return this.body.translation().z;
+  }
+  get yaw(): number {
+    return yawFromQuat(this.body.rotation());
+  }
+  get vx(): number {
+    return this.body.linvel().x;
+  }
+  get vy(): number {
+    return this.body.linvel().y;
+  }
+  get speed(): number {
+    const v = this.body.linvel();
+    return Math.hypot(v.x, v.y);
+  }
+  get totalCapacity(): number {
+    return this.archetype.totalCapacity ?? Object.values(this.archetype.capacity).reduce((a, b) => a + b, 0);
+  }
+  canHold(type: string): boolean {
+    const cap = this.archetype.capacity[type] ?? 0;
+    const n = this.held.filter((h) => h === type).length;
+    return n < cap && this.held.length < this.totalCapacity;
+  }
+  /** Seconds to place at `target`, or null if this robot can't place there. */
+  placeTime(target: XTarget): number | null {
+    const place = this.archetype.place;
+    if (!place || !target.place) return null;
+    for (const key of [target.baseId, ...(target.tags ?? [])]) {
+      const t = place[key];
+      if (t !== undefined) return t;
+    }
+    return null;
+  }
+}
+
+export type PieceStatus = 'field' | 'held' | 'scored' | 'queued';
+
+export class Piece {
+  status: PieceStatus = 'field';
+  heldBy: number | null = null;
+  scoredIn: string | null = null;
+  lastTouch: number | null = null;
+  lastTouchAlliance: Alliance | null = null;
+  releaseAt = 0;
+  releaseExit = 0;
+  constructor(
+    readonly id: number,
+    readonly type: PieceType,
+    readonly body: RAPIER.RigidBody,
+    readonly radius: number,
+  ) {}
+  get position(): Vec3 {
+    const t = this.body.translation();
+    return { x: t.x, y: t.y, z: t.z };
+  }
+}
+
+export interface TargetState {
+  target: XTarget;
+  count: number;
+  countByPhase: { auto: number; teleop: number };
+  enabled: boolean;
+  multiplier: number;
+  recycleCursor: number;
+}
+
+export interface Announcement {
+  time: number;
+  text: string;
+  alliance?: Alliance;
+}
+
+export interface RobotSlot {
+  alliance: Alliance;
+  station: number;
+  archetype?: string;
+}
+
+export interface MatchOptions {
+  seed?: number;
+  /** Override archetypes per robot id (0-2 blue stations 1-3, 3-5 red stations 1-3). */
+  archetypes?: Partial<Record<number, string>>;
+}
+
+export interface AllianceResult extends AllianceSummary {
+  rp: number;
+  rpBreakdown: Record<string, number>;
+  won: boolean;
+  tied: boolean;
+}
+
+export interface MatchResult {
+  blue: AllianceResult;
+  red: AllianceResult;
+  robots: Array<{ id: number; alliance: Alliance; archetype: string; points: number } & RobotStats>;
+}
+
+let rapierReady: Promise<void> | null = null;
+/** Must be awaited once before constructing a Match (browser and Node). */
+export function initPhysics(): Promise<void> {
+  rapierReady ??= RAPIER.init();
+  return rapierReady;
+}
+
+const ROBOT_IDS: Array<{ alliance: Alliance; station: number }> = [
+  { alliance: 'blue', station: 0 },
+  { alliance: 'blue', station: 1 },
+  { alliance: 'blue', station: 2 },
+  { alliance: 'red', station: 0 },
+  { alliance: 'red', station: 1 },
+  { alliance: 'red', station: 2 },
+];
+
+const other = (a: Alliance): Alliance => (a === 'blue' ? 'red' : 'blue');
+
+/**
+ * One FRC match: Rapier world, 6 robots, pieces, scoring, clock. Headless: no rendering or DOM.
+ * Drive it with `step()` (fixed 60 Hz) or `advance(realDt)`; attach controllers to robots.
+ */
+export class Match {
+  readonly game: ExpandedGame;
+  readonly def: GameDefinition;
+  readonly world: RAPIER.World;
+  readonly robots: Robot[] = [];
+  readonly pieces: Piece[] = [];
+  readonly targets = new Map<string, TargetState>();
+  readonly ledger = new ScoreLedger();
+  readonly announcements: Announcement[] = [];
+  readonly indicators = new Map<string, string | number>();
+  readonly fouls: Record<Alliance, { minor: number; major: number }> = {
+    blue: { minor: 0, major: 0 },
+    red: { minor: 0, major: 0 },
+  };
+  readonly random: () => number;
+  /** Seconds since auto started. */
+  time = 0;
+  phase: MatchPhase = 'pre';
+  /** Pieces handed out by human player stations so far, per station id. */
+  readonly stationUsed = new Map<string, number>();
+  private readonly stationCooldown = new Map<string, number>();
+  private readonly recycleQueue: Array<{ piece: Piece; target: XTarget }> = [];
+  private readonly vars: Record<string, unknown> = {};
+  private readonly rulesCtx: RulesContext;
+  private accumulator = 0;
+  private result: MatchResult | null = null;
+  private nextPieceId = 0;
+
+  constructor(def: GameDefinition, opts: MatchOptions = {}) {
+    assertValid(def);
+    this.def = def;
+    this.game = expandDefinition(def);
+    this.random = makeRng(opts.seed ?? 1);
+    this.world = new RAPIER.World({ x: 0, y: 0, z: -GRAVITY });
+    this.world.timestep = SIM_DT;
+    this.buildField();
+    for (const t of this.game.targets) {
+      this.targets.set(t.id, {
+        target: t,
+        count: 0,
+        countByPhase: { auto: 0, teleop: 0 },
+        enabled: true,
+        multiplier: 1,
+        recycleCursor: 0,
+      });
+    }
+    ROBOT_IDS.forEach((slot, id) => {
+      const archId = opts.archetypes?.[id] ?? def.defaultArchetype;
+      const arch = def.archetypes.find((a) => a.id === archId);
+      if (!arch) throw new Error(`Unknown archetype '${archId}'`);
+      this.robots.push(this.createRobot(id, slot.alliance, slot.station, arch));
+    });
+    for (const s of this.game.staged) this.spawnPiece(s.type, s.position);
+    for (const r of this.robots) {
+      for (const [type, n] of Object.entries(def.preload)) {
+        for (let i = 0; i < n && r.canHold(type); i++) {
+          const p = this.spawnPiece(type, { x: r.x, y: r.y, z: 1 });
+          this.holdPiece(r, p);
+        }
+      }
+    }
+    this.rulesCtx = this.makeRulesContext();
+    def.rules?.onInit?.(this.rulesCtx);
+  }
+
+  // ------------------------------------------------------------------ construction
+
+  private buildField(): void {
+    const { length: L, width: W, wallHeight: H } = this.def.field;
+    const fixed = (x: number, y: number, z: number, q = eulerToQuat(undefined)) =>
+      this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z).setRotation(q));
+    // floor + perimeter
+    this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(L, W, 0.5).setFriction(0.8),
+      fixed(L / 2, W / 2, -0.5),
+    );
+    const t = 0.1;
+    const walls: Array<[number, number, number, number]> = [
+      [L / 2, -t, L / 2 + t, t],
+      [L / 2, W + t, L / 2 + t, t],
+      [-t, W / 2, t, W / 2 + t],
+      [L + t, W / 2, t, W / 2 + t],
+    ];
+    for (const [x, y, hx, hy] of walls)
+      this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(hx, hy, H / 2).setFriction(0.3),
+        fixed(x, y, H / 2),
+      );
+
+    for (const e of this.game.elements) {
+      if (e.solid === false) continue;
+      const q = eulerToQuat(e.rotation);
+      let desc: RAPIER.ColliderDesc | null;
+      switch (e.shape.kind) {
+        case 'box':
+          desc = RAPIER.ColliderDesc.cuboid(e.shape.size.x / 2, e.shape.size.y / 2, e.shape.size.z / 2);
+          break;
+        case 'cylinder':
+          desc = RAPIER.ColliderDesc.cylinder(e.shape.height / 2, e.shape.radius).setRotation(
+            eulerToQuat({ roll: Math.PI / 2 }),
+          );
+          break;
+        case 'hull':
+          desc = RAPIER.ColliderDesc.convexHull(
+            new Float32Array(e.shape.vertices.flatMap((v) => [v.x, v.y, v.z])),
+          );
+          break;
+      }
+      if (!desc) throw new Error(`Element '${e.id}' produced no collider (degenerate hull?)`);
+      desc.setFriction(e.friction ?? 0.5).setRestitution(e.restitution ?? 0.2);
+      this.world.createCollider(desc, fixed(e.position.x, e.position.y, e.position.z, q));
+    }
+  }
+
+  private createRobot(id: number, alliance: Alliance, station: number, arch: RobotArchetype): Robot {
+    const pose = this.game.startPoses[alliance][station]!;
+    const { length, width, height } = arch.frame;
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(pose.x, pose.y, height / 2 + 0.005)
+        .setRotation(eulerToQuat({ yaw: pose.yaw }))
+        .enabledRotations(false, false, true)
+        .setLinearDamping(0.05)
+        .setAngularDamping(0.5),
+    );
+    this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(length / 2, width / 2, height / 2)
+        .setDensity(arch.mass / (length * width * height))
+        // Traction is modeled in drive(); the chassis itself slides freely on carpet and walls.
+        .setFriction(0)
+        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+        .setRestitution(0.1),
+      body,
+    );
+    return new Robot(id, alliance, station, arch, body);
+  }
+
+  spawnPiece(typeId: string, pos: Vec3, vel?: Vec3): Piece {
+    const type = this.def.pieces.find((p) => p.id === typeId);
+    if (!type) throw new Error(`Unknown piece type '${typeId}'`);
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(pos.x, pos.y, pos.z)
+        .setLinearDamping(0.15)
+        .setAngularDamping(0.6)
+        .setCcdEnabled(true),
+    );
+    if (vel) body.setLinvel(vel, true);
+    const s = type.shape;
+    let desc: RAPIER.ColliderDesc;
+    let radius: number;
+    let volume: number;
+    switch (s.kind) {
+      case 'sphere':
+        desc = RAPIER.ColliderDesc.ball(s.radius);
+        radius = s.radius;
+        volume = (4 / 3) * Math.PI * s.radius ** 3;
+        break;
+      case 'cylinder':
+        desc = RAPIER.ColliderDesc.cylinder(s.height / 2, s.radius).setRotation(
+          eulerToQuat({ roll: Math.PI / 2 }),
+        );
+        radius = s.radius;
+        volume = Math.PI * s.radius ** 2 * s.height;
+        break;
+      case 'torus':
+        desc = RAPIER.ColliderDesc.cylinder(s.height / 2, s.outerRadius).setRotation(
+          eulerToQuat({ roll: Math.PI / 2 }),
+        );
+        radius = s.outerRadius;
+        volume = Math.PI * s.outerRadius ** 2 * s.height;
+        break;
+      case 'box':
+        desc = RAPIER.ColliderDesc.cuboid(s.size.x / 2, s.size.y / 2, s.size.z / 2);
+        radius = Math.max(s.size.x, s.size.y) / 2;
+        volume = s.size.x * s.size.y * s.size.z;
+        break;
+    }
+    desc
+      .setDensity(type.mass / volume)
+      .setFriction(type.friction ?? 0.6)
+      .setRestitution(type.restitution ?? 0.3);
+    this.world.createCollider(desc, body);
+    const piece = new Piece(this.nextPieceId++, type, body, radius);
+    this.pieces.push(piece);
+    return piece;
+  }
+
+  // ------------------------------------------------------------------ clock
+
+  get autoEnd(): number {
+    return this.def.timing.autoSec;
+  }
+  get teleopStart(): number {
+    return this.def.timing.autoSec + this.def.timing.transitionSec;
+  }
+  get matchEnd(): number {
+    return this.teleopStart + this.def.timing.teleopSec;
+  }
+  /** Seconds left in the current period (auto or teleop). */
+  get remaining(): number {
+    switch (this.phase) {
+      case 'pre':
+        return this.def.timing.autoSec;
+      case 'auto':
+        return Math.max(0, this.autoEnd - this.time);
+      case 'transition':
+        return Math.max(0, this.teleopStart - this.time);
+      case 'teleop':
+        return Math.max(0, this.matchEnd - this.time);
+      case 'post':
+        return 0;
+    }
+  }
+  get isEndgame(): boolean {
+    return this.phase === 'teleop' && this.remaining <= this.def.timing.endgameSec;
+  }
+  get isOver(): boolean {
+    return this.phase === 'post';
+  }
+  private get scoringPeriod(): 'auto' | 'teleop' {
+    return this.phase === 'auto' || this.phase === 'transition' ? 'auto' : 'teleop';
+  }
+
+  start(): void {
+    if (this.phase === 'pre') this.setPhase('auto');
+  }
+
+  private setPhase(p: MatchPhase): void {
+    if (this.phase === p) return;
+    const prev = this.phase;
+    this.phase = p;
+    if (prev === 'auto') this.awardLeave();
+    if (p === 'post') this.finish();
+    this.def.rules?.onPhaseChange?.(this.rulesCtx, p);
+  }
+
+  // ------------------------------------------------------------------ stepping
+
+  /** Advance by real elapsed seconds using fixed sub-steps. Returns number of steps taken. */
+  advance(realDt: number): number {
+    this.accumulator += Math.min(realDt, 0.25);
+    let n = 0;
+    while (this.accumulator >= SIM_DT) {
+      this.step();
+      this.accumulator -= SIM_DT;
+      n++;
+    }
+    return n;
+  }
+
+  /** Run the rest of the match as fast as possible (headless). */
+  runToEnd(): MatchResult {
+    this.start();
+    while (!this.isOver) this.step();
+    return this.getResult();
+  }
+
+  step(): void {
+    const dt = SIM_DT;
+    if (this.phase === 'pre' || this.phase === 'post') {
+      this.world.step();
+      return;
+    }
+    this.time += dt;
+    if (this.phase === 'auto' && this.time >= this.autoEnd) this.setPhase('transition');
+    if (this.phase === 'transition' && this.time >= this.teleopStart) this.setPhase('teleop');
+    if (this.phase === 'teleop' && this.time >= this.matchEnd) {
+      this.setPhase('post');
+      return;
+    }
+    const enabled = this.phase === 'auto' || this.phase === 'teleop';
+
+    for (const r of this.robots) {
+      r.aimYaw = null;
+      r.command = enabled && r.controller ? r.controller.command(this, r, dt) : IDLE;
+      r.intakeCooldown = Math.max(0, r.intakeCooldown - dt);
+      r.shootCooldown = Math.max(0, r.shootCooldown - dt);
+    }
+    for (const [k, v] of this.stationCooldown) this.stationCooldown.set(k, Math.max(0, v - dt));
+
+    if (enabled) {
+      for (const r of this.robots) this.updateMechanisms(r, dt);
+      for (const r of this.robots) this.trackLeave(r);
+    }
+    for (const r of this.robots) this.drive(r, dt, enabled);
+
+    this.world.step();
+
+    this.trackTouches();
+    this.checkApertures();
+    this.processRecycle();
+    this.def.rules?.onTick?.(this.rulesCtx, dt);
+  }
+
+  // ------------------------------------------------------------------ drive
+
+  private drive(r: Robot, dt: number, enabled: boolean): void {
+    if (r.endgameDone) return;
+    const a = r.archetype;
+    const locked = !enabled || r.action !== null;
+    const cmd = r.command;
+    let tx = 0;
+    let ty = 0;
+    if (!locked) {
+      const mag = Math.hypot(cmd.vx, cmd.vy);
+      const s = mag > 1 ? 1 / mag : 1;
+      tx = cmd.vx * s * a.drive.maxSpeed;
+      ty = cmd.vy * s * a.drive.maxSpeed;
+    }
+    const v = r.body.linvel();
+    let dvx = tx - v.x;
+    let dvy = ty - v.y;
+    const maxDv = Math.min(a.drive.maxAccel, (a.drive.traction ?? 1.1) * GRAVITY) * dt;
+    const dv = Math.hypot(dvx, dvy);
+    if (dv > maxDv) {
+      dvx *= maxDv / dv;
+      dvy *= maxDv / dv;
+    }
+    const m = r.body.mass();
+    r.body.applyImpulse({ x: m * dvx, y: m * dvy, z: 0 }, true);
+
+    let targetOmega = locked ? 0 : clamp(cmd.omega, -1, 1) * a.drive.maxOmega;
+    if (!locked && r.aimYaw !== null) {
+      targetOmega = clamp(wrapAngle(r.aimYaw - r.yaw) * 8, -a.drive.maxOmega, a.drive.maxOmega);
+    }
+    const w = r.body.angvel().z;
+    const maxDw = a.drive.maxOmega * 8 * dt;
+    r.body.setAngvel({ x: 0, y: 0, z: w + clamp(targetOmega - w, -maxDw, maxDw) }, true);
+  }
+
+  // ------------------------------------------------------------------ mechanisms
+
+  private updateMechanisms(r: Robot, dt: number): void {
+    if (r.endgameDone) return;
+    if (r.action) {
+      this.continueAction(r, dt);
+      return;
+    }
+    const cmd = r.command;
+    if (cmd.endgame && this.tryStartEndgame(r)) return;
+    if (cmd.intake) {
+      this.tryIntake(r);
+      this.tryStation(r);
+    }
+    if (cmd.score) {
+      if (!this.tryStartPlace(r)) this.tryShoot(r);
+    }
+    if (cmd.eject && r.held.length > 0) this.eject(r);
+  }
+
+  private continueAction(r: Robot, dt: number): void {
+    const act = r.action!;
+    if (act.kind === 'place') {
+      const ts = this.targets.get(act.targetId)!;
+      const place = ts.target.place!;
+      if (!pointInRegion(r, place.zone)) {
+        r.action = null; // pushed out: placement fails, robot keeps the piece
+        return;
+      }
+      act.remaining -= dt;
+      if (act.remaining <= 0) {
+        r.action = null;
+        const idx = r.held.indexOf(act.pieceType);
+        const piece = this.pieces.find(
+          (p) => p.status === 'held' && p.heldBy === r.id && p.type.id === act.pieceType,
+        );
+        if (idx < 0 || !piece) return;
+        if (ts.target.capacity !== undefined && ts.count >= ts.target.capacity) return;
+        r.held.splice(idx, 1);
+        piece.heldBy = null;
+        piece.lastTouch = r.id;
+        piece.lastTouchAlliance = r.alliance;
+        this.scorePiece(piece, ts, r.id);
+      }
+    } else {
+      act.remaining -= dt;
+      if (act.remaining <= 0) {
+        r.action = null;
+        const ga = this.game.endgame.find((e) => e.id === act.actionId)!;
+        r.endgameDone = { actionId: ga.id, zoneIndex: act.zoneIndex };
+        r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        r.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        r.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+        const inAuto = this.scoringPeriod === 'auto';
+        const pts = inAuto ? (ga.autoPoints ?? ga.points) : ga.points;
+        this.ledger.add({
+          time: this.time,
+          alliance: r.alliance,
+          category: inAuto ? 'auto' : 'endgame',
+          points: pts,
+          source: ga.id,
+          robotId: r.id,
+        });
+      }
+    }
+  }
+
+  /** Endgame actions this robot could start right now, best first. */
+  availableEndgame(r: Robot): Array<{ action: XEndgame; zoneIndex: number }> {
+    const out: Array<{ action: XEndgame; zoneIndex: number }> = [];
+    if (r.endgameDone || r.action) return out;
+    for (const ga of this.game.endgame) {
+      if (ga.alliance && ga.alliance !== r.alliance) continue;
+      if (r.archetype.endgame?.[ga.baseId] === undefined) continue;
+      const inAuto = this.phase === 'auto';
+      if (inAuto && !ga.allowInAuto) continue;
+      if (!inAuto) {
+        if (this.phase !== 'teleop') continue;
+        if (this.remaining > (ga.availableAtRemainingSec ?? this.def.timing.endgameSec)) continue;
+      }
+      ga.zones.forEach((z, zoneIndex) => {
+        if (!pointInRegion(r, z)) return;
+        const occupants = this.robots.filter(
+          (o) =>
+            o !== r &&
+            ((o.endgameDone?.actionId === ga.id && o.endgameDone.zoneIndex === zoneIndex) ||
+              (o.action?.kind === 'endgame' &&
+                o.action.actionId === ga.id &&
+                o.action.zoneIndex === zoneIndex)),
+        ).length;
+        if (occupants < (ga.maxRobotsPerZone ?? Infinity)) out.push({ action: ga, zoneIndex });
+      });
+    }
+    return out.sort((a, b) => b.action.points - a.action.points);
+  }
+
+  private tryStartEndgame(r: Robot): boolean {
+    let opts = this.availableEndgame(r);
+    if (r.command.targetId) opts = opts.filter((o) => o.action.id === r.command.targetId);
+    const best = opts[0];
+    if (!best) return false;
+    const dur = r.archetype.endgame![best.action.baseId]!;
+    r.action = {
+      kind: 'endgame',
+      actionId: best.action.id,
+      zoneIndex: best.zoneIndex,
+      remaining: dur,
+      total: dur,
+    };
+    return true;
+  }
+
+  private holdPiece(r: Robot, p: Piece): void {
+    p.status = 'held';
+    p.heldBy = r.id;
+    p.lastTouch = r.id;
+    p.lastTouchAlliance = r.alliance;
+    p.body.setEnabled(false);
+    r.held.push(p.type.id);
+  }
+
+  private tryIntake(r: Robot): void {
+    const intake = r.archetype.intake;
+    if (!intake || r.intakeCooldown > 0) return;
+    const { length, width } = r.archetype.frame;
+    const reach = intake.reach ?? 0.15;
+    const maxH = intake.maxHeight ?? 0.3;
+    const c = Math.cos(r.yaw);
+    const s = Math.sin(r.yaw);
+    let best: Piece | null = null;
+    let bestD = Infinity;
+    for (const p of this.pieces) {
+      if (p.status !== 'field' || !intake.pieceTypes.includes(p.type.id) || !r.canHold(p.type.id)) continue;
+      const pos = p.position;
+      if (pos.z > maxH) continue;
+      const dx = pos.x - r.x;
+      const dy = pos.y - r.y;
+      const lx = dx * c + dy * s;
+      const ly = -dx * s + dy * c;
+      if (lx < length / 2 - 0.05 || lx > length / 2 + reach + p.radius || Math.abs(ly) > width / 2) continue;
+      if (lx < bestD) {
+        bestD = lx;
+        best = p;
+      }
+    }
+    if (best) {
+      this.holdPiece(r, best);
+      r.intakeCooldown = intake.timeSec;
+      r.stats.intakes++;
+    }
+  }
+
+  /** Stations whose zone the robot is in and that could feed it a piece. */
+  stationsFor(r: Robot): XStation[] {
+    return this.game.stations.filter(
+      (st) =>
+        (!st.alliance || st.alliance === r.alliance) &&
+        pointInRegion(r, st.zone) &&
+        st.pieceTypes.some((t) => r.canHold(t)),
+    );
+  }
+
+  private tryStation(r: Robot): void {
+    for (const st of this.stationsFor(r)) {
+      const key = `${st.id}:${r.alliance}`;
+      if ((this.stationCooldown.get(key) ?? 0) > 0) continue;
+      const used = this.stationUsed.get(key) ?? 0;
+      if (st.supply !== undefined && used >= st.supply) continue;
+      const type = st.pieceTypes.find((t) => r.canHold(t))!;
+      if (st.mode === 'direct') {
+        if (r.intakeCooldown > 0 || !r.archetype.intake) continue;
+        const p = this.spawnPiece(type, { x: r.x, y: r.y, z: 1 });
+        this.holdPiece(r, p);
+        r.intakeCooldown = r.archetype.intake.timeSec;
+        r.stats.intakes++;
+      } else {
+        this.spawnPiece(type, st.dropPoint!, st.dropVelocity);
+      }
+      this.stationUsed.set(key, used + 1);
+      this.stationCooldown.set(key, st.feedIntervalSec);
+      return;
+    }
+  }
+
+  private canUseTarget(r: Robot, ts: TargetState): boolean {
+    const t = ts.target;
+    if (!ts.enabled) return false;
+    if (t.alliance && (t.creditTo ?? 'owner') === 'owner' && t.alliance !== r.alliance) return false;
+    if (t.capacity !== undefined && ts.count >= t.capacity) return false;
+    return true;
+  }
+
+  /** Place targets this robot can start placing on right now, best first. */
+  placeOptions(r: Robot): Array<{ target: XTarget; time: number; pieceType: string }> {
+    const out: Array<{ target: XTarget; time: number; pieceType: string }> = [];
+    for (const ts of this.targets.values()) {
+      const t = ts.target;
+      if (!t.place || !this.canUseTarget(r, ts)) continue;
+      const time = r.placeTime(t);
+      if (time === null) continue;
+      const pieceType = r.held.find((h) => t.accepts.includes(h));
+      if (!pieceType) continue;
+      if (!pointInRegion(r, t.place.zone)) continue;
+      if (t.place.facePoint) {
+        const want = Math.atan2(t.place.facePoint.y - r.y, t.place.facePoint.x - r.x);
+        if (Math.abs(wrapAngle(want - r.yaw)) > (t.place.faceToleranceRad ?? Math.PI / 4)) continue;
+      }
+      out.push({ target: t, time, pieceType });
+    }
+    const per = this.scoringPeriod;
+    return out.sort((a, b) => b.target.points[per] - a.target.points[per]);
+  }
+
+  private tryStartPlace(r: Robot): boolean {
+    let opts = this.placeOptions(r);
+    if (r.command.targetId) opts = opts.filter((o) => o.target.id === r.command.targetId);
+    const best = opts[0];
+    if (!best) return false;
+    r.action = {
+      kind: 'place',
+      targetId: best.target.id,
+      pieceType: best.pieceType,
+      remaining: best.time,
+      total: best.time,
+    };
+    return true;
+  }
+
+  /** Aperture targets this robot could shoot at from here, best first (ignores heading). */
+  shotOptions(r: Robot): Array<{ target: XTarget; pieceType: string; distance: number }> {
+    const sh = r.archetype.shooter;
+    if (!sh) return [];
+    const out: Array<{ target: XTarget; pieceType: string; distance: number }> = [];
+    for (const ts of this.targets.values()) {
+      const t = ts.target;
+      if (!t.aperture || !this.canUseTarget(r, ts)) continue;
+      if (sh.tags && !sh.tags.some((tag) => t.tags?.includes(tag) || t.baseId === tag)) continue;
+      const pieceType = r.held.find((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h));
+      if (!pieceType) continue;
+      const aim = t.aimPoint ?? t.aperture.center;
+      const d = Math.hypot(aim.x - r.x, aim.y - r.y);
+      if (d > sh.maxRange) continue;
+      const arc = t.arc ?? (t.aperture.entry === 'down' ? 'high' : 'low');
+      if (launchPitch(sh.exitSpeed, d, aim.z - sh.height, arc) === null) continue;
+      out.push({ target: t, pieceType, distance: d });
+    }
+    const per = this.scoringPeriod;
+    return out.sort((a, b) => b.target.points[per] - a.target.points[per] || a.distance - b.distance);
+  }
+
+  private tryShoot(r: Robot): void {
+    const sh = r.archetype.shooter;
+    if (!sh || r.shootCooldown > 0) return;
+    let opts = this.shotOptions(r);
+    if (r.command.targetId) opts = opts.filter((o) => o.target.id === r.command.targetId);
+    const best = opts[0];
+    if (!best) return;
+    const t = best.target;
+    const aim = t.aimPoint ?? t.aperture!.center;
+    const heading = Math.atan2(aim.y - r.y, aim.x - r.x);
+    if (!sh.turret) {
+      r.aimYaw = heading;
+      if (Math.abs(wrapAngle(heading - r.yaw)) > (3 * Math.PI) / 180) return;
+    }
+    const piece = this.pieces.find(
+      (p) => p.status === 'held' && p.heldBy === r.id && p.type.id === best.pieceType,
+    )!;
+    const clearance = Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2 + piece.radius + 0.03;
+    const ox = r.x + Math.cos(heading) * clearance;
+    const oy = r.y + Math.sin(heading) * clearance;
+    const oz = sh.height;
+    const d = Math.hypot(aim.x - ox, aim.y - oy);
+    const arc = t.arc ?? (t.aperture!.entry === 'down' ? 'high' : 'low');
+    const pitch0 = launchPitch(sh.exitSpeed, d, aim.z - oz, arc);
+    if (pitch0 === null) return;
+    const spread = (sh.spreadDeg * Math.PI) / 180;
+    const yaw = Math.atan2(aim.y - oy, aim.x - ox) + gaussian(this.random) * spread;
+    const pitch = pitch0 + gaussian(this.random) * spread;
+    let vx = sh.exitSpeed * Math.cos(pitch) * Math.cos(yaw);
+    let vy = sh.exitSpeed * Math.cos(pitch) * Math.sin(yaw);
+    const vz = sh.exitSpeed * Math.sin(pitch);
+    if (!sh.shootOnMove) {
+      vx += r.vx;
+      vy += r.vy;
+    }
+    r.held.splice(r.held.indexOf(best.pieceType), 1);
+    this.release(piece, { x: ox, y: oy, z: oz }, { x: vx, y: vy, z: vz });
+    r.shootCooldown = sh.reloadSec;
+    r.stats.shotsTaken++;
+  }
+
+  private release(p: Piece, pos: Vec3, vel: Vec3): void {
+    p.status = 'field';
+    p.heldBy = null;
+    p.body.setEnabled(true);
+    p.body.setTranslation(pos, true);
+    p.body.setLinvel(vel, true);
+    p.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  }
+
+  private eject(r: Robot): void {
+    const type = r.held.shift()!;
+    const piece = this.pieces.find((p) => p.status === 'held' && p.heldBy === r.id && p.type.id === type)!;
+    const off = r.archetype.frame.length / 2 + piece.radius + 0.05;
+    const c = Math.cos(r.yaw);
+    const s = Math.sin(r.yaw);
+    this.release(
+      piece,
+      { x: r.x + c * off, y: r.y + s * off, z: piece.radius + 0.02 },
+      { x: r.vx + c * 1.5, y: r.vy + s * 1.5, z: 0 },
+    );
+    r.intakeCooldown = 0.5;
+  }
+
+  // ------------------------------------------------------------------ scoring
+
+  private trackTouches(): void {
+    for (const r of this.robots) {
+      const reach = Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.05;
+      for (const p of this.pieces) {
+        if (p.status !== 'field') continue;
+        const pos = p.position;
+        if (
+          Math.hypot(pos.x - r.x, pos.y - r.y) < reach + p.radius &&
+          pos.z < r.archetype.frame.height + 0.3
+        ) {
+          p.lastTouch = r.id;
+          p.lastTouchAlliance = r.alliance;
+        }
+      }
+    }
+  }
+
+  private checkApertures(): void {
+    for (const p of this.pieces) {
+      if (p.status !== 'field') continue;
+      const pos = p.position;
+      for (const ts of this.targets.values()) {
+        const ap = ts.target.aperture;
+        if (!ap || !ts.enabled || !ts.target.accepts.includes(p.type.id)) continue;
+        const dx = pos.x - ap.center.x;
+        const dy = pos.y - ap.center.y;
+        const c = Math.cos(-(ap.yaw ?? 0));
+        const s = Math.sin(-(ap.yaw ?? 0));
+        const lx = dx * c - dy * s;
+        const ly = dx * s + dy * c;
+        if (
+          Math.abs(lx) > ap.size.x / 2 ||
+          Math.abs(ly) > ap.size.y / 2 ||
+          Math.abs(pos.z - ap.center.z) > ap.size.z / 2
+        )
+          continue;
+        if (ap.entry === 'down' && p.body.linvel().z > 0) continue;
+        if (ts.target.capacity !== undefined && ts.count >= ts.target.capacity) continue;
+        this.scorePiece(p, ts, p.lastTouch);
+        break;
+      }
+    }
+  }
+
+  private scorePiece(p: Piece, ts: TargetState, robotId: number | null): void {
+    const t = ts.target;
+    const alliance =
+      (t.creditTo ?? (t.alliance ? 'owner' : 'scorer')) === 'owner' ? t.alliance : p.lastTouchAlliance;
+    p.status = 'scored';
+    p.scoredIn = t.id;
+    p.body.setEnabled(false);
+    ts.count++;
+    const per = this.scoringPeriod;
+    ts.countByPhase[per]++;
+    if (t.afterScore?.kind === 'recycle') {
+      p.status = 'queued';
+      p.releaseAt = this.time + t.afterScore.delaySec;
+      p.releaseExit = ts.recycleCursor++ % t.afterScore.exits.length;
+      this.recycleQueue.push({ piece: p, target: t });
+    }
+    if (!alliance) return;
+    let points = t.points[per] * ts.multiplier;
+    const override = this.def.rules?.onScore?.(this.rulesCtx, {
+      time: this.time,
+      phase: this.phase,
+      alliance,
+      targetId: t.id,
+      pieceType: p.type.id,
+      robotId,
+      points,
+    });
+    if (typeof override === 'number') points = override;
+    if (robotId !== null) this.robots[robotId]!.stats.piecesScored++;
+    this.ledger.add({ time: this.time, alliance, category: per, points, source: t.id, robotId });
+  }
+
+  private processRecycle(): void {
+    for (let i = this.recycleQueue.length - 1; i >= 0; i--) {
+      const { piece, target } = this.recycleQueue[i]!;
+      if (this.time < piece.releaseAt || target.afterScore?.kind !== 'recycle') continue;
+      this.recycleQueue.splice(i, 1);
+      const exit = target.afterScore.exits[piece.releaseExit]!;
+      this.release(piece, exit, target.afterScore.exitVelocity ?? { x: 0, y: 0, z: 0 });
+      piece.scoredIn = null;
+      piece.lastTouch = null;
+      piece.lastTouchAlliance = null;
+    }
+  }
+
+  private trackLeave(r: Robot): void {
+    if (this.phase !== 'auto') return;
+    for (const aw of this.game.awards) {
+      if (
+        aw.kind !== 'leaveZoneInAuto' ||
+        (aw.alliance && aw.alliance !== r.alliance) ||
+        r.leftZones.has(aw.id)
+      )
+        continue;
+      const corners = footprint(r.x, r.y, r.yaw, r.archetype.frame.length, r.archetype.frame.width);
+      if (corners.every((c) => !pointInRegion(c, aw.zone))) r.leftZones.add(aw.id);
+    }
+  }
+
+  private awardLeave(): void {
+    for (const r of this.robots) {
+      for (const aw of this.game.awards) {
+        if (aw.kind === 'leaveZoneInAuto' && r.leftZones.has(aw.id)) {
+          this.ledger.add({
+            time: this.time,
+            alliance: r.alliance,
+            category: 'auto',
+            points: aw.points,
+            source: aw.id,
+            robotId: r.id,
+          });
+        }
+      }
+    }
+  }
+
+  private finish(): void {
+    for (const r of this.robots) {
+      if (r.endgameDone) continue;
+      for (const aw of this.game.awards) {
+        if (aw.kind !== 'inZoneAtEnd' || (aw.alliance && aw.alliance !== r.alliance)) continue;
+        if (pointInRegion(r, aw.zone)) {
+          this.ledger.add({
+            time: this.time,
+            alliance: r.alliance,
+            category: 'endgame',
+            points: aw.points,
+            source: aw.id,
+            robotId: r.id,
+          });
+          break;
+        }
+      }
+    }
+    this.def.rules?.onMatchEnd?.(this.rulesCtx);
+  }
+
+  addFoul(against: Alliance, severity: 'minor' | 'major', reason: string): void {
+    this.fouls[against][severity]++;
+    this.ledger.add({
+      time: this.time,
+      alliance: other(against),
+      category: 'penalty',
+      points: this.def.fouls[severity],
+      source: `foul:${reason}`,
+      robotId: null,
+    });
+    this.announce(`${severity.toUpperCase()} FOUL on ${against}: ${reason}`, against);
+  }
+
+  announce(text: string, alliance?: Alliance): void {
+    this.announcements.push({ time: this.time, text, ...(alliance ? { alliance } : {}) });
+  }
+
+  // ------------------------------------------------------------------ results
+
+  summary(alliance: Alliance): AllianceSummary {
+    const targetCounts: Record<string, { auto: number; teleop: number }> = {};
+    for (const [id, ts] of this.targets) {
+      const t = ts.target;
+      const credited = (t.creditTo ?? (t.alliance ? 'owner' : 'scorer')) === 'owner' ? t.alliance : null;
+      if (credited === alliance || credited === null) targetCounts[id] = { ...ts.countByPhase };
+    }
+    const endgame: Record<string, number> = {};
+    for (const r of this.robots) {
+      if (r.alliance === alliance && r.endgameDone) {
+        const base = this.game.endgame.find((e) => e.id === r.endgameDone!.actionId)!.baseId;
+        endgame[base] = (endgame[base] ?? 0) + 1;
+      }
+    }
+    return {
+      alliance,
+      score: this.ledger.total(alliance),
+      breakdown: this.ledger.breakdown(alliance),
+      targetCounts,
+      endgame,
+      fouls: { ...this.fouls[alliance] },
+    };
+  }
+
+  /** Piece count in targets matching a piecesAtLeast rule, attributed to this alliance. */
+  private piecesFor(alliance: Alliance, tags?: string[], ids?: string[]): number {
+    let n = 0;
+    for (const e of this.ledger.entries) {
+      if (e.alliance !== alliance || (e.category !== 'auto' && e.category !== 'teleop')) continue;
+      const ts = this.targets.get(e.source);
+      if (!ts) continue;
+      const t = ts.target;
+      const tagOk = tags?.some((tag) => t.tags?.includes(tag)) ?? false;
+      const idOk = ids?.includes(t.baseId) ?? false;
+      if ((!tags && !ids) || tagOk || idOk) n++;
+    }
+    return n;
+  }
+
+  getResult(): MatchResult {
+    if (this.result) return this.result;
+    const blue = this.summary('blue');
+    const red = this.summary('red');
+    const rp = (own: AllianceSummary, opp: AllianceSummary): AllianceResult => {
+      const rules = this.def.rankingPoints;
+      const won = own.score > opp.score;
+      const tied = own.score === opp.score;
+      const rpBreakdown: Record<string, number> = {};
+      if (won) rpBreakdown.win = rules.win;
+      if (tied) rpBreakdown.tie = rules.tie;
+      for (const b of rules.bonuses) {
+        let ok = false;
+        switch (b.kind) {
+          case 'scoreAtLeast':
+            ok = own.score >= b.points;
+            break;
+          case 'piecesAtLeast':
+            ok = this.piecesFor(own.alliance, b.tags, b.targetIds) >= b.count;
+            break;
+          case 'endgamePointsAtLeast':
+            ok = own.breakdown.endgame >= b.points;
+            break;
+          case 'custom':
+            ok = b.check(own, opp);
+            break;
+        }
+        if (ok) rpBreakdown[b.id] = b.rp;
+      }
+      return { ...own, rp: Object.values(rpBreakdown).reduce((a, c) => a + c, 0), rpBreakdown, won, tied };
+    };
+    const result: MatchResult = {
+      blue: rp(blue, red),
+      red: rp(red, blue),
+      robots: this.robots.map((r) => ({
+        id: r.id,
+        alliance: r.alliance,
+        archetype: r.archetype.id,
+        points: this.ledger.byRobot(r.id),
+        ...r.stats,
+      })),
+    };
+    if (this.isOver) this.result = result;
+    return result;
+  }
+
+  robotInfo(r: Robot): RobotInfo {
+    return {
+      id: r.id,
+      alliance: r.alliance,
+      x: r.x,
+      y: r.y,
+      yaw: r.yaw,
+      held: [...r.held],
+      endgameAction: r.endgameDone?.actionId ?? null,
+    };
+  }
+
+  private makeRulesContext(): RulesContext {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const m = this;
+    return {
+      get time() {
+        return m.time;
+      },
+      get phase() {
+        return m.phase;
+      },
+      get remaining() {
+        return m.remaining;
+      },
+      get endgame() {
+        return m.isEndgame;
+      },
+      vars: m.vars,
+      addPoints(alliance: Alliance, category: ScoreCategory, points: number, source: string) {
+        m.ledger.add({ time: m.time, alliance, category, points, source, robotId: null });
+      },
+      foul: (against, severity, reason) => m.addFoul(against, severity, reason),
+      targetCount: (id) => m.targets.get(id)?.count ?? 0,
+      setTargetEnabled: (id, enabled) => {
+        const ts = m.targets.get(id);
+        if (ts) ts.enabled = enabled;
+      },
+      setTargetMultiplier: (id, multiplier) => {
+        const ts = m.targets.get(id);
+        if (ts) ts.multiplier = multiplier;
+      },
+      robots: () => m.robots.map((r) => m.robotInfo(r)),
+      spawnPiece: (type, pos, vel) => void m.spawnPiece(type, pos, vel),
+      announce: (text, alliance) => m.announce(text, alliance),
+      setIndicator: (key, value) => {
+        if (value === null) m.indicators.delete(key);
+        else m.indicators.set(key, value);
+      },
+      random: () => m.random(),
+    };
+  }
+}
