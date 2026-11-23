@@ -14,6 +14,10 @@ Status of the build plan. Update this file in every PR.
 
 ## Known gaps / ideas
 
+- Bots don't reason about opponents beyond avoidance and the simple defense role. There's no shot-blocking or counter-defense.
+- Bots don't plan auto routines per game. Auto uses the same planner, restricted to the bot's own half of the field.
+- The reference game's tower recycles orbs right back to midfield, so scores are unrealistically high (~650/alliance). That's fine for an engine test, but don't calibrate against it.
+
 - No touch controls, so phones and tablets can only use the menus. Matches need a keyboard or gamepad.
 - The bundle is about 4.9 MB (Rapier's WASM is inlined by `rapier3d-compat`). Consider the non-compat build with a separate `.wasm` file if load time matters on school networks.
 - Robots are drawn as generic boxes. Archetypes could get a simple visual hint per mechanism (shooter hood, elevator).

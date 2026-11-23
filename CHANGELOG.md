@@ -4,6 +4,8 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- M4: generic bot AI (nav grid + A*, cycle-rate utility planner, shot spots, approach headings, endgame timing, defense role, easy/normal/hard), wired into the client. The menu gains partner/opponent difficulty, mixed robot types, and an auto-routine toggle for the player. Adds a headless `npm run sim` CLI.
+
 - M3: playable 3D client. It has a Three.js field built from the definition, driver-station/chase/overhead cameras, field-oriented keyboard and gamepad driving, auto-intake, a HUD with context hints, indicators and announcements, a pause menu, and a results screen with score and RP breakdowns.
 
 - M2: fictional reference game `0000-reference` (shooting, placing, both station modes, recycling, climb, awards, RPs, Overdrive rules hook), games registry, and per-game validity/smoke tests. Shooters now solve for hood pitch and flywheel speed within `pitchRangeDeg`. Pieces have no drag in flight and rolling resistance on the ground.

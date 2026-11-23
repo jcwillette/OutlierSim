@@ -1,0 +1,700 @@
+import { solveShot } from '../sim/ballistics.ts';
+import type { XTarget } from '../sim/expand.ts';
+import { IDLE, type Match, type Robot, type RobotCommand, type RobotController } from '../sim/match.ts';
+import { clamp, pointInRegion, regionCenter, wrapAngle } from '../sim/math.ts';
+import type { Alliance, Vec2 } from '../sim/types.ts';
+import { NavGrid } from './navgrid.ts';
+
+/**
+ * Generic bot AI that plays any GameDefinition. Utility-based cycle planner:
+ *   acquire (field piece or HP station) -> score (place or shoot from a precomputed spot) -> repeat,
+ *   head to endgame in time, optional defense role. Bots only use the same RobotCommand interface
+ *   (and Match query helpers) as the human player: no cheating mechanics.
+ */
+
+export type Difficulty = 'easy' | 'normal' | 'hard';
+
+interface Skill {
+  /** Fraction of max speed used. */
+  speed: number;
+  /** Seconds between re-decisions. */
+  think: number;
+  /** Random utility noise (0 = always optimal). */
+  noise: number;
+  /** Pause before pressing score after arriving. */
+  dwell: number;
+}
+
+export const SKILL: Record<Difficulty, Skill> = {
+  easy: { speed: 0.65, think: 0.9, noise: 0.6, dwell: 0.7 },
+  normal: { speed: 0.85, think: 0.4, noise: 0.25, dwell: 0.25 },
+  hard: { speed: 1, think: 0.15, noise: 0.05, dwell: 0.05 },
+};
+
+type Plan =
+  | { kind: 'acquire'; pieceId: number; point: Vec2; approachYaw: number }
+  | { kind: 'station'; stationId: string; point: Vec2 }
+  | { kind: 'place'; targetId: string; point: Vec2; face?: Vec2 }
+  | { kind: 'shoot'; targetId: string; point: Vec2; aim: Vec2 }
+  | { kind: 'endgame'; actionId: string; zoneIndex: number; point: Vec2 }
+  | { kind: 'park'; point: Vec2 }
+  | { kind: 'defend'; opponentId: number; point: Vec2 }
+  | { kind: 'idle' };
+
+interface Option {
+  plan: Plan;
+  utility: number;
+  claim?: string;
+}
+
+// ------------------------------------------------------------------ shared per-match state
+
+interface MatchAI {
+  grids: Map<number, NavGrid>;
+  shotSpots: Map<string, Vec2[]>;
+  claims: Record<Alliance, Map<string, number>>;
+}
+const matchAI = new WeakMap<Match, MatchAI>();
+
+function aiFor(m: Match): MatchAI {
+  let s = matchAI.get(m);
+  if (!s) {
+    s = { grids: new Map(), shotSpots: new Map(), claims: { blue: new Map(), red: new Map() } };
+    matchAI.set(m, s);
+  }
+  return s;
+}
+
+function gridFor(m: Match, r: Robot): NavGrid {
+  const ai = aiFor(m);
+  const inflate =
+    Math.round((Math.max(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.08) * 20) / 20;
+  let g = ai.grids.get(inflate);
+  if (!g) {
+    g = new NavGrid(m.game, inflate);
+    ai.grids.set(inflate, g);
+  }
+  return g;
+}
+
+/** Spots from which this robot's shooter can reach `target` (static geometry only). */
+function shotSpots(m: Match, r: Robot, t: XTarget): Vec2[] {
+  const ai = aiFor(m);
+  const key = `${r.archetype.id}|${t.id}`;
+  let spots = ai.shotSpots.get(key);
+  if (spots) return spots;
+  spots = [];
+  const sh = r.archetype.shooter;
+  if (sh && t.aperture) {
+    const aim = t.aimPoint ?? t.aperture.center;
+    const grid = gridFor(m, r);
+    const launchZ = Math.max(sh.height, r.archetype.frame.height + 0.12);
+    const down = t.aperture.entry === 'down';
+    for (let d = 1.2; d <= sh.maxRange * 0.9; d += 0.4) {
+      for (let k = 0; k < 32; k++) {
+        const a = (k / 32) * 2 * Math.PI;
+        const p = { x: aim.x + d * Math.cos(a), y: aim.y + d * Math.sin(a) };
+        if (!grid.isFree(p)) continue;
+        if (
+          !solveShot(
+            sh.exitSpeed,
+            d,
+            aim.z - launchZ,
+            t.arc ?? (down ? 'high' : 'low'),
+            sh.pitchRangeDeg,
+            down,
+          )
+        )
+          continue;
+        spots.push(p);
+      }
+    }
+  }
+  ai.shotSpots.set(key, spots);
+  return spots;
+}
+
+// ------------------------------------------------------------------ brain
+
+export interface BotOptions {
+  difficulty?: Difficulty;
+  role?: 'score' | 'defense';
+}
+
+export class BotBrain implements RobotController {
+  private plan: Plan = { kind: 'idle' };
+  private claim: string | null = null;
+  private path: Vec2[] = [];
+  private pathGoal: Vec2 | null = null;
+  private pathAge = 0;
+  private thinkTimer = 0;
+  private arrivedFor = 0;
+  private stuckTimer = 0;
+  private stuckFrom: Vec2 = { x: 0, y: 0 };
+  private detour: Vec2 | null = null;
+  private readonly skill: Skill;
+  /** Piece id -> match time until which this bot ignores it (it got stuck going for it). */
+  private readonly blacklist = new Map<number, number>();
+  readonly role: 'score' | 'defense';
+
+  constructor(opts: BotOptions = {}) {
+    this.skill = SKILL[opts.difficulty ?? 'normal'];
+    this.role = opts.role ?? 'score';
+  }
+
+  get currentPlan(): Plan {
+    return this.plan;
+  }
+
+  command(m: Match, r: Robot, dt: number): RobotCommand {
+    if (r.endgameDone) return IDLE;
+    this.thinkTimer -= dt;
+    this.pathAge += dt;
+    if (!r.action && (this.thinkTimer <= 0 || !this.planValid(m, r))) {
+      this.decide(m, r);
+      this.thinkTimer = this.skill.think * (0.75 + 0.5 * m.random());
+    }
+    this.checkStuck(m, r, dt);
+    return this.execute(m, r, dt);
+  }
+
+  // ---------------------------------------------------------------- decision
+
+  private setClaim(m: Match, r: Robot, key: string | null): void {
+    const claims = aiFor(m).claims[r.alliance];
+    if (this.claim && claims.get(this.claim) === r.id) claims.delete(this.claim);
+    this.claim = key;
+    if (key) claims.set(key, r.id);
+  }
+
+  private claimedByOther(m: Match, r: Robot, key: string): boolean {
+    const owner = aiFor(m).claims[r.alliance].get(key);
+    return owner !== undefined && owner !== r.id;
+  }
+
+  private planValid(m: Match, r: Robot): boolean {
+    const p = this.plan;
+    switch (p.kind) {
+      case 'idle':
+        return false;
+      case 'acquire': {
+        const piece = m.pieces[p.pieceId];
+        return !!piece && piece.status === 'field' && r.canHold(piece.type.id);
+      }
+      case 'station':
+        return r.held.length < r.totalCapacity;
+      case 'place':
+      case 'shoot': {
+        const ts = m.targets.get(p.targetId);
+        return !!ts && ts.enabled && r.held.some((h) => ts.target.accepts.includes(h));
+      }
+      default:
+        return true;
+    }
+  }
+
+  private travelTime(m: Match, r: Robot, p: Vec2): number {
+    return (Math.hypot(p.x - r.x, p.y - r.y) * 1.25) / (r.archetype.drive.maxSpeed * this.skill.speed) + 0.3;
+  }
+
+  private period(m: Match): 'auto' | 'teleop' {
+    return m.phase === 'auto' ? 'auto' : 'teleop';
+  }
+
+  private weight(m: Match, t: XTarget): number {
+    return m.def.botHints?.targetWeights?.[t.baseId] ?? 1;
+  }
+
+  private usableTarget(m: Match, r: Robot, t: XTarget): boolean {
+    const ts = m.targets.get(t.id)!;
+    if (!ts.enabled) return false;
+    if (t.alliance && (t.creditTo ?? 'owner') === 'owner' && t.alliance !== r.alliance) return false;
+    if (t.capacity !== undefined && ts.count >= t.capacity) return false;
+    return this.weight(m, t) > 0;
+  }
+
+  /**
+   * Heading from which the robot can drive its intake onto a piece at `pos` (robot center must be able
+   * to stand just behind it), preferring the heading straight from the robot. Null if unreachable.
+   */
+  private approachYaw(m: Match, r: Robot, pos: Vec2): number | null {
+    const grid = gridFor(m, r);
+    const back = r.archetype.frame.length / 2 + 0.25;
+    const direct = Math.atan2(pos.y - r.y, pos.x - r.x);
+    for (const off of [0, 0.5, -0.5, 1, -1, 1.6, -1.6, 2.3, -2.3, Math.PI]) {
+      const yaw = direct + off;
+      const stand = { x: pos.x - Math.cos(yaw) * back, y: pos.y - Math.sin(yaw) * back };
+      if (grid.isFree(stand)) return yaw;
+    }
+    return null;
+  }
+
+  private travelBetween(r: Robot, a: Vec2, b: Vec2): number {
+    return (Math.hypot(b.x - a.x, b.y - a.y) * 1.25) / (r.archetype.drive.maxSpeed * this.skill.speed) + 0.3;
+  }
+
+  /** Best-rate way to score one piece of `type` starting from `from`: points and time (travel + action). */
+  private scoreTrip(m: Match, r: Robot, from: Vec2, type: string): { pts: number; time: number } | null {
+    const per = this.period(m);
+    let best: { pts: number; time: number } | null = null;
+    let bestRate = 0;
+    const consider = (pts: number, time: number) => {
+      if (pts > 0 && pts / time > bestRate) {
+        bestRate = pts / time;
+        best = { pts, time };
+      }
+    };
+    for (const t of m.game.targets) {
+      if (!t.accepts.includes(type) || !this.usableTarget(m, r, t)) continue;
+      const pts = t.points[per] * this.weight(m, t);
+      const placeTime = t.place ? r.placeTime(t) : null;
+      if (t.place && placeTime !== null)
+        consider(pts, this.travelBetween(r, from, regionCenter(t.place.zone)) + placeTime);
+      const sh = r.archetype.shooter;
+      if (t.aperture && sh?.pieceTypes.includes(type)) {
+        let bestD = Infinity;
+        let spot: Vec2 | null = null;
+        for (const s of shotSpots(m, r, t)) {
+          const d = Math.hypot(s.x - from.x, s.y - from.y);
+          if (d < bestD) {
+            bestD = d;
+            spot = s;
+          }
+        }
+        if (spot) consider(pts, this.travelBetween(r, from, spot) + sh.reloadSec + 0.4);
+      }
+    }
+    return best;
+  }
+
+  /** Utility of fetching a piece of `type` at `at`: points per second over the whole resulting cycle. */
+  private fetchUtility(m: Match, r: Robot, at: Vec2, type: string, fetchTime: number): number {
+    const trip = this.scoreTrip(m, r, at, type);
+    if (!trip) return 0;
+    let pts = trip.pts;
+    let time = this.travelTime(m, r, at) + fetchTime + trip.time;
+    // Pieces already held get scored on the same trip (roughly one extra action each).
+    for (const h of r.held) {
+      const ht = this.scoreTrip(m, r, at, h);
+      if (ht) {
+        pts += ht.pts;
+        time += 0.6;
+      }
+    }
+    return pts / time;
+  }
+
+  private noise(m: Match): number {
+    return 1 + (m.random() * 2 - 1) * this.skill.noise;
+  }
+
+  private scoreOptions(m: Match, r: Robot): Option[] {
+    const out: Option[] = [];
+    const per = this.period(m);
+    for (const t of m.game.targets) {
+      if (!this.usableTarget(m, r, t)) continue;
+      const pts = t.points[per] * this.weight(m, t);
+      if (pts <= 0) continue;
+      if (t.place && r.held.some((h) => t.accepts.includes(h))) {
+        const time = r.placeTime(t);
+        if (time !== null) {
+          const point = gridFor(m, r).nearestFree(regionCenter(t.place.zone));
+          if (pointInRegion(point, t.place.zone)) {
+            // Soft claim: a teammate already headed here means waiting for them.
+            const claim = `place:${t.id}`;
+            const wait = this.claimedByOther(m, r, claim) ? time + 2 : 0;
+            out.push({
+              plan: {
+                kind: 'place',
+                targetId: t.id,
+                point,
+                ...(t.place.facePoint ? { face: t.place.facePoint } : {}),
+              },
+              utility: (pts / (this.travelTime(m, r, point) + time + wait)) * this.noise(m),
+              claim,
+            });
+          }
+        }
+      }
+      const sh = r.archetype.shooter;
+      if (t.aperture && sh && r.held.some((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h))) {
+        const spots = shotSpots(m, r, t);
+        let best: Vec2 | null = null;
+        let bestD = Infinity;
+        for (const s of spots) {
+          const d = Math.hypot(s.x - r.x, s.y - r.y);
+          if (d < bestD) {
+            bestD = d;
+            best = s;
+          }
+        }
+        if (best) {
+          const aim = t.aimPoint ?? t.aperture.center;
+          const nShots = r.held.filter((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h)).length;
+          out.push({
+            plan: { kind: 'shoot', targetId: t.id, point: best, aim },
+            utility:
+              ((pts * nShots) / (this.travelTime(m, r, best) + sh.reloadSec * nShots + 0.4)) * this.noise(m),
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  private acquireOptions(m: Match, r: Robot): Option[] {
+    return this.rawAcquireOptions(m, r).filter((o) => o.utility > 0);
+  }
+
+  private rawAcquireOptions(m: Match, r: Robot): Option[] {
+    const out: Option[] = [];
+    const intake = r.archetype.intake;
+    if (!intake) return out;
+    const grid = gridFor(m, r);
+    for (const p of m.pieces) {
+      if (p.status !== 'field' || !intake.pieceTypes.includes(p.type.id) || !r.canHold(p.type.id)) continue;
+      const pos = p.position;
+      if (pos.z > (intake.maxHeight ?? 0.3) + 0.2) continue; // in flight
+      const claim = `piece:${p.id}`;
+      if (this.claimedByOther(m, r, claim)) continue;
+      if (this.blacklist.has(p.id) && (this.blacklist.get(p.id) ?? 0) > m.time) continue;
+      const approachYaw = this.approachYaw(m, r, pos);
+      if (approachYaw === null) continue; // no way to get an intake on it (e.g. against a wall)
+      const point = { x: pos.x, y: pos.y };
+      // Don't chase pieces deep in the opponent's half in auto.
+      if (m.phase === 'auto') {
+        const L = m.def.field.length;
+        const ownHalf = r.alliance === 'blue' ? pos.x < L / 2 + 1 : pos.x > L / 2 - 1;
+        if (!ownHalf) continue;
+      }
+      out.push({
+        plan: { kind: 'acquire', pieceId: p.id, point, approachYaw },
+        utility: this.fetchUtility(m, r, point, p.type.id, intake.timeSec + 0.8) * this.noise(m),
+        claim,
+      });
+    }
+    for (const st of m.game.stations) {
+      if (m.phase === 'auto') break; // human players feed in teleop
+      if (st.alliance && st.alliance !== r.alliance) continue;
+      const type = st.pieceTypes.find((t) => r.canHold(t) && intake.pieceTypes.includes(t));
+      if (!type) continue;
+      const used = m.stationUsed.get(`${st.id}:${r.alliance}`) ?? 0;
+      if (st.supply !== undefined && used >= st.supply) continue;
+      const point = grid.nearestFree(regionCenter(st.zone));
+      if (!pointInRegion(point, st.zone)) continue;
+      const claim = `station:${st.id}`;
+      const wait = this.claimedByOther(m, r, claim) ? st.feedIntervalSec * 2 : 0;
+      out.push({
+        plan: { kind: 'station', stationId: st.id, point },
+        utility: this.fetchUtility(m, r, point, type, st.feedIntervalSec * 0.5 + 0.8 + wait) * this.noise(m),
+        claim,
+      });
+    }
+    return out;
+  }
+
+  private endgameOption(m: Match, r: Robot): Option | null {
+    if (m.phase !== 'teleop' || !r.archetype.endgame) return null;
+    const pref = m.def.botHints?.endgamePreference;
+    let best: Option | null = null;
+    for (const a of m.game.endgame) {
+      if (a.alliance && a.alliance !== r.alliance) continue;
+      const dur = r.archetype.endgame[a.baseId];
+      if (dur === undefined) continue;
+      const rank = pref ? pref.indexOf(a.baseId) : -1;
+      if (pref && rank < 0) continue;
+      a.zones.forEach((z, zoneIndex) => {
+        const claim = `eg:${a.id}:${zoneIndex}`;
+        if (this.claimedByOther(m, r, claim)) return;
+        const occupied = m.robots.some(
+          (o) => o !== r && o.endgameDone?.actionId === a.id && o.endgameDone.zoneIndex === zoneIndex,
+        );
+        if (occupied && (a.maxRobotsPerZone ?? Infinity) <= 1) return;
+        const point = gridFor(m, r).nearestFree(regionCenter(z));
+        const need =
+          this.travelTime(m, r, point) * 1.4 + dur + (m.def.botHints?.endgameLeadSec ?? 3) + this.skill.think;
+        if (m.remaining > need) return;
+        const utility = a.points / (rank >= 0 ? rank + 1 : 1) - this.travelTime(m, r, point);
+        if (!best || utility > best.utility)
+          best = { plan: { kind: 'endgame', actionId: a.id, zoneIndex, point }, utility, claim };
+      });
+    }
+    return best;
+  }
+
+  private parkOption(m: Match, r: Robot): Option | null {
+    if (m.phase !== 'teleop') return null;
+    for (const aw of m.game.awards) {
+      if (aw.kind !== 'inZoneAtEnd' || (aw.alliance && aw.alliance !== r.alliance)) continue;
+      const point = gridFor(m, r).nearestFree(regionCenter(aw.zone));
+      if (m.remaining <= this.travelTime(m, r, point) * 1.5 + 2)
+        return { plan: { kind: 'park', point }, utility: aw.points };
+    }
+    return null;
+  }
+
+  private defenseOption(m: Match, r: Robot): Option | null {
+    if (this.role !== 'defense' || m.phase !== 'teleop') return null;
+    const opps = m.robots.filter((o) => o.alliance !== r.alliance && !o.endgameDone);
+    if (!opps.length) return null;
+    // Mark the opponent carrying the most pieces, nearest first.
+    opps.sort(
+      (a, b) =>
+        b.held.length - a.held.length || Math.hypot(a.x - r.x, a.y - r.y) - Math.hypot(b.x - r.x, b.y - r.y),
+    );
+    const o = opps[0]!;
+    const L = m.def.field.length;
+    const home = o.alliance === 'blue' ? 0 : L;
+    const dir = Math.sign(home - o.x) || 1;
+    return { plan: { kind: 'defend', opponentId: o.id, point: { x: o.x + dir * 1.0, y: o.y } }, utility: 1 };
+  }
+
+  private decide(m: Match, r: Robot): void {
+    const priority =
+      this.endgameOption(m, r) ??
+      (r.archetype.endgame ? null : this.parkOption(m, r)) ??
+      this.defenseOption(m, r);
+    let choice: Option | null = priority;
+    if (!choice) {
+      const opts = this.cycleOptions(m, r).sort((a, b) => b.utility - a.utility);
+      choice = opts[0] ?? null;
+      // Hysteresis: stick with the current plan unless something is clearly better.
+      const current = opts.find((o) => samePlan(this.plan, o.plan));
+      if (current && choice && choice.utility < current.utility * 1.3) choice = current;
+    }
+    const plan = choice?.plan ?? { kind: 'idle' };
+    if (choice && samePlan(this.plan, plan)) return;
+    this.plan = plan;
+    this.setClaim(m, r, choice?.claim ?? null);
+    this.arrivedFor = 0;
+    this.path = [];
+    this.pathGoal = null;
+  }
+
+  private cycleOptions(m: Match, r: Robot): Option[] {
+    const room = r.held.length < r.totalCapacity;
+    return [...this.scoreOptions(m, r), ...(room ? this.acquireOptions(m, r) : [])];
+  }
+
+  // ---------------------------------------------------------------- execution
+
+  private checkStuck(m: Match, r: Robot, dt: number): void {
+    if (r.action || this.plan.kind === 'idle' || this.arrivedFor > 0) {
+      this.stuckTimer = 0;
+      this.stuckFrom = { x: r.x, y: r.y };
+      return;
+    }
+    this.stuckTimer += dt;
+    if (this.stuckTimer > 1.5) {
+      const moved = Math.hypot(r.x - this.stuckFrom.x, r.y - this.stuckFrom.y);
+      if (moved < 0.2) {
+        // Back off in a random direction, then re-plan (and give up this claim).
+        const a = m.random() * 2 * Math.PI;
+        this.detour = gridFor(m, r).nearestFree({ x: r.x + Math.cos(a) * 1.2, y: r.y + Math.sin(a) * 1.2 });
+        if (this.plan.kind === 'acquire') this.blacklist.set(this.plan.pieceId, m.time + 6);
+        this.setClaim(m, r, null);
+        this.plan = { kind: 'idle' };
+      }
+      this.stuckTimer = 0;
+      this.stuckFrom = { x: r.x, y: r.y };
+    }
+  }
+
+  private steer(
+    m: Match,
+    r: Robot,
+    goal: Vec2,
+    finalApproach: boolean,
+  ): { vx: number; vy: number; dist: number } {
+    const grid = gridFor(m, r);
+    if (
+      !this.pathGoal ||
+      Math.hypot(goal.x - this.pathGoal.x, goal.y - this.pathGoal.y) > 0.3 ||
+      this.pathAge > 1
+    ) {
+      this.path = finalApproach ? [goal] : grid.findPath(r, goal);
+      if (!this.path.length) this.path = [goal];
+      this.pathGoal = goal;
+      this.pathAge = 0;
+    }
+    while (this.path.length > 1 && Math.hypot(this.path[0]!.x - r.x, this.path[0]!.y - r.y) < 0.35)
+      this.path.shift();
+    const wp = this.path[0] ?? goal;
+    const dist = Math.hypot(goal.x - r.x, goal.y - r.y);
+    let dx = wp.x - r.x;
+    let dy = wp.y - r.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const speed = this.skill.speed * clamp(dist / 1.2 + 0.1, 0, 1);
+    dx = (dx / d) * speed;
+    dy = (dy / d) * speed;
+    // Simple avoidance of other robots (not the one we're defending).
+    const ignore = this.plan.kind === 'defend' ? this.plan.opponentId : -1;
+    for (const o of m.robots) {
+      if (o === r || o.id === ignore) continue;
+      const ox = r.x - o.x;
+      const oy = r.y - o.y;
+      const od = Math.hypot(ox, oy);
+      if (od < 1.4 && od > 1e-3) {
+        const push = ((1.4 - od) / 1.4) * 0.6;
+        dx += (ox / od) * push;
+        dy += (oy / od) * push;
+      }
+    }
+    return { vx: dx, vy: dy, dist };
+  }
+
+  private faceCmd(r: Robot, yaw: number): number {
+    return clamp(wrapAngle(yaw - r.yaw) * 2.5, -1, 1) * Math.max(0.5, this.skill.speed);
+  }
+
+  private execute(m: Match, r: Robot, dt: number): RobotCommand {
+    if (r.action) return IDLE;
+    const cmd: RobotCommand = { ...IDLE, intake: r.held.length < r.totalCapacity };
+    if (this.detour) {
+      const s = this.steer(m, r, this.detour, true);
+      if (s.dist < 0.3) this.detour = null;
+      return { ...cmd, vx: s.vx, vy: s.vy };
+    }
+    const p = this.plan;
+    switch (p.kind) {
+      case 'idle':
+        return cmd;
+      case 'acquire': {
+        const piece = m.pieces[p.pieceId]!;
+        const pos = piece.position;
+        const d = Math.hypot(pos.x - r.x, pos.y - r.y);
+        // Line up behind the piece on the approach heading, then drive through it.
+        const back = r.archetype.frame.length / 2 + 0.25;
+        const stand = {
+          x: pos.x - Math.cos(p.approachYaw) * back,
+          y: pos.y - Math.sin(p.approachYaw) * back,
+        };
+        const lined = Math.abs(wrapAngle(Math.atan2(pos.y - r.y, pos.x - r.x) - p.approachYaw)) < 0.35;
+        const goal = d < back + 0.6 && lined ? { x: pos.x, y: pos.y } : stand;
+        const s = this.steer(m, r, goal, d < 2);
+        const yaw = d < 2.5 ? Math.atan2(pos.y - r.y, pos.x - r.x) : Math.atan2(s.vy, s.vx);
+        const aligned = Math.abs(wrapAngle(yaw - r.yaw)) < 0.5;
+        const k = d < 1.5 && !aligned ? 0.3 : 1;
+        return { ...cmd, vx: s.vx * k, vy: s.vy * k, omega: this.faceCmd(r, yaw), intake: true };
+      }
+      case 'station': {
+        const s = this.steer(m, r, p.point, false);
+        const st = m.game.stations.find((x) => x.id === p.stationId)!;
+        const inside = pointInRegion(r, st.zone);
+        return { ...cmd, vx: inside ? 0 : s.vx, vy: inside ? 0 : s.vy, intake: true };
+      }
+      case 'place': {
+        const s = this.steer(m, r, p.point, false);
+        const ts = m.targets.get(p.targetId)!;
+        const inside = pointInRegion(r, ts.target.place!.zone);
+        const yaw = p.face ? Math.atan2(p.face.y - r.y, p.face.x - r.x) : r.yaw;
+        const omega = s.dist < 2 && p.face ? this.faceCmd(r, yaw) : this.travelFace(r, s);
+        if (inside && s.dist < 0.35) this.arrivedFor += dt;
+        const ready = this.arrivedFor >= this.skill.dwell;
+        return { ...cmd, vx: s.vx, vy: s.vy, omega, score: ready, targetId: p.targetId };
+      }
+      case 'shoot': {
+        const s = this.steer(m, r, p.point, false);
+        const sh = r.archetype.shooter!;
+        const yaw = Math.atan2(p.aim.y - r.y, p.aim.x - r.x);
+        const near = s.dist < 0.4;
+        if (near) this.arrivedFor += dt;
+        const canNow = m.shotOptions(r).some((o) => o.target.id === p.targetId);
+        const settled = near && r.speed < 0.25 && this.arrivedFor >= this.skill.dwell;
+        const fire = canNow && (settled || (sh.shootOnMove ?? false));
+        const omega = s.dist < 2.5 && !sh.turret ? this.faceCmd(r, yaw) : this.travelFace(r, s);
+        return { ...cmd, vx: near ? 0 : s.vx, vy: near ? 0 : s.vy, omega, score: fire, targetId: p.targetId };
+      }
+      case 'endgame': {
+        const s = this.steer(m, r, p.point, false);
+        const a = m.game.endgame.find((e) => e.id === p.actionId)!;
+        const inside = pointInRegion(r, a.zones[p.zoneIndex]!);
+        return {
+          ...cmd,
+          vx: inside && s.dist < 0.25 ? 0 : s.vx,
+          vy: inside && s.dist < 0.25 ? 0 : s.vy,
+          intake: false,
+          endgame: inside,
+          targetId: p.actionId,
+        };
+      }
+      case 'park': {
+        const s = this.steer(m, r, p.point, false);
+        return { ...cmd, vx: s.vx, vy: s.vy };
+      }
+      case 'defend': {
+        const o = m.robots[p.opponentId]!;
+        const L = m.def.field.length;
+        const home = o.alliance === 'blue' ? 0 : L;
+        const dir = Math.sign(home - o.x) || 1;
+        const s = this.steer(m, r, { x: o.x + dir * 0.9, y: o.y }, Math.hypot(o.x - r.x, o.y - r.y) < 3);
+        return { ...cmd, vx: s.vx, vy: s.vy, omega: this.faceCmd(r, Math.atan2(o.y - r.y, o.x - r.x)) };
+      }
+    }
+  }
+
+  private travelFace(r: Robot, s: { vx: number; vy: number }): number {
+    if (Math.hypot(s.vx, s.vy) < 0.2) return 0;
+    return this.faceCmd(r, Math.atan2(s.vy, s.vx)) * 0.6;
+  }
+}
+
+function samePlan(a: Plan, b: Plan): boolean {
+  switch (a.kind) {
+    case 'acquire':
+      return b.kind === 'acquire' && a.pieceId === b.pieceId;
+    case 'station':
+      return b.kind === 'station' && a.stationId === b.stationId;
+    case 'place':
+      return b.kind === 'place' && a.targetId === b.targetId;
+    case 'shoot':
+      return (
+        b.kind === 'shoot' &&
+        a.targetId === b.targetId &&
+        Math.hypot(a.point.x - b.point.x, a.point.y - b.point.y) < 0.8
+      );
+    case 'endgame':
+      return b.kind === 'endgame' && a.actionId === b.actionId && a.zoneIndex === b.zoneIndex;
+    case 'defend':
+      return b.kind === 'defend' && a.opponentId === b.opponentId;
+    default:
+      return a.kind === b.kind;
+  }
+}
+
+// ------------------------------------------------------------------ setup helpers
+
+export interface TeamSetup {
+  partners: Difficulty;
+  opponents: Difficulty;
+  /** Player robot id, or null for all-bot matches. */
+  playerId: number | null;
+}
+
+/** Attach bots to every non-player robot. Defense roles follow `botHints.defenseShare`. */
+export function attachBots(m: Match, setup: TeamSetup): Map<number, BotBrain> {
+  const out = new Map<number, BotBrain>();
+  const share = m.def.botHints?.defenseShare ?? 0;
+  for (const alliance of ['blue', 'red'] as const) {
+    const bots = m.robots.filter((r) => r.alliance === alliance && r.id !== setup.playerId);
+    const nDefense = Math.round(share * bots.length);
+    // Prefer robots that can't score much as defenders.
+    const ranked = [...bots].sort((a, b) => capability(a) - capability(b));
+    const defenders = new Set(ranked.slice(0, nDefense).map((r) => r.id));
+    const playerAlliance = setup.playerId !== null ? m.robots[setup.playerId]!.alliance : 'blue';
+    for (const r of bots) {
+      const brain = new BotBrain({
+        difficulty: alliance === playerAlliance ? setup.partners : setup.opponents,
+        role: defenders.has(r.id) ? 'defense' : 'score',
+      });
+      r.controller = brain;
+      out.set(r.id, brain);
+    }
+  }
+  return out;
+}
+
+function capability(r: Robot): number {
+  const a = r.archetype;
+  return (a.shooter ? 2 : 0) + Object.keys(a.place ?? {}).length + (a.intake ? 1 : 0) + r.totalCapacity * 0.5;
+}
