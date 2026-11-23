@@ -18,9 +18,13 @@ npx vitest run -t "loads Rapier"     # single test by name
 npm run build                        # typecheck + production build to dist/
 npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archetypes a,b,c] [--json out.json]
                                      # headless bot-vs-bot matches (~2.5 s each) -> score/RP/piece stats
+npm run test:e2e                     # build + Playwright: every game loads, plays, no errors; screenshots in test-results/
+npm run calibrate -- --game <id> [--events 2024casj,...] [--matches 30] [--difficulty hard] [--write | --dump]
+tools/ingest-manual.sh <manual.pdf> <id> [--page N]   # -> work/<id>/manual/ (text per page, topic index, sheets, figures)
+tools/ingest-video.sh <video-file-or-URL> <id> [secs] # -> work/<id>/video/ (frames, scene changes, sheets, captions)
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, format check, typecheck, test and build on every PR. `pages.yml` deploys `dist/` on push to `main`, with `VITE_BASE=/<repo>/`.
+CI (`.github/workflows/ci.yml`) runs lint, format check, typecheck, test and build on every PR, plus an `e2e` job that installs Playwright. `pages.yml` deploys `dist/` on push to `main`, with `VITE_BASE=/<repo>/`.
 
 ## Architecture
 
@@ -40,14 +44,15 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `FieldView` builds the Three.js scene from the `ExpandedGame` and copies sim state into it each frame (`sync`). It never mutates the match.
   - `CameraRig` has the driver-station, chase and overhead views. It also supplies `driveYaw`, which makes `PlayerController` field-oriented from the active view.
   - `ui/app.ts` holds the `App` (menu, results), `Session` (one match: countdown, the fixed-step `match.advance(dt)`, render) and `Hud`.
-  - Non-player robots get controllers from `App.botFactory`.
+  - `Session` calls `attachBots()` for the non-player robots. The player's robot can run a `BotBrain` during auto (the "auto routine" option).
   - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`. The bot AI uses the same helpers.
 - `src/games/<year>-<slug>/`: one folder per season.
   - `definition.ts`: the `GameDefinition` data (field, elements, pieces, scoring targets, zones, timing, endgame, RPs, robot archetypes).
   - Optional `rules.ts` hooks, for mechanics the schema can't express.
-  - Optional `bots.ts`, for AI strategy hints.
+  - `botHints` in the definition: optional AI strategy hints (target weights, endgame preference, defense share).
   - `SOURCES.md`: cites the manual for every number.
-  - `CALIBRATION.md`: the comparison against real match data.
+  - Past seasons only: `calibration.ts` (a `CalibrationSpec` mapping TBA `score_breakdown` fields to sim metrics, registered next to the definition in `src/games/index.ts`) and the generated `CALIBRATION.md`.
+  - `src/games/_template/` is the typechecked starter. It isn't registered.
   - Every game is registered in `src/games/index.ts`.
 
 ### Conventions that span files
@@ -67,7 +72,20 @@ Run `npm run build`, then `npx vite preview --port 4173`. Drive it with Playwrig
 
 ## Generating a game from a manual
 
-Use the `frc-game-from-manual` skill (`.claude/skills/frc-game-from-manual/SKILL.md`). It covers ingesting the PDF and video, extracting values into the schema with citations, verifying via headless matches and screenshots, and calibrating past seasons against The Blue Alliance. `www.thebluealliance.com` is a proxy-authenticated host in the cloud environment, so no API key is needed.
+This is the project's main workflow. Use the `frc-game-from-manual` skill (`.claude/skills/frc-game-from-manual/`).
+
+- `SKILL.md` is the step-by-step pipeline: ingest, extraction checklist, write module, verify, calibrate, ship.
+- `extraction-checklist.md` is filled in before writing any code.
+- `mapping-cookbook.md` maps FRC mechanics onto the schema, `rules.ts` or a documented simplification.
+- New games start from `cp -r src/games/_template src/games/<year>-<slug>`. The template is typechecked, so it can't drift from the schema.
+
+Environment notes:
+
+- `www.thebluealliance.com` is proxy-authenticated in the cloud container, so no key is needed. Elsewhere, set `TBA_KEY`.
+- Node's `fetch` only uses the proxy with `NODE_USE_ENV_PROXY=1`. The `calibrate` script sets it.
+- TBA responses are cached in `work/tba-cache/`.
+- YouTube is blocked by the network policy, so ask the user to upload reveal videos.
+- FIRST's manual blob storage (`firstfrc.blob.core.windows.net`) is reachable.
 
 ## Workflow and project memory
 

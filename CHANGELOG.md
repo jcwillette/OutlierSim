@@ -4,6 +4,7 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- M5: generation pipeline. Adds the `frc-game-from-manual` skill (pipeline, extraction checklist, mapping cookbook), the `src/games/_template` starter, `tools/ingest-manual.sh`, `tools/ingest-video.sh`, `npm run calibrate` (TBA comparison, writes CALIBRATION.md), a Playwright smoke test with a CI job, and `?game=` deep links. Also fixes `aria-label` attributes in the menu.
 - M4: generic bot AI (nav grid + A*, cycle-rate utility planner, shot spots, approach headings, endgame timing, defense role, easy/normal/hard), wired into the client. The menu gains partner/opponent difficulty, mixed robot types, and an auto-routine toggle for the player. Adds a headless `npm run sim` CLI.
 
 - M3: playable 3D client. It has a Three.js field built from the definition, driver-station/chase/overhead cameras, field-oriented keyboard and gamepad driving, auto-intake, a HUD with context hints, indicators and announcements, a pause menu, and a results screen with score and RP breakdowns.

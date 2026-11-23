@@ -11,6 +11,20 @@ export default tseslint.config(
     },
   },
   {
+    files: ['**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly',
+        module: 'writable',
+        __dirname: 'readonly',
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
     // The headless sim must stay renderer/DOM-free so it runs in Node.
     files: ['src/engine/sim/**/*.ts', 'src/engine/ai/**/*.ts', 'src/games/**/*.ts'],
     rules: {

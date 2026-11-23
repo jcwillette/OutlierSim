@@ -9,11 +9,13 @@ Status of the build plan. Update this file in every PR.
 | M2 Reference game     | fictional `0000-reference` that exercises every engine feature, plus a games registry and per-game tests | done                           |
 | M3 Playable 3D client | Three.js renderer, cameras, keyboard/gamepad, HUD, menus, post-match                                     | not started                    |
 | M4 Bot AI             | generic 3v3 AI, nav grid, difficulty, `npm run sim`                                                      | not started                    |
-| M5 Pipeline           | `frc-game-from-manual` skill, ingest + calibrate tools, Playwright smoke                                 | not started                    |
+| M5 Pipeline           | `frc-game-from-manual` skill, ingest + calibrate tools, Playwright smoke                                 | done                           |
 | M6 Stress tests       | past seasons from real manuals, calibrated vs TBA                                                        | waiting for manuals from owner |
 
 ## Known gaps / ideas
 
+- There's no audio transcription for reveal videos. Captions are used only when a subtitle track exists, and the manual is the source of truth.
+- Calibration compares alliance-level distributions only, not per-team cycle times. Per-robot calibration could use match13 or Statbotics data later.
 - Bots don't reason about opponents beyond avoidance and the simple defense role. There's no shot-blocking or counter-defense.
 - Bots don't plan auto routines per game. Auto uses the same planner, restricted to the bot's own half of the field.
 - The reference game's tower recycles orbs right back to midfield, so scores are unrealistically high (~650/alliance). That's fine for an engine test, but don't calibrate against it.

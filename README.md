@@ -6,7 +6,9 @@ Not affiliated with or endorsed by *FIRST*®.
 
 ## Play
 
-Once Pages is enabled (Settings → Pages → Source: GitHub Actions), the game is published at `https://<owner>.github.io/OutlierSim/` on every merge to `main`.
+Once Pages is enabled (Settings → Pages → Source: GitHub Actions), the site is published at `https://<owner>.github.io/OutlierSim/` on every merge to `main`. Link students straight to a game with `?game=<id>`, for example `https://<owner>.github.io/OutlierSim/?game=2027-<slug>`.
+
+Controls: WASD to drive (field-oriented from your driver station), ←/→ or Q/E to rotate, Space to score (auto-aims), G for the endgame action, C to change camera, Esc to pause. A standard gamepad works too.
 
 ## Develop
 
@@ -18,4 +20,12 @@ npm test           # unit + headless match tests
 
 ## Generating a new game
 
-Open the repo in Claude Code and give it the manual PDF and the reveal video (a file or link). The `frc-game-from-manual` skill in `.claude/skills/` covers the whole pipeline. See `docs/ROADMAP.md` for current status.
+Open the repo in Claude Code and give it the manual PDF and the reveal video. Upload the video file, because YouTube links are usually blocked in cloud sessions. The `frc-game-from-manual` skill in `.claude/skills/` covers the whole pipeline:
+
+1. Ingest the manual and video.
+2. Fill in an extraction checklist where every value cites the manual.
+3. Generate `src/games/<year>-<slug>/`.
+4. Verify it with headless bot matches and browser screenshots.
+5. For past seasons, calibrate against real match data from The Blue Alliance (`npm run calibrate`).
+
+See `docs/ROADMAP.md` for current status and known gaps.

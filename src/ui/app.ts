@@ -26,7 +26,7 @@ function h<K extends keyof HTMLElementTagNameMap>(
     if (v === undefined || v === null || v === false) continue;
     if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v as EventListener);
     else if (k === 'class') el.className = String(v);
-    else if (k === 'style') el.setAttribute('style', String(v));
+    else if (k === 'style' || k.includes('-')) el.setAttribute(k, String(v));
     else (el as unknown as Record<string, unknown>)[k] = v;
   }
   for (const c of children) if (c !== null && c !== undefined && c !== false) el.append(c);
@@ -94,7 +94,9 @@ export class App {
 
     const games = this.games();
     const saved = loadSetup();
-    const def = games.find((g) => g.id === saved.gameId) ?? games[0]!;
+    // ?game=<id> preselects a game (shareable link for students).
+    const linked = new URLSearchParams(location.search).get('game');
+    const def = games.find((g) => g.id === linked) ?? games.find((g) => g.id === saved.gameId) ?? games[0]!;
     this.setup = {
       gameId: def.id,
       alliance: saved.alliance ?? 'blue',
