@@ -40,7 +40,13 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m.
   - `BotBrain` is a utility planner. Each option is scored as points per second over the whole cycle (fetch, travel to score, action time), with hysteresis.
   - It picks shot spots precomputed with `solveShot`, uses approach headings so intakes can reach pieces, makes time-boxed endgame decisions, and plays defense when `botHints.defenseShare` > 0.
-  - Teammates coordinate through soft claims.
+  - Teammates coordinate like an alliance on a radio:
+    - soft claims on targets, pieces and stations
+    - shared intents, so two bots don't head for overlapping spots
+    - paths that avoid parked robots (`NavGrid.findPath` dynamic obstacles)
+    - yielding in lane conflicts (`yieldPriority`)
+  - Opponents defend opportunistically (`harassOption`, `botHints.defenseOpportunism`) and stay out of the other alliance's `botHints.protectedZones`.
+  - Ramps (drivable elements 0.05-0.2 m tall) are slow ground, both in A* cost and in bot speed.
   - `attachBots()` wires up a match. Difficulty (`SKILL`) only changes speed, think rate, utility noise and dwell.
   - If bots can't score in a new game, the definition is usually wrong (unreachable zones, impossible shots). `tests/games.test.ts` checks for this.
 - `src/engine/render/`, `src/engine/input/`, `src/ui/`: browser-only.

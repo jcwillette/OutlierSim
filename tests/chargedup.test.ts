@@ -116,6 +116,24 @@ describe('2023 Charged Up: engine features it relies on', () => {
     expect(m.availableEndgame(b).length).toBeGreaterThan(0);
   });
 
+  it('an endgame attempt fails if the robot is pushed off its spot (no points, not frozen)', () => {
+    const m = new Match(definition);
+    m.start();
+    while (!m.isEndgame) m.step();
+    const r = m.robots[1]!;
+    teleport(r, 3.94, 2.745, r.archetype.frame.height / 2 + 0.2);
+    stepFor(m, 0.3);
+    r.controller = ctl(() => ({ endgame: true }));
+    stepFor(m, 0.2);
+    expect(r.action?.kind).toBe('endgame');
+    r.controller = ctl(() => ({}));
+    teleport(r, 6.5, 2.745); // shoved off the station mid-balance
+    stepFor(m, 6);
+    expect(r.action).toBeNull();
+    expect(r.endgameDone).toBeNull();
+    expect(m.ledger.bySource('blue')['engage.blue']).toBeUndefined();
+  });
+
   it('exposes points by source in the alliance summary', () => {
     const m = new Match(definition);
     m.ledger.add({
@@ -167,6 +185,29 @@ describe('2023 Charged Up: rules', () => {
     );
     rules.onMatchEnd!(ctx);
     expect(added).toEqual([['blue', 'endgame', -4, 'station-tipped']]);
+  });
+
+  it('G207: contact inside the opponent loading zone is a foul on the intruder', () => {
+    const fouls: string[] = [];
+    const ctx = {
+      vars: {} as Record<string, unknown>,
+      time: 50,
+      phase: 'teleop',
+      robots: () =>
+        [
+          // blue robot inside red's LOADING ZONE (at the blue end, high y), touching a red robot
+          { id: 0, alliance: 'blue', x: 2.0, y: 7.0, endgameAction: null },
+          { id: 3, alliance: 'red', x: 2.7, y: 7.0, endgameAction: null },
+        ] as RobotInfo[],
+      targetCount: () => 0,
+      setTargetEnabled: () => {},
+      setIndicator: () => {},
+      announce: () => {},
+      foul: (against: string) => fouls.push(against),
+    } as unknown as RulesContext;
+    rules.onTick!(ctx, 1 / 60);
+    rules.onTick!(ctx, 1 / 60); // same contact moments later: not another foul
+    expect(fouls).toEqual(['blue']);
   });
 
   it('only one auto Charge Station robot counts per alliance', () => {

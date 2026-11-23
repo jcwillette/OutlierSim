@@ -439,6 +439,17 @@ export interface BotHints {
   endgamePreference?: string[];
   /** Fraction of opposing bots that play defense in teleop (0..1). Default 0. */
   defenseShare?: number;
+  /**
+   * How readily scoring bots stop to block a nearby opponent carrying a piece (0 = never). The bot
+   * weighs the points the delay costs the opponent against its own cycle. Default 1.
+   */
+  defenseOpportunism?: number;
+  /**
+   * Zone base ids where an alliance's own robots are protected from contact (e.g. a loading zone).
+   * Defending bots never chase an opponent into, or wait inside, that opponent's protected zones,
+   * and bots don't go after loose pieces lying in the opponent's protected zones.
+   */
+  protectedZones?: string[];
 }
 
 // ---------------------------------------------------------------- the definition

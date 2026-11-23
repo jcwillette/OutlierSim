@@ -7,6 +7,8 @@ import type {
 } from '../../engine/sim/types.ts';
 import {
   CHARGE_SOURCES,
+  COMMUNITY,
+  LOADING_ZONE,
   columnY,
   COLUMN_PITCH,
   COLUMNS,
@@ -57,7 +59,6 @@ const MID_CUBE_X = GRID_FACE - (14.25 + 8.5) * IN; // shelf front 14 1/4 in + ha
 const HIGH_CUBE_X = GRID_FACE - (31.625 + 8.5) * IN;
 
 const COMMUNITY_SHALLOW = (11 * 12 + 0.375) * IN; // 3.36
-const COMMUNITY_DEEP = (16 * 12 + 1.25) * IN; // 4.91
 const COMMUNITY_WIDTH = 18 * 12 * IN; // 5.49
 
 const CS_X = GRID_DEPTH + (8 * 12 + 2.625) * IN; // 2.51 beyond the grid tape -> 3.94
@@ -69,9 +70,6 @@ const CS_TOP_WIDTH = 8 * 12 * IN; // 2.44
 /** Real top is 9 1/8 in (0.23 m); modeled 0.18 m so the bot nav grid treats it as drivable. */
 const CS_TOP_Z = 0.18;
 
-const LZ_SHALLOW = (11 * 12 + 0.25) * IN; // 3.36
-const LZ_DEEP = (22 * 12 + 0.25) * IN; // 6.71
-const LZ_STEP_Y = 6.75; // read off Fig 5-6
 const DS_DEPTH = 14 * IN; // double substation protrudes 1 ft 2 in
 const DS_WIDTH = 8 * 12 * IN; // 2.44
 const DS_Y = (GRID_WIDTH + W) / 2;
@@ -373,34 +371,14 @@ export const definition: GameDefinition = {
         id: 'community',
         name: 'Community',
         side: 'blue',
-        region: {
-          kind: 'poly',
-          points: [
-            { x: 0, y: 0 },
-            { x: COMMUNITY_DEEP, y: 0 },
-            { x: COMMUNITY_DEEP, y: CS_Y + CS_WIDTH / 2 },
-            { x: COMMUNITY_SHALLOW, y: CS_Y + CS_WIDTH / 2 },
-            { x: COMMUNITY_SHALLOW, y: COMMUNITY_WIDTH },
-            { x: 0, y: COMMUNITY_WIDTH },
-          ],
-        },
+        region: COMMUNITY,
         source: M(21, 'COMMUNITY 18 ft wide, 3.36-4.91 m deep; step at the Charge Station edge (Fig 5-6)'),
       },
       {
         id: 'loading-zone',
         name: 'Loading zone',
         side: 'blue',
-        region: {
-          kind: 'poly',
-          points: [
-            { x: L, y: GRID_WIDTH },
-            { x: L - LZ_SHALLOW, y: GRID_WIDTH },
-            { x: L - LZ_SHALLOW, y: LZ_STEP_Y },
-            { x: L - LZ_DEEP, y: LZ_STEP_Y },
-            { x: L - LZ_DEEP, y: W },
-            { x: L, y: W },
-          ],
-        },
+        region: LOADING_ZONE,
         source: M(21, 'LOADING ZONE 8 ft 3 in wide, 3.36-6.71 m deep; step read off Fig 5-6'),
       },
     ],
@@ -501,17 +479,7 @@ export const definition: GameDefinition = {
       name: 'Mobility',
       side: 'blue',
       kind: 'leaveZoneInAuto',
-      zone: {
-        kind: 'poly',
-        points: [
-          { x: 0, y: 0 },
-          { x: COMMUNITY_DEEP, y: 0 },
-          { x: COMMUNITY_DEEP, y: CS_Y + CS_WIDTH / 2 },
-          { x: COMMUNITY_SHALLOW, y: CS_Y + CS_WIDTH / 2 },
-          { x: COMMUNITY_SHALLOW, y: COMMUNITY_WIDTH },
-          { x: 0, y: COMMUNITY_WIDTH },
-        ],
-      },
+      zone: COMMUNITY,
       points: 3,
       source: `${SRC_PTS} MOBILITY`,
     },
@@ -520,17 +488,7 @@ export const definition: GameDefinition = {
       name: 'Park',
       side: 'blue',
       kind: 'inZoneAtEnd',
-      zone: {
-        kind: 'poly',
-        points: [
-          { x: 0, y: 0 },
-          { x: COMMUNITY_DEEP, y: 0 },
-          { x: COMMUNITY_DEEP, y: CS_Y + CS_WIDTH / 2 },
-          { x: COMMUNITY_SHALLOW, y: CS_Y + CS_WIDTH / 2 },
-          { x: COMMUNITY_SHALLOW, y: COMMUNITY_WIDTH },
-          { x: 0, y: COMMUNITY_WIDTH },
-        ],
-      },
+      zone: COMMUNITY,
       points: 2,
       source: `${SRC_PTS} PARK; TU04 glossary`,
     },
@@ -632,5 +590,10 @@ export const definition: GameDefinition = {
   ],
   defaultArchetype: 'elevator',
   rules,
-  botHints: { endgameLeadSec: 2, defenseShare: 0 },
+  botHints: {
+    endgameLeadSec: 2,
+    defenseShare: 0,
+    // G207: a robot touching an opponent inside that opponent's LOADING ZONE or COMMUNITY draws a FOUL.
+    protectedZones: ['community', 'loading-zone'],
+  },
 };

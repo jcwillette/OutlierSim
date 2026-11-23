@@ -1,5 +1,14 @@
 import type { Alliance, GameRules, RulesContext } from '../../engine/sim/types.ts';
-import { coopPieces, countLinks, filledNodes, isComplete } from './layout.ts';
+import { pointInRegion } from '../../engine/sim/math.ts';
+import {
+  COMMUNITY,
+  coopPieces,
+  countLinks,
+  filledNodes,
+  forAlliance,
+  isComplete,
+  LOADING_ZONE,
+} from './layout.ts';
 
 /**
  * CHARGED UP mechanics the schema can't express (Manual 6.4):
@@ -9,7 +18,41 @@ import { coopPieces, countLinks, filledNodes, isComplete } from './layout.ts';
  *    LEVEL only if the last robot to get on was one that balances it (an `engage` action): then every
  *    DOCKED partner is ENGAGED too (6.4.2). A dock-only robot climbing on afterwards tips it, so
  *    nobody is ENGAGED.
+ *  - G207 right of way: a robot in its opponent's LOADING ZONE or COMMUNITY that touches an
+ *    opponent robot draws a FOUL, whoever started the contact (Manual 7.2).
  */
+
+/** Centers closer than this count as robots touching (two ~0.84 m frames side by side). */
+const CONTACT_DIST = 0.95;
+/** Seconds before the same pair of robots can draw another G207 foul ("per instance"). */
+const G207_REPEAT_SEC = 3;
+const PROTECTED = {
+  blue: [forAlliance(COMMUNITY, 'blue'), forAlliance(LOADING_ZONE, 'blue')],
+  red: [forAlliance(COMMUNITY, 'red'), forAlliance(LOADING_ZONE, 'red')],
+} as const;
+
+function checkG207(ctx: RulesContext): void {
+  if (ctx.phase !== 'auto' && ctx.phase !== 'teleop') return;
+  const last = (ctx.vars.g207 ??= {}) as Record<string, number>;
+  const robots = ctx.robots();
+  for (const a of robots) {
+    if (a.alliance !== 'blue') continue;
+    for (const b of robots) {
+      if (b.alliance !== 'red' || Math.hypot(a.x - b.x, a.y - b.y) > CONTACT_DIST) continue;
+      // Each robot is checked against the other alliance's protected zones.
+      for (const [intruder, owner] of [
+        [a, 'red'],
+        [b, 'blue'],
+      ] as const) {
+        if (!PROTECTED[owner].some((z) => pointInRegion(intruder, z))) continue;
+        const key = `${a.id}-${b.id}-${intruder.id}`;
+        if (ctx.time - (last[key] ?? -Infinity) < G207_REPEAT_SEC) continue;
+        last[key] = ctx.time;
+        ctx.foul(intruder.alliance, 'minor', `G207 contact in the ${owner} loading zone/community`);
+      }
+    }
+  }
+}
 
 const ALLIANCES: Alliance[] = ['blue', 'red'];
 
@@ -21,6 +64,7 @@ export const rules: GameRules = {
   },
 
   onTick(ctx) {
+    checkG207(ctx);
     // When each robot finished its endgame action (to know who got on the Charge Station last).
     const doneAt = (ctx.vars.doneAt ??= {}) as Record<number, number>;
     for (const r of ctx.robots()) {

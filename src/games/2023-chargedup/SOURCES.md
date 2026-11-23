@@ -56,7 +56,9 @@ This is an unofficial simulation for team practice. **Confidence**: high (stated
   - Only robots whose intake reaches the 0.95 m shelf (elevator, arm) can use it.
   - The single substation drops a cube onto the floor if the robot can hold one, else a cone. A cone dropped down the chute lands on its side, which floor intakes handle far better with cubes.
   - Each station has its own supply count.
-- **Rules not modeled**: G403's multi-piece control (robots hold 1), G404 launch zone, G207/G209 protected-zone contact fouls, pins, G405 descoring, the 3 s post-period grading grace, auto points restoration after descoring, CHARGE STATION/LINK light states. Defense is off by default (`defenseShare: 0`).
+- **Rules not modeled**: G403's multi-piece control (robots hold 1), G404 launch zone, G209 endgame Charge Station protection, pins, G405 descoring, the 3 s post-period grading grace, auto points restoration after descoring, CHARGE STATION/LINK light states.
+- **G207 right of way** (modeled, `rules.ts`): a robot whose center is in the opponent's LOADING ZONE or COMMUNITY and that touches an opponent robot (centers within 0.95 m) draws a FOUL, once per pair per 3 s. Bots treat those zones as protected (`botHints.protectedZones`): they don't chase loose pieces there, don't defend there, and path around them when that isn't much longer. A few incidental fouls per match remain.
+- **Defense**: no dedicated defenders (`defenseShare: 0`). Any empty-handed bot may briefly (≤ 4 s) block a nearby opponent carrying a piece home when that costs the opponent more than the bot would score in the time. Low-scoring robots (kitbot) do this most.
 - **Pieces**: cones are rigid; physics treats a cone as a cylinder of 80% base radius. Tipped cones can be intaken in any orientation.
 
 ## Archetype rationale
@@ -72,26 +74,28 @@ All numbers are engineering estimates from the manual's constraints and typical 
 
 `npm run sim -- --game 2023-chargedup --matches 20 [--difficulty d] [--archetypes a,b,c]`, means per alliance:
 
-| Lineup                         | Difficulty | Total | Auto | Teleop | Endgame | Pieces | Sustainability RP | Activation RP |
-| ------------------------------ | ---------- | ----- | ---- | ------ | ------- | ------ | ----------------- | ------------- |
-| elevator / elevator / elevator | easy       | 153   | 40   | 90     | 23      | 22.8   | 90%               | 80%           |
-| elevator / elevator / elevator | normal     | 176   | 49   | 102    | 25      | 26.3   | 100%              | 88%           |
-| elevator / elevator / elevator | hard       | 184   | 55   | 104    | 25      | 27.7   | 98%               | 90%           |
-| elevator / arm / kitbot        | easy       | 128   | 36   | 71     | 21      | 19.9   | 40%               | 68%           |
-| elevator / arm / kitbot        | normal     | 146   | 40   | 84     | 22      | 22.2   | 80%               | 68%           |
-| elevator / arm / kitbot        | hard       | 144   | 43   | 79     | 22      | 21.9   | 73%               | 75%           |
-| cube specialist / arm / kitbot | easy       | 110   | 35   | 54     | 21      | 17.3   | 12%               | 73%           |
-| cube specialist / arm / kitbot | normal     | 118   | 42   | 55     | 21      | 18.2   | 38%               | 68%           |
-| cube specialist / arm / kitbot | hard       | 122   | 43   | 58     | 21      | 18.8   | 58%               | 65%           |
+| Lineup                         | Difficulty | Total | Auto | Teleop | Endgame | Fouls drawn | Pieces | Sustainability RP | Activation RP |
+| ------------------------------ | ---------- | ----- | ---- | ------ | ------- | ----------- | ------ | ----------------- | ------------- |
+| elevator / elevator / elevator | easy       | 159   | 42   | 96     | 19      | 1           | 24.1   | 100%              | 65%           |
+| elevator / elevator / elevator | normal     | 186   | 48   | 114    | 21      | 3           | 28.9   | 100%              | 70%           |
+| elevator / elevator / elevator | hard       | 200   | 58   | 117    | 20      | 5           | 31.3   | 100%              | 85%           |
+| elevator / arm / kitbot        | easy       | 132   | 36   | 76     | 18      | 2           | 20.6   | 63%               | 48%           |
+| elevator / arm / kitbot        | normal     | 155   | 40   | 94     | 18      | 3           | 23.5   | 95%               | 50%           |
+| elevator / arm / kitbot        | hard       | 161   | 45   | 91     | 19      | 6           | 23.7   | 88%               | 70%           |
+| cube specialist / arm / kitbot | easy       | 112   | 37   | 54     | 18      | 2           | 17.5   | 10%               | 53%           |
+| cube specialist / arm / kitbot | normal     | 124   | 44   | 57     | 19      | 4           | 18.7   | 53%               | 63%           |
+| cube specialist / arm / kitbot | hard       | 128   | 45   | 58     | 20      | 5           | 19.0   | 55%               | 70%           |
+
+"Fouls drawn" is penalty points awarded to the alliance (the opponents' G207 fouls).
 
 - **Ceiling**: 27 nodes plus supercharge per alliance; the most an alliance can score in pieces is the 49 it owns. An all-elevator alliance nearly fills the grid (26–28 pieces) and starts supercharging on hard.
 - **Cycle math**: grid to double substation is about 13.7 m. At 4.3 m/s × 0.85 (normal) plus path overhead that's ~4.5 s each way, plus 1.5 s handoff and 1.3–2.8 s placing, so ~11–13 s per cycle and ~9–10 pieces per elevator robot in teleop before the endgame. The bots score 8–11. A kitbot at 3.2 m/s with a ~17 s cycle manages 5–7.
-- **Difficulty ordering**: easy < normal < hard for every lineup except elevator/arm/kitbot, where hard is level with normal (144 vs 146, within noise: σ of the mean ≈ 4).
-- **Design intent**: the bonus RPs are meant as stretch goals. Here **Sustainability is reached in most normal matches by any alliance with an elevator robot, and Activation in about 70% of matches by every lineup.** So the sim is optimistic. Bots drive perfect paths, nobody plays defense, every balance attempt succeeds and tipped cones cost nothing. Archetype speeds were not tuned down to hit a target rate, because that target would come from knowledge of the real season. Treat sim scores as an upper bound for well-driven robots.
+- **Difficulty ordering**: easy < normal < hard for every lineup.
+- **Design intent**: the bonus RPs are meant as stretch goals. Here **Sustainability is reached in most normal matches by any alliance with an elevator robot (95-100%), and Activation in 50-85% of matches.** So the sim is optimistic. Bots drive near-perfect paths and coordinate perfectly with teammates, defense is only opportunistic, every balance attempt that isn't interrupted succeeds, and tipped cones cost nothing. Archetype speeds were not tuned down to hit a target rate, because that target would come from knowledge of the real season. Treat sim scores as an upper bound for well-driven robots.
 
 ## Open questions
 
 - The manual at the given URL is the April revision. A January-era value that changed in a later Team Update would be wrong here, and I can't detect that without reading post-January material. The scoring table and RP thresholds aren't touched by TU01–07.
 - Single substation chute position (read off Fig 6-1) and the loading zone / community step positions (Fig 5-6) are medium/low confidence. WPILib's 2023 AprilTag layout or the official field drawings would pin them down.
 - Real auto and endgame balance success rates: should the sim add a failure chance? That would bring the Activation RP rate down. The owner may want this as a difficulty knob.
-- Should bots play defense near the loading zone? The manual's G207 protection suggests the GDC expected it. Off for now.
+- Should some bots play dedicated defense (`defenseShare`)? Bots only defend opportunistically now, outside the protected zones.

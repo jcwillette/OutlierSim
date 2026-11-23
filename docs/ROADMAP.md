@@ -15,6 +15,10 @@ Status of the build plan. Update this file in every PR.
 
 ## Known gaps / ideas
 
+- Teammate coordination is a shared blackboard (intended spots, yielding), not real multi-robot planning. Head-on meetings in narrow lanes still cost a second or two.
+- Defense is opportunistic only: no pinning detection (G202), no counter-defense, and the dedicated `defenseShare` role doesn't time-box itself.
+- Contact for G207 fouls is approximated by center distance (0.95 m), not real bumper contact.
+
 - Spectator mode has no replay or scrubbing (it only plays forward), and no auto-director that cuts to the most interesting robot.
 
 - 2023 stress test: the sim is optimistic. Strong alliances reach the bonus RPs in most normal matches. Bots drive perfect paths, there's no defense, balancing never fails and tipped cones cost nothing. A balance-failure chance or a loading-zone defense role would bring the rates down (see `src/games/2023-chargedup/SOURCES.md`).

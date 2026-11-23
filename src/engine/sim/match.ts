@@ -618,10 +618,14 @@ export class Match {
         this.scorePiece(piece, ts, r.id);
       }
     } else {
+      const ga = this.game.endgame.find((e) => e.id === act.actionId)!;
+      if (!pointInRegion(r, ga.zones[act.zoneIndex]!)) {
+        r.action = null; // pushed off the climb / dock spot: the attempt fails
+        return;
+      }
       act.remaining -= dt;
       if (act.remaining <= 0) {
         r.action = null;
-        const ga = this.game.endgame.find((e) => e.id === act.actionId)!;
         r.endgameDone = { actionId: ga.id, zoneIndex: act.zoneIndex };
         r.endgameInAuto = this.scoringPeriod === 'auto';
         r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
