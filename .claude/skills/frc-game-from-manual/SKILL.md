@@ -1,13 +1,15 @@
 ---
 name: frc-game-from-manual
-description: Generate a playable OutlierSim game module from an FRC game manual (PDF) and reveal video. Use when the user provides a manual and/or game reveal video, asks to "make the game for <year>", to add or update a season, or to stress-test or calibrate a past season against real match data.
+description: Generate a playable OutlierSim game module from an FRC game manual (PDF) and reveal video, using only those sources. Use when the user provides a manual and/or game reveal video, asks to "make the game for <year>", or to add, update or stress-test a season. Comparing against real match data happens only when the user explicitly asks for it.
 ---
 
 # FRC game from manual
 
-Turn an FRC game manual (plus the reveal video) into `src/games/<year>-<slug>/`. That folder holds a typed `GameDefinition`, optional `rules.ts` and `bots.ts`, `SOURCES.md` and, for past seasons, `calibration.ts` and `CALIBRATION.md`. The generic engine does the rest.
+Turn an FRC game manual (plus the reveal video) into `src/games/<year>-<slug>/`. That folder holds a typed `GameDefinition`, an optional `rules.ts` and `SOURCES.md`. The generic engine does the rest.
 
 At kickoff the owner hands the result to students within hours or days, so **get to a playable, honest game first, then refine**. Every number must be traceable to the manual or marked as an assumption.
+
+**Build only from the manual, the video and general FRC engineering knowledge.** At kickoff no matches have been played, so the pipeline must never depend on real match data. That holds for past seasons too: a stress test is a blind build, so the owner can judge it the way they'll judge 2027. **Don't look up real match results, scores, scouting data or event statistics** (The Blue Alliance, Statbotics, match13, videos of real matches, your own memory of how that season played out). Do that only if the user explicitly asks for a comparison with real matches. Then follow "Optional: compare with real matches" below.
 
 Read `CLAUDE.md` first if it isn't already in context. The schema source of truth is `src/engine/sim/types.ts`, so read it fully before writing a definition. `src/games/0000-reference/` is a complete worked example of every feature.
 
@@ -56,9 +58,9 @@ Use `mapping-cookbook.md` to decide how each mechanic maps onto the schema, `rul
    - Climb 3-8 s.
    - Frame and bumper size from the robot rules, typically 0.8-0.95 m square with bumpers.
 3. `rules.ts` holds only the mechanics the schema can't express (see the cookbook). Keep the rules state in `ctx.vars`. Use `ctx.setIndicator` so players can see the mechanic's state on the HUD.
-4. `bots.ts` / `botHints` is optional. Use `targetWeights` to stop bots wasting time on low-value targets, `endgamePreference`, and a `defenseShare` (0-0.34) if defense is a big part of the game.
+4. `botHints` is optional. Use `targetWeights` to stop bots wasting time on low-value targets, `endgamePreference`, and a `defenseShare` (0-0.34) if defense is a big part of the game.
 5. Register the game in `src/games/index.ts`, newest first.
-6. Fill in `SOURCES.md` with every value, its citation and confidence, plus Simplifications and Open questions. Delete `calibration.ts` for a new season, since there's no real data yet.
+6. Fill in `SOURCES.md` with every value, its citation and confidence, plus Simplifications and Open questions. Archetype numbers are engineering estimates. Say what each is based on (manual constraints, typical mechanism speeds), never real match results.
 
 ## Step 4: Verify
 
@@ -72,36 +74,39 @@ npm run test:e2e                           # loads in a browser, no errors, scre
 ```
 
 - **Validation warnings** (missing citations, odd sizes) usually point to extraction mistakes. Resolve them or justify them in SOURCES.md.
-- **Plausibility** of `npm run sim` output:
-  - Per-target piece counts should look like a real event, not 0 and not hundreds.
-  - Endgame should get attempted.
-  - Bonus RP rates should be plausible: early-season RP thresholds are usually hit by under 30% of alliances.
+- **Plausibility** of `npm run sim` output, judged against the manual (no real-match data):
+  - **Ceiling**: work out a rough upper bound per alliance from the manual, i.e. the pieces available (staged + preload + HP supply) and target capacities. Counts must be above 0 and well below that bound.
+  - **Cycle math**: divide teleop length by an estimated cycle time (travel distance ÷ speed + intake + score action) for each archetype. Bot piece counts should be near that, allowing for traffic.
+  - **Design intent**: the GDC sets bonus-RP thresholds as stretch goals. If `normal` bots hit a bonus RP in most matches, the archetypes are probably too strong (or the threshold was misread).
+  - **Difficulty ordering**: easy < normal < hard on total score.
+  - **Endgame** should get attempted by robots that can do it.
   - If bots never use a target, it's unreachable or its shot is impossible. Check the zones and aperture heights.
 - **Visual check**: build, run `vite preview`, and use Playwright (flags in CLAUDE.md) to screenshot the driver, chase and overhead views. Compare them side by side with video frames of the same area: element positions, relative sizes, colors and where pieces are staged. Fix anything that looks wrong.
 - Play-test the student's experience: drive with the keyboard, score each target type, do the endgame action, and read the results screen.
 
-## Step 5: Calibrate (past seasons, or once real events exist)
-
-Fill in `src/games/<id>/calibration.ts` (from the template).
-
-1. Pick 2-4 TBA events: an early-week district event (typical teams), a strong regional or district championship, and a championship division (elite play).
-2. Run `npm run calibrate -- --game <id> --dump` to see the year's `score_breakdown` fields.
-3. Write metrics for auto, teleop and endgame points plus the key piece counts, and register `calibration` in `src/games/index.ts`.
-
-```bash
-npm run calibrate -- --game <id> --matches 30 --difficulty hard
-npm run calibrate -- --game <id> --matches 30 --difficulty normal --write
-```
-
-`hard` bots should land around the strong-event p50-p90 range, and `normal` around typical-event p50. If they're far off, tune **archetype numbers** (cycle times, speeds, accuracy), not the scoring rules, and note each change in CALIBRATION.md. If a gap comes from a missing engine capability, record it in `docs/ROADMAP.md` under Known gaps. When stress-testing past seasons, these gaps are the point: write them down plainly.
-
-## Step 6: Ship
+## Step 5: Ship
 
 - Update `CHANGELOG.md` and `docs/ROADMAP.md`.
-- Commit on `game/<id>` with `feat(games): add <year> <name>` and open a PR. Its body should summarize the simplifications and open questions, show a screenshot, and include the sim/calibration table.
+- Commit on `game/<id>` with `feat(games): add <year> <name>` and open a PR. Its body should summarize the simplifications and open questions, show a screenshot, and include the `npm run sim` summary.
 - After merge, Pages redeploys. Give the owner the student link: `https://<owner>.github.io/<repo>/?game=<id>`.
 - Team Updates during the season change rules. Edit the definition, cite the update in SOURCES.md, and open a PR.
 
 ## Kickoff-day fast path
 
 When time matters most, do Steps 1-4 with only the scoring table, timing, field layout and piece staging done carefully. Use one or two archetypes and skip `rules.ts` mechanics that don't change cycles much, listing them under Simplifications. Ship that, then iterate.
+
+## Optional: compare with real matches (only when the user asks)
+
+Do this only on an explicit request like "compare it with real matches" or "calibrate against TBA". It never happens by default, including for past-season stress tests. It's done as a separate commit or PR, after the blind build has been reviewed.
+
+1. `cp src/games/_template-calibration/calibration.ts src/games/<id>/` and register `calibration` next to the definition in `src/games/index.ts`.
+2. Use the events the user names. If they name none, ask, or suggest an early-week district event, a strong district championship or regional, and a championship division.
+3. Run `npm run calibrate -- --game <id> --dump` to see that year's `score_breakdown` fields. Write metrics for auto, teleop and endgame points plus the key piece counts.
+4. Run the comparison:
+
+   ```bash
+   npm run calibrate -- --game <id> --matches 30 --difficulty hard
+   npm run calibrate -- --game <id> --matches 30 --difficulty normal --write
+   ```
+
+5. Report the gaps plainly. That's the point of a stress test. Change archetype numbers only if the user asks for tuning, and note each change in `CALIBRATION.md`. Record gaps caused by missing engine capability in `docs/ROADMAP.md` under Known gaps.

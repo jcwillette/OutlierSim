@@ -26,6 +26,7 @@ Open the repo in Claude Code and give it the manual PDF and the reveal video. Up
 2. Fill in an extraction checklist where every value cites the manual.
 3. Generate `src/games/<year>-<slug>/`.
 4. Verify it with headless bot matches and browser screenshots.
-5. For past seasons, calibrate against real match data from The Blue Alliance (`npm run calibrate`).
+
+Games are built only from the manual and video, never from real match data, because the new season has no matches at kickoff. Past seasons are built the same blind way. If you want a comparison with real matches from The Blue Alliance, ask for it (`npm run calibrate`).
 
 See `docs/ROADMAP.md` for current status and known gaps.

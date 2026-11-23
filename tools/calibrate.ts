@@ -1,6 +1,8 @@
 /**
  * Compare simulated bot matches with real matches from The Blue Alliance.
  *
+ * OPT-IN ONLY (ADR 0004): games are built blind from the manual. Run this only when the owner asks.
+ *
  *   npm run calibrate -- --game <id> [--events 2024casj,2024txhou] [--matches 20] [--difficulty hard]
  *                        [--write]   write src/games/<id>/CALIBRATION.md
  *                        [--dump]    print one real score_breakdown (to write metrics)

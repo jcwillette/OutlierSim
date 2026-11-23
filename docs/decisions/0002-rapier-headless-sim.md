@@ -5,7 +5,7 @@
 
 ## Context
 
-We need real collisions between robots, game pieces and field elements, because defense, traffic and spills shape how a game feels. We also need to run whole matches in Node, for tests and for calibration against real match data.
+We need real collisions between robots, game pieces and field elements, because defense, traffic and spills shape how a game feels. We also need to run whole matches in Node, for tests, plausibility checks and an optional, on-request comparison with real matches.
 
 ## Decision
 

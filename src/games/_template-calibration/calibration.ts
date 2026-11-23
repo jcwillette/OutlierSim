@@ -1,6 +1,7 @@
 import { DEFAULT_METRICS, num, simCount, type CalibrationSpec } from '../../engine/sim/calibration.ts';
 
 /**
+ * OPT-IN ONLY (ADR 0004): add this to a game only when the owner asks for a real-match comparison.
  * Compare sim vs real for <YEAR>. Field names come from `npm run calibrate -- --game <id> --dump`.
  * Register in src/games/index.ts: { definition, calibration }.
  */

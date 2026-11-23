@@ -20,4 +20,4 @@ A new game has to be produced quickly and reliably from a manual. Hand-writing a
 ## Consequences
 
 - When a new game needs something the schema can't express, first try `rules.ts`. Generalize it into the engine only when a second game needs it too.
-- The feel depends on robot archetype numbers (speed, cycle times, accuracy), which we calibrate against real match data from The Blue Alliance for past seasons.
+- The feel depends on robot archetype numbers (speed, cycle times, accuracy). These are engineering estimates from the manual's constraints and typical mechanism speeds (ADR 0004).
