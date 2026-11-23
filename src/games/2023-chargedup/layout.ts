@@ -4,6 +4,53 @@
  * the middle GRID (columns 4-6) is the Coopertition (CO-OP) GRID.
  */
 
+import type { Alliance, Region2D, Vec2 } from '../../engine/sim/types.ts';
+
+const IN = 0.0254;
+/** Field length, 54 ft 3 1/4 in (Manual 5.1). */
+export const FIELD_LENGTH = 651.25 * IN;
+const FIELD_WIDTH = 315.5 * IN;
+const COMMUNITY_SHALLOW = (11 * 12 + 0.375) * IN; // 3.36
+const COMMUNITY_DEEP = (16 * 12 + 1.25) * IN; // 4.91
+const COMMUNITY_WIDTH = 18 * 12 * IN; // 5.49
+const CHARGE_STATION_EDGE_Y = COMMUNITY_WIDTH / 2 + ((8 * 12 + 1.25) * IN) / 2; // 3.98
+const GRID_WIDTH = (18 * 12 + 0.5) * IN; // 5.50
+const LZ_SHALLOW = (11 * 12 + 0.25) * IN; // 3.36
+const LZ_DEEP = (22 * 12 + 0.25) * IN; // 6.71
+const LZ_STEP_Y = 6.75; // read off Fig 5-6
+
+/** Blue COMMUNITY (Manual 5.2, Fig 5-6): deep around the Charge Station, shallow by the barrier. */
+export const COMMUNITY: Region2D = {
+  kind: 'poly',
+  points: [
+    { x: 0, y: 0 },
+    { x: COMMUNITY_DEEP, y: 0 },
+    { x: COMMUNITY_DEEP, y: CHARGE_STATION_EDGE_Y },
+    { x: COMMUNITY_SHALLOW, y: CHARGE_STATION_EDGE_Y },
+    { x: COMMUNITY_SHALLOW, y: COMMUNITY_WIDTH },
+    { x: 0, y: COMMUNITY_WIDTH },
+  ],
+};
+
+/** Blue LOADING ZONE, at the red end (Manual 5.2, Fig 5-6): deep along the guardrail. */
+export const LOADING_ZONE: Region2D = {
+  kind: 'poly',
+  points: [
+    { x: FIELD_LENGTH, y: GRID_WIDTH },
+    { x: FIELD_LENGTH - LZ_SHALLOW, y: GRID_WIDTH },
+    { x: FIELD_LENGTH - LZ_SHALLOW, y: LZ_STEP_Y },
+    { x: FIELD_LENGTH - LZ_DEEP, y: LZ_STEP_Y },
+    { x: FIELD_LENGTH - LZ_DEEP, y: FIELD_WIDTH },
+    { x: FIELD_LENGTH, y: FIELD_WIDTH },
+  ],
+};
+
+/** A blue-authored region's copy for `alliance` (the field is mirrored across the center line). */
+export function forAlliance(region: Region2D, alliance: Alliance): Region2D {
+  if (alliance === 'blue' || region.kind !== 'poly') return region;
+  return { kind: 'poly', points: region.points.map((p: Vec2) => ({ x: FIELD_LENGTH - p.x, y: p.y })) };
+}
+
 export const COLUMNS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 export const CUBE_COLUMNS = new Set([2, 5, 8]);
 export const COOP_COLUMNS = new Set([4, 5, 6]);

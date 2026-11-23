@@ -4,6 +4,17 @@ import type { Region2D, Vec2 } from '../sim/types.ts';
 
 /** Elements whose top is below this are drivable (ramps, bumps). */
 const DRIVABLE_HEIGHT = 0.2;
+/** Drivable but raised elements (ramps, platforms) at least this tall are "slow" ground. */
+const SLOW_MIN_HEIGHT = 0.05;
+/** A* cost multiplier for slow ground: bots cross a ramp only when it saves real distance. */
+const SLOW_COST = 3;
+
+/** A circle bots should path around this time (e.g. a parked robot). */
+export interface DynamicObstacle {
+  x: number;
+  y: number;
+  radius: number;
+}
 
 function convexHull2D(points: Vec2[]): Vec2[] {
   const pts = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
@@ -25,8 +36,8 @@ function convexHull2D(points: Vec2[]): Vec2[] {
   return lower.slice(0, -1).concat(upper.slice(0, -1));
 }
 
-/** 2D footprints of solid, robot-height field elements. */
-export function obstacleFootprints(game: ExpandedGame, robotHeight = 0.5): Region2D[] {
+/** 2D footprints of solid, robot-height field elements (or, with `slow`, of drivable raised ones). */
+export function obstacleFootprints(game: ExpandedGame, robotHeight = 0.5, slow = false): Region2D[] {
   const out: Region2D[] = [];
   for (const e of game.elements) {
     if (e.solid === false) continue;
@@ -60,7 +71,10 @@ export function obstacleFootprints(game: ExpandedGame, robotHeight = 0.5): Regio
     });
     const minZ = Math.min(...world.map((w) => w.z));
     const maxZ = Math.max(...world.map((w) => w.z));
-    if (maxZ < DRIVABLE_HEIGHT || minZ > robotHeight) continue;
+    if (
+      slow ? maxZ >= DRIVABLE_HEIGHT || maxZ < SLOW_MIN_HEIGHT : maxZ < DRIVABLE_HEIGHT || minZ > robotHeight
+    )
+      continue;
     out.push({ kind: 'poly', points: convexHull2D(world) });
   }
   return out;
@@ -78,6 +92,13 @@ export class NavGrid {
   readonly cols: number;
   readonly rows: number;
   private readonly blocked: Uint8Array;
+  /** Cells on drivable ramps / platforms (extra path cost). */
+  private readonly slow: Uint8Array;
+  /** Per-call dynamic obstacle mask (set during findPath). */
+  private dyn: Uint8Array | null = null;
+  /** Per-call "keep out if you can" mask (set during findPath), costed like slow ground. */
+  private pen: Uint8Array | null = null;
+  private readonly penaltyCache = new Map<string, Uint8Array>();
 
   constructor(
     readonly game: ExpandedGame,
@@ -89,7 +110,9 @@ export class NavGrid {
     this.cols = Math.ceil(L / cell);
     this.rows = Math.ceil(W / cell);
     this.blocked = new Uint8Array(this.cols * this.rows);
+    this.slow = new Uint8Array(this.cols * this.rows);
     const obstacles = obstacleFootprints(game);
+    const ramps = obstacleFootprints(game, 0.5, true);
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
         const p = this.center(c, r);
@@ -103,6 +126,9 @@ export class NavGrid {
           }
         }
         this.blocked[r * this.cols + c] = b ? 1 : 0;
+        // Slow if any part of the robot would be on the ramp.
+        if (ramps.some((o) => pointInRegion(p, o) || distToPoly(p, o) < inflate * 0.5))
+          this.slow[r * this.cols + c] = 1;
       }
     }
   }
@@ -119,7 +145,28 @@ export class NavGrid {
 
   isFree(p: Vec2): boolean {
     const [c, r] = this.cellOf(p);
-    return this.blocked[r * this.cols + c] === 0;
+    const i = r * this.cols + c;
+    return this.blocked[i] === 0 && !this.dyn?.[i];
+  }
+
+  /** True if `p` is on a drivable ramp or platform, or in this search's penalty regions. */
+  isSlow(p: Vec2): boolean {
+    const [c, r] = this.cellOf(p);
+    const i = r * this.cols + c;
+    return this.slow[i] === 1 || this.pen?.[i] === 1;
+  }
+
+  /** Cells inside `regions`, cached under `key` (e.g. the zones one alliance should stay out of). */
+  private penaltyMask(key: string, regions: readonly Region2D[]): Uint8Array {
+    let mask = this.penaltyCache.get(key);
+    if (!mask) {
+      mask = new Uint8Array(this.cols * this.rows);
+      for (let r = 0; r < this.rows; r++)
+        for (let c = 0; c < this.cols; c++)
+          if (regions.some((z) => pointInRegion(this.center(c, r), z))) mask[r * this.cols + c] = 1;
+      this.penaltyCache.set(key, mask);
+    }
+    return mask;
   }
 
   /** Nearest free point to `p` (spiral search), or `p` itself if free. */
@@ -148,22 +195,61 @@ export class NavGrid {
     return p;
   }
 
-  /** True if the straight segment a-b stays in free cells. */
-  lineOfSight(a: Vec2, b: Vec2): boolean {
+  /** True if the straight segment a-b stays in free cells (and off slow ground unless `slowOk`). */
+  lineOfSight(a: Vec2, b: Vec2, slowOk = true): boolean {
     const d = Math.hypot(b.x - a.x, b.y - a.y);
     const n = Math.ceil(d / (this.cell * 0.5));
     for (let i = 1; i < n; i++) {
       const t = i / n;
-      if (!this.isFree({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })) return false;
+      const q = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      if (!this.isFree(q) || (!slowOk && this.isSlow(q))) return false;
     }
     return true;
   }
 
-  /** Smoothed waypoint path from `a` to `b` (excluding `a`). Empty if unreachable. */
-  findPath(a: Vec2, b: Vec2): Vec2[] {
+  /**
+   * Smoothed waypoint path from `a` to `b` (excluding `a`). Empty if unreachable. Ramps cost extra,
+   * and `avoid` circles (e.g. parked robots) are treated as walls for this search, except one that
+   * covers the start or the goal. `penalty` regions (e.g. the opponent's protected zones) cost as
+   * much as ramps: crossed only when going around is much longer.
+   */
+  findPath(
+    a: Vec2,
+    b: Vec2,
+    avoid: readonly DynamicObstacle[] = [],
+    penalty?: { key: string; regions: readonly Region2D[] },
+  ): Vec2[] {
+    this.dyn = this.dynamicMask(a, b, avoid);
+    this.pen = penalty?.regions.length ? this.penaltyMask(penalty.key, penalty.regions) : null;
+    try {
+      return this.search(a, b);
+    } finally {
+      this.dyn = null;
+      this.pen = null;
+    }
+  }
+
+  private dynamicMask(a: Vec2, b: Vec2, avoid: readonly DynamicObstacle[]): Uint8Array | null {
+    let mask: Uint8Array | null = null;
+    for (const o of avoid) {
+      const rad = o.radius + this.inflate;
+      if (Math.hypot(a.x - o.x, a.y - o.y) < rad || Math.hypot(b.x - o.x, b.y - o.y) < rad) continue;
+      mask ??= new Uint8Array(this.cols * this.rows);
+      const [c0, r0] = this.cellOf({ x: o.x - rad, y: o.y - rad });
+      const [c1, r1] = this.cellOf({ x: o.x + rad, y: o.y + rad });
+      for (let r = r0; r <= r1; r++)
+        for (let c = c0; c <= c1; c++) {
+          const p = this.center(c, r);
+          if (Math.hypot(p.x - o.x, p.y - o.y) < rad) mask[r * this.cols + c] = 1;
+        }
+    }
+    return mask;
+  }
+
+  private search(a: Vec2, b: Vec2): Vec2[] {
     const start = this.nearestFree(a);
     const goal = this.nearestFree(b);
-    if (this.lineOfSight(start, goal)) return [goal];
+    if (this.lineOfSight(start, goal, this.isSlow(start) || this.isSlow(goal))) return [goal];
     const [sc, sr] = this.cellOf(start);
     const [gc, gr] = this.cellOf(goal);
     const N = this.cols * this.rows;
@@ -208,9 +294,16 @@ export class NavGrid {
         const nr = r + dr;
         if (nc < 0 || nr < 0 || nc >= this.cols || nr >= this.rows) continue;
         const ni = nr * this.cols + nc;
-        if (this.blocked[ni] || closed[ni]) continue;
-        if (dc && dr && (this.blocked[r * this.cols + nc] || this.blocked[nr * this.cols + c])) continue;
-        const ng = cur.g + cost;
+        if (this.blocked[ni] || this.dyn?.[ni] || closed[ni]) continue;
+        const side1 = r * this.cols + nc;
+        const side2 = nr * this.cols + c;
+        if (
+          dc &&
+          dr &&
+          (this.blocked[side1] || this.blocked[side2] || this.dyn?.[side1] || this.dyn?.[side2])
+        )
+          continue;
+        const ng = cur.g + cost * (this.slow[ni] || this.pen?.[ni] ? SLOW_COST : 1);
         if (ng < g[ni]!) {
           g[ni] = ng;
           came[ni] = cur.i;
@@ -224,13 +317,14 @@ export class NavGrid {
       cells.push(this.center(i % this.cols, (i / this.cols) | 0));
     cells.reverse();
     cells[cells.length - 1] = goal;
-    // string-pull smoothing
+    // string-pull smoothing (shortcuts may only cross ramps if the search chose to)
+    const slowOk = this.isSlow(start) || cells.some((p) => this.isSlow(p));
     const out: Vec2[] = [];
     let anchor = start;
     let k = 0;
     while (k < cells.length) {
       let j = cells.length - 1;
-      while (j > k && !this.lineOfSight(anchor, cells[j]!)) j--;
+      while (j > k && !this.lineOfSight(anchor, cells[j]!, slowOk)) j--;
       out.push(cells[j]!);
       anchor = cells[j]!;
       k = j + 1;

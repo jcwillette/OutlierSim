@@ -95,7 +95,13 @@ export function textSprite(text: string, color = '#fff', bg = 'rgba(0,0,0,0.55)'
   ctx.roundRect(8, 24, 240, 80, 20);
   ctx.fill();
   ctx.fillStyle = color;
-  ctx.font = 'bold 64px system-ui, sans-serif';
+  // Shrink long labels to fit the pill.
+  let size = 64;
+  ctx.font = `bold ${size}px system-ui, sans-serif`;
+  while (size > 24 && ctx.measureText(text).width > 216) {
+    size -= 4;
+    ctx.font = `bold ${size}px system-ui, sans-serif`;
+  }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 128, 66);
@@ -112,6 +118,10 @@ interface RobotVisual {
   heldGroup: THREE.Group;
   progress: THREE.Sprite;
   heldKey: string;
+  chassis: THREE.Mesh;
+  /** Breakdown / outage tag above the robot, rebuilt when the state changes. */
+  status: THREE.Sprite | null;
+  statusKey: string;
 }
 
 export class FieldView {
@@ -264,7 +274,7 @@ export class FieldView {
     progress.visible = false;
     group.add(progress);
     this.scene.add(group);
-    v = { group, heldGroup, progress, heldKey: '' };
+    v = { group, heldGroup, progress, heldKey: '', chassis, status: null, statusKey: '' };
     this.robots.set(r.id, v);
     return v;
   }
@@ -288,6 +298,32 @@ export class FieldView {
     this.scene.add(m);
     this.pieces.set(p.id, m);
     return m;
+  }
+
+  /** Show a broken-down robot (gray, "DISABLED") or one in a short outage (blinking "NO POWER"). */
+  private syncStatus(v: RobotVisual, r: Robot, time: number): void {
+    const key = r.brokenDown ? 'dead' : r.isOut(time) ? 'stall' : '';
+    if (key !== v.statusKey) {
+      v.statusKey = key;
+      if (v.status) {
+        v.group.remove(v.status);
+        v.status.material.map?.dispose();
+        v.status.material.dispose();
+        v.status = null;
+      }
+      (v.chassis.material as THREE.MeshStandardMaterial).color.set(key === 'dead' ? 0x1b1d21 : 0x3a3f47);
+      if (key) {
+        v.status = textSprite(
+          key === 'dead' ? 'DISABLED' : 'NO POWER',
+          '#fff',
+          key === 'dead' ? '#c62828' : '#b26a00',
+          0.45,
+        );
+        v.status.position.z = r.archetype.frame.height / 2 + 0.95;
+        v.group.add(v.status);
+      }
+    }
+    if (v.status && key === 'stall') v.status.visible = Math.floor(time * 3) % 2 === 0;
   }
 
   /** Move the ring marker to another robot (spectator follow), or hide it with null. */
@@ -324,6 +360,7 @@ export class FieldView {
           v.heldGroup.add(mesh);
         });
       }
+      this.syncStatus(v, r, match.time);
       const act = r.action;
       v.progress.visible = act !== null;
       if (act) {

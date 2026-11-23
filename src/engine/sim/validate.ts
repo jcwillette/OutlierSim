@@ -168,6 +168,19 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     if (preload.length && !preload.some(([type, n]) => (a.capacity[type] ?? 0) >= Math.min(n, 1)))
       warn(path, `cannot hold any preload piece (${preload.map(([t]) => t).join(', ')})`);
     if (!a.intake && !a.place && !a.shooter) warn(path, 'robot cannot interact with pieces');
+    if (a.reliability !== undefined && (a.reliability < 0 || a.reliability > 1))
+      err(path, 'reliability must be between 0 and 1');
+  });
+  const archIds = new Set(def.archetypes.map((a) => a.id));
+  unique(
+    'lineups',
+    (def.lineups ?? []).map((l) => l.id),
+  );
+  (def.lineups ?? []).forEach((l, i) => {
+    l.robots.forEach((slot, j) => {
+      if (!archIds.has(slot.archetype))
+        err(`lineups[${i}] ${l.id}.robots[${j}]`, `unknown archetype '${slot.archetype}'`);
+    });
   });
 
   // expansion must not throw and must produce unique ids

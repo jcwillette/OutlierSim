@@ -82,6 +82,15 @@ export class Robot {
   aimYaw: number | null = null;
   readonly leftZones = new Set<string>();
   readonly stats: RobotStats = { piecesScored: 0, shotsTaken: 0, intakes: 0 };
+  /** Scheduled match-ending breakdown time (match time), if any. */
+  breakdownAt: number | null = null;
+  /** Broke down: dead for the rest of the match (can still be pushed). */
+  brokenDown = false;
+  /** Scheduled short outages, sorted by start time. */
+  readonly outages: Array<{ at: number; sec: number }> = [];
+  /** Match time until which the robot is without power / comms. */
+  stalledUntil = 0;
+  stallCount = 0;
 
   constructor(
     readonly id: number,
@@ -93,6 +102,11 @@ export class Robot {
 
   get x(): number {
     return this.body.translation().x;
+  }
+
+  /** Broken down or in a short outage at match time `t`: no driving, no mechanisms. */
+  isOut(t: number): boolean {
+    return this.brokenDown || t < this.stalledUntil;
   }
   get y(): number {
     return this.body.translation().y;
@@ -186,7 +200,23 @@ export interface MatchOptions {
   seed?: number;
   /** Override archetypes per robot id (0-2 blue stations 1-3, 3-5 red stations 1-3). */
   archetypes?: Partial<Record<number, string>>;
+  /**
+   * Robots can break down for the rest of the match or lose power / comms for a few seconds, more
+   * often for low `reliability` archetypes. Default off (deterministic engine tests).
+   */
+  breakdowns?: boolean;
+  /** Robot ids that never break down even with `breakdowns` on (e.g. the student's robot). */
+  breakdownExempt?: number[];
 }
+
+/** Default `RobotArchetype.reliability`. */
+export const DEFAULT_RELIABILITY = 0.95;
+/** Chance of a match-ending breakdown is this x (1 - reliability). */
+const BREAKDOWN_SCALE = 0.6;
+/** Expected short power / comms losses per match is this x (1 - reliability). */
+const STALL_SCALE = 5;
+const STALL_MIN_SEC = 2;
+const STALL_MAX_SEC = 6;
 
 export interface AllianceResult extends AllianceSummary {
   rp: number;
@@ -198,7 +228,18 @@ export interface AllianceResult extends AllianceSummary {
 export interface MatchResult {
   blue: AllianceResult;
   red: AllianceResult;
-  robots: Array<{ id: number; alliance: Alliance; archetype: string; points: number } & RobotStats>;
+  robots: Array<
+    {
+      id: number;
+      alliance: Alliance;
+      archetype: string;
+      points: number;
+      /** Match time (s since auto start) the robot broke down for good, or null. */
+      brokeDownAt: number | null;
+      /** Short power / comms losses it suffered. */
+      stalls: number;
+    } & RobotStats
+  >;
 }
 
 let rapierReady: Promise<void> | null = null;
@@ -284,8 +325,52 @@ export class Match {
         }
       }
     }
+    if (opts.breakdowns) this.scheduleBreakdowns(opts.breakdownExempt ?? []);
     this.rulesCtx = this.makeRulesContext();
     def.rules?.onInit?.(this.rulesCtx);
+  }
+
+  /** Roll each robot's breakdown and outage times from its archetype's reliability (seeded). */
+  private scheduleBreakdowns(exempt: readonly number[]): void {
+    const end = this.def.timing.autoSec + this.def.timing.transitionSec + this.def.timing.teleopSec;
+    for (const r of this.robots) {
+      if (exempt.includes(r.id)) continue;
+      const unreliability = 1 - clamp(r.archetype.reliability ?? DEFAULT_RELIABILITY, 0, 1);
+      if (this.random() < Math.min(0.9, BREAKDOWN_SCALE * unreliability)) r.breakdownAt = this.random() * end;
+      // Poisson number of outages.
+      const limit = Math.exp(-STALL_SCALE * unreliability);
+      let p = this.random();
+      while (p > limit) {
+        r.outages.push({
+          at: this.random() * end,
+          sec: STALL_MIN_SEC + this.random() * (STALL_MAX_SEC - STALL_MIN_SEC),
+        });
+        p *= this.random();
+      }
+      r.outages.sort((a, b) => a.at - b.at);
+    }
+  }
+
+  private updateBreakdowns(): void {
+    for (const r of this.robots) {
+      if (r.brokenDown || r.endgameDone) continue;
+      const name = `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${r.station + 1}`;
+      if (r.breakdownAt !== null && this.time >= r.breakdownAt) {
+        r.brokenDown = true;
+        r.action = null;
+        this.announce(`${name} (${r.archetype.name}) broke down!`, r.alliance);
+        continue;
+      }
+      while (r.outages.length && r.outages[0]!.at <= this.time) {
+        const o = r.outages.shift()!;
+        if (this.time >= r.stalledUntil) {
+          r.stallCount++;
+          r.action = null;
+          this.announce(`${name} lost power for ${Math.round(o.sec)} s`, r.alliance);
+        }
+        r.stalledUntil = Math.max(r.stalledUntil, this.time + o.sec);
+      }
+    }
   }
 
   // ------------------------------------------------------------------ construction
@@ -513,10 +598,13 @@ export class Match {
       return;
     }
     const enabled = this.phase === 'auto' || this.phase === 'teleop';
+    if (enabled) this.updateBreakdowns();
 
     for (const r of this.robots) {
       r.aimYaw = null;
-      r.command = enabled && r.controller ? r.controller.command(this, r, dt) : IDLE;
+      // A robot that's out still gets its controller called (bots notice and release their claims).
+      const cmd = enabled && r.controller ? r.controller.command(this, r, dt) : IDLE;
+      r.command = r.isOut(this.time) ? IDLE : cmd;
       r.intakeCooldown = Math.max(0, r.intakeCooldown - dt);
       r.shootCooldown = Math.max(0, r.shootCooldown - dt);
     }
@@ -542,7 +630,7 @@ export class Match {
   private drive(r: Robot, dt: number, enabled: boolean): void {
     if (r.endgameDone) return;
     const a = r.archetype;
-    const locked = !enabled || r.action !== null;
+    const locked = !enabled || r.action !== null || r.isOut(this.time);
     const cmd = r.command;
     let tx = 0;
     let ty = 0;
@@ -576,7 +664,7 @@ export class Match {
   // ------------------------------------------------------------------ mechanisms
 
   private updateMechanisms(r: Robot, dt: number): void {
-    if (r.endgameDone) return;
+    if (r.endgameDone || r.isOut(this.time)) return;
     if (r.action) {
       this.continueAction(r, dt);
       return;
@@ -618,10 +706,14 @@ export class Match {
         this.scorePiece(piece, ts, r.id);
       }
     } else {
+      const ga = this.game.endgame.find((e) => e.id === act.actionId)!;
+      if (!pointInRegion(r, ga.zones[act.zoneIndex]!)) {
+        r.action = null; // pushed off the climb / dock spot: the attempt fails
+        return;
+      }
       act.remaining -= dt;
       if (act.remaining <= 0) {
         r.action = null;
-        const ga = this.game.endgame.find((e) => e.id === act.actionId)!;
         r.endgameDone = { actionId: ga.id, zoneIndex: act.zoneIndex };
         r.endgameInAuto = this.scoringPeriod === 'auto';
         r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -1163,6 +1255,8 @@ export class Match {
         alliance: r.alliance,
         archetype: r.archetype.id,
         points: this.ledger.byRobot(r.id),
+        brokeDownAt: r.brokenDown ? r.breakdownAt : null,
+        stalls: r.stallCount,
         ...r.stats,
       })),
     };
@@ -1179,6 +1273,8 @@ export class Match {
       yaw: r.yaw,
       held: [...r.held],
       endgameAction: r.endgameDone?.actionId ?? null,
+      vx: r.vx,
+      vy: r.vy,
     };
   }
 

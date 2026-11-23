@@ -28,6 +28,109 @@ describe('NavGrid', () => {
   });
 });
 
+describe('NavGrid: ramps, parked robots and penalty zones', () => {
+  const cu = findGame('2023-chargedup')!;
+  const grid = new NavGrid(expandDefinition(cu), 0.5);
+  const crosses = (
+    path: Array<{ x: number; y: number }>,
+    from: { x: number; y: number },
+    test: (p: { x: number; y: number }) => boolean,
+  ) => {
+    let prev = from;
+    for (const p of path) {
+      for (let t = 0; t <= 1; t += 0.05)
+        if (test({ x: prev.x + (p.x - prev.x) * t, y: prev.y + (p.y - prev.y) * t })) return true;
+      prev = p;
+    }
+    return false;
+  };
+  it('marks the Charge Station as slow ground and drives around it when that is not much longer', () => {
+    expect(grid.isSlow({ x: 3.94, y: 2.745 })).toBe(true);
+    expect(grid.isSlow({ x: 7, y: 2.745 })).toBe(false);
+    // Straight across the station is 4.6 m; around it is a little longer, so go around.
+    const from = { x: 1.95, y: 2.2 };
+    const path = grid.findPath(from, { x: 6.6, y: 2.2 });
+    expect(crosses(path, from, (p) => grid.isSlow(p) && Math.abs(p.x - 3.94) < 0.6)).toBe(false);
+  });
+  it('routes around a parked robot', () => {
+    const from = { x: 7, y: 1 };
+    const to = { x: 7, y: 7 };
+    const parked = { x: 7, y: 4, radius: 0.45 };
+    expect(crosses(grid.findPath(from, to), from, (p) => Math.hypot(p.x - 7, p.y - 4) < 0.5)).toBe(true);
+    const path = grid.findPath(from, to, [parked]);
+    expect(crosses(path, from, (p) => Math.hypot(p.x - 7, p.y - 4) < 0.5 + 0.45)).toBe(false);
+  });
+  it('keeps out of penalty regions when there is a reasonable way around', () => {
+    // Short detour (~0.5 m longer): stay out. A long detour would cross it (soft penalty).
+    const zone = { kind: 'rect' as const, min: { x: 9, y: 3.4 }, max: { x: 10, y: 4.6 } };
+    const from = { x: 8, y: 4 };
+    const inside = (p: { x: number; y: number }) => p.x > 9.1 && p.x < 9.9 && p.y > 3.5 && p.y < 4.5;
+    expect(crosses(grid.findPath(from, { x: 11, y: 4 }), from, inside)).toBe(true);
+    const path = grid.findPath(from, { x: 11, y: 4 }, [], { key: 'test', regions: [zone] });
+    expect(crosses(path, from, inside)).toBe(false);
+  });
+});
+
+describe('bot teamwork and defense on 2023 Charged Up', () => {
+  const cu = findGame('2023-chargedup')!;
+  it('teammates rarely push each other, and nobody is credited an endgame off the station', () => {
+    let teamContact = 0;
+    for (const seed of [3, 4]) {
+      const m = new Match(cu, {
+        seed,
+        archetypes: { 0: 'elevator', 1: 'arm', 2: 'kitbot', 3: 'cubebot', 4: 'elevator', 5: 'arm' },
+      });
+      attachBots(m, { partners: 'normal', opponents: 'normal', playerId: null });
+      m.start();
+      while (!m.isOver) {
+        m.step();
+        if (m.phase !== 'teleop') continue;
+        for (const a of m.robots)
+          for (const b of m.robots)
+            if (a.id < b.id && a.alliance === b.alliance && !(a.endgameDone && b.endgameDone))
+              if (Math.hypot(a.x - b.x, a.y - b.y) < 0.9) teamContact += 1 / 60;
+      }
+      for (const r of m.robots) {
+        if (!r.endgameDone) continue;
+        const cx = r.x < cu.field.length / 2 ? 3.94 : cu.field.length - 3.94;
+        expect(Math.abs(r.x - cx)).toBeLessThan(0.7);
+      }
+    }
+    // Before teammate coordination this was ~27 s per match.
+    expect(teamContact / 2).toBeLessThan(15);
+  });
+  it('an empty-handed bot blocks a nearby opponent carrying a piece, but not inside its protected zone', () => {
+    const m = new Match(cu, { seed: 1, archetypes: { 0: 'kitbot' } });
+    const bots = attachBots(m, { partners: 'normal', opponents: 'normal', playerId: null });
+    m.start();
+    while (m.phase !== 'teleop') m.step();
+    const me = m.robots[0]!;
+    const opp = m.robots[4]!; // red, heading home (+x) with a piece
+    const put = (r: typeof me, x: number, y: number) => {
+      r.body.setTranslation({ x, y, z: r.archetype.frame.height / 2 + 0.01 }, true);
+      r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    };
+    for (const r of m.robots)
+      if (r !== me && r !== opp) put(r, r.alliance === 'blue' ? 1.95 : 14.6, r.station * 2 + 0.6);
+    while (me.held.length) me.held.pop();
+    put(me, 8.2, 6.6);
+    put(opp, 7.4, 6.6);
+    opp.action = null; // it may have been mid-placement when we moved it
+    opp.body.setLinvel({ x: 2.5, y: 0, z: 0 }, true);
+    if (!opp.held.length) opp.held.push('cube');
+    const brain = bots.get(0)!;
+    (brain as unknown as { decide: (m: Match, r: typeof me) => void }).decide(m, me);
+    expect(brain.currentPlan.kind).toBe('defend');
+    // The same opponent inside its own loading zone (red's is at the blue end) is off limits.
+    put(opp, 2.0, 7.0);
+    opp.action = null;
+    opp.body.setLinvel({ x: 2.5, y: 0, z: 0 }, true);
+    put(me, 2.8, 7.0);
+    (brain as unknown as { decide: (m: Match, r: typeof me) => void }).decide(m, me);
+    expect(brain.currentPlan.kind).not.toBe('defend');
+  });
+});
+
 describe('bot AI on the reference game', () => {
   it('plays a full 3v3 match: both alliances score in auto, teleop and endgame', () => {
     const m = new Match(ref, { seed: 7 });
