@@ -381,6 +381,15 @@ export const definition: GameDefinition = {
         region: LOADING_ZONE,
         source: M(21, 'LOADING ZONE 8 ft 3 in wide, 3.36-6.71 m deep; step read off Fig 5-6'),
       },
+      {
+        // Not drawn: the Charge Station footprint, protected from opponents in the endgame (G209).
+        id: 'charge-station',
+        name: 'Charge Station',
+        side: 'blue',
+        region: rect(CS_X - CS_DEPTH / 2, CS_Y - CS_WIDTH / 2, CS_X + CS_DEPTH / 2, CS_Y + CS_WIDTH / 2),
+        visible: false,
+        source: `${SRC_CS}; G209 (p.59)`,
+      },
     ],
   },
   pieces: [
@@ -706,5 +715,7 @@ export const definition: GameDefinition = {
     protectedZones: ['community', 'loading-zone'],
     // The station is LEVEL only if the last robot on is a balancer (rules.ts): dock-only robots first.
     endgameOrder: ['dock', 'engage'],
+    // G209: in the endgame, opponents may not touch robots on their Charge Station.
+    endgameProtectedZones: ['charge-station'],
   },
 };

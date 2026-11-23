@@ -4,6 +4,14 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- Clean defense:
+  - Defenders never mark an opposing defender. Defender-vs-defender time when both alliances bring one: ~136 s → ~0 s per match. A Defender with no worthwhile target scores instead.
+  - They drop an opponent within 0.6 m of its protected zones and never wait inside them.
+  - They break off after 3 s pressed against a stopped opponent, then leave that robot alone for 4 s.
+  - New `botHints.endgameProtectedZones` (G209-style).
+  - Fouls by a defending alliance roughly halved (2023 Shutdown, 40 matches: 1.02 → 0.53 per match). The defender's effect on the opponent is unchanged (about 3 teleop points).
+- `RobotInfo` has the commanded drive direction (`cmdX`, `cmdY`) for contact rules.
+- 2023: G202 pinning is enforced (FOUL at 5 s, TECH FOUL every further 5 s). Added an invisible Charge Station zone for G209.
 - Imperfect robots:
   - `RobotArchetype.reliability` (0..1, default 0.95). With `MatchOptions.breakdowns`, a robot can break down for the rest of the match (about 0.6 × (1 − R)) or lose power / comms for 2-6 s (about 5 × (1 − R) per match). Its action is interrupted, it is drawn gray with a DISABLED / NO POWER tag, and the HUD announces it.
   - Bots have tunnel-vision lapses where they ignore teammates' calls and right of way. These are more frequent for easy bots and low-reliability robots.

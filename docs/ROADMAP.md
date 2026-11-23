@@ -19,7 +19,7 @@ Status of the build plan. Update this file in every PR.
 - The player can't give partner bots instructions during a match (e.g. "you defend now"). Roles and strategies are set before the match.
 
 - Teammate coordination is a shared blackboard (intended spots, yielding), not real multi-robot planning. Head-on meetings in narrow lanes still cost a second or two.
-- Defense is opportunistic only: no pinning detection (G202), no counter-defense, and the dedicated `defenseShare` role doesn't time-box itself.
+- Defense has no counter-defense (scorers don't route around a defender), and one defender is only worth about 3 points. Pin detection (G202) and protected-zone fouls (G207) are game rules in `2023-chargedup/rules.ts`, not engine features yet.
 - Contact for G207 fouls is approximated by center distance (0.95 m), not real bumper contact.
 
 - Spectator mode has no replay or scrubbing (it only plays forward), and no auto-director that cuts to the most interesting robot.
@@ -44,7 +44,7 @@ Status of the build plan. Update this file in every PR.
 - The reference game was moved ahead of the client and AI (originally M4) so both have a real field to develop against.
 - Shooters pick hood pitch and flywheel speed per shot (`solveShot`). Pieces are launched from above the robot's frame, not from a modeled exit point.
 
-- No generic foul detection yet (pinning, protected zones, over-capacity). Games can call `ctx.foul()` from `rules.ts`.
+- No generic foul detection in the engine (pinning, protected zones, over-capacity). Games call `ctx.foul()` from `rules.ts`; 2023 does G202 and G207 there. `RobotInfo` carries velocity and commanded drive for contact rules.
 - Robots are boxes with roll and pitch locked, so ramps and charge stations won't tip them realistically.
 - Physics treats torus pieces as solid cylinders.
 - Pieces aren't drawn inside targets after they're scored (they're consumed or recycled).

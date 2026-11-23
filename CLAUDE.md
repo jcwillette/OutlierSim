@@ -45,7 +45,11 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
     - shared intents, so two bots don't head for overlapping spots
     - paths that avoid parked robots (`NavGrid.findPath` dynamic obstacles)
     - yielding in lane conflicts (`yieldPriority`)
-  - Opponents defend opportunistically (`harassOption`, `botHints.defenseOpportunism`) and stay out of the other alliance's `botHints.protectedZones`.
+  - Opponents defend opportunistically (`harassOption`, `botHints.defenseOpportunism`).
+  - Defense is clean (`worthDefending`, `watchPin`):
+    - it never marks an opposing defender;
+    - it keeps 0.6 m from the opponent's `botHints.protectedZones` (plus `endgameProtectedZones` in the endgame);
+    - it breaks off pins after 3 s and waits 4 s before re-engaging.
   - Bots have tunnel-vision lapses (`SKILL.lapse` plus robot unreliability), where they ignore teammates.
   - `attachBots` takes per-robot `roles` and per-alliance `strategies` (`AllianceStrategy`).
 - Imperfect robots: `MatchOptions.breakdowns` rolls each robot's breakdown and power losses from `RobotArchetype.reliability` (seeded). `Robot.isOut(t)` blocks driving and mechanisms. It's off by default in the engine (so tests stay deterministic), on in the app (except the player's robot, by default) and in `npm run sim` (`--perfect` turns it off).
