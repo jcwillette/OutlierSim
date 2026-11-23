@@ -14,6 +14,11 @@ Status of the build plan. Update this file in every PR.
 
 ## Known gaps / ideas
 
+- No touch controls, so phones and tablets can only use the menus. Matches need a keyboard or gamepad.
+- The bundle is about 4.9 MB (Rapier's WASM is inlined by `rapier3d-compat`). Consider the non-compat build with a separate `.wasm` file if load time matters on school networks.
+- Robots are drawn as generic boxes. Archetypes could get a simple visual hint per mechanism (shooter hood, elevator).
+- Pieces held or scored inside targets aren't drawn in the target.
+
 - The reference game was moved ahead of the client and AI (originally M4) so both have a real field to develop against.
 - Shooters pick hood pitch and flywheel speed per shot (`solveShot`). Pieces are launched from above the robot's frame, not from a modeled exit point.
 
