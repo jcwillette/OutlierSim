@@ -14,6 +14,14 @@ import { Match, initPhysics, type MatchResult, type Robot } from '../engine/sim/
 import type { Alliance, GameDefinition } from '../engine/sim/types.ts';
 import { GAMES } from '../games/index.ts';
 import { BotBrain, attachBots, type Difficulty } from '../engine/ai/bot.ts';
+import {
+  applyPreset,
+  resolveLineup,
+  sanitizeLineup,
+  STRATEGIES,
+  type AllianceChoice,
+  type LineupChoice,
+} from './lineup.ts';
 
 const DIFFICULTIES: ReadonlyArray<readonly [Difficulty, string]> = [
   ['easy', 'Easy'],
@@ -60,8 +68,10 @@ export interface Setup {
   opponents: Difficulty;
   /** Your robot runs the bot AI during autonomous (like a programmed auto routine). */
   autoPilot: boolean;
-  /** Other robots: all the game's default archetype, or a mix of every archetype. */
-  botRobots: 'default' | 'mixed';
+  /** Alliance compositions, per game id (archetype ids differ between games). */
+  lineups: Record<string, LineupChoice>;
+  /** Robots can break down / lose power: never, bots only, or every robot including yours. */
+  breakdowns: 'off' | 'bots' | 'all';
 }
 
 const STORE_KEY = 'outliersim.setup.v1';
@@ -121,7 +131,8 @@ export class App {
       partners: saved.partners ?? 'normal',
       opponents: saved.opponents ?? 'normal',
       autoPilot: saved.autoPilot ?? true,
-      botRobots: saved.botRobots ?? 'mixed',
+      lineups: saved.lineups ?? {},
+      breakdowns: saved.breakdowns ?? 'bots',
     };
 
     this.input.on((e) => this.session?.onButton(e));
@@ -233,16 +244,22 @@ export class App {
         ),
       ),
     );
-    const robotTypes = () =>
-      this.selectField(
-        'Robot types',
-        this.setup.botRobots,
-        [
-          ['mixed', 'Mixed'],
-          ['default', 'All default'],
-        ],
-        (v) => (this.setup.botRobots = v),
-      );
+    const breakdowns = this.selectField(
+      'Breakdowns',
+      this.setup.breakdowns,
+      watching
+        ? [
+            ['bots', 'On'],
+            ['off', 'Off'],
+          ]
+        : [
+            ['bots', 'Bots only'],
+            ['all', 'Everyone, incl. you'],
+            ['off', 'Off'],
+          ],
+      (v) => (this.setup.breakdowns = v),
+    );
+    const alliances = this.alliancesSection(def, watching);
     const playSections: Child[] = [
       h('h2', {}, 'Your driver station'),
       stations,
@@ -277,8 +294,9 @@ export class App {
         { class: 'row' },
         this.selectField('Partners', this.setup.partners, DIFFICULTIES, (v) => (this.setup.partners = v)),
         this.selectField('Opponents', this.setup.opponents, DIFFICULTIES, (v) => (this.setup.opponents = v)),
-        robotTypes(),
+        breakdowns,
       ),
+      alliances,
       h('h2', {}, 'Controls'),
       h(
         'div',
@@ -304,8 +322,9 @@ export class App {
           DIFFICULTIES,
           (v) => (this.setup.opponents = v),
         ),
-        robotTypes(),
+        breakdowns,
       ),
+      alliances,
       h('h2', {}, 'Spectator controls'),
       h(
         'div',
@@ -350,6 +369,130 @@ export class App {
     );
     this.setOverlay(h('div', { class: 'overlay' }, card));
     (card.querySelector('button.primary') as HTMLButtonElement | null)?.focus({ preventScroll: true });
+  }
+
+  private lineupFor(def: GameDefinition): LineupChoice {
+    const l = sanitizeLineup(def, this.setup.lineups[def.id]);
+    this.setup.lineups[def.id] = l;
+    return l;
+  }
+
+  /** Per-alliance composition: preset, strategy, and robot type + role for each driver station. */
+  private alliancesSection(def: GameDefinition, watching: boolean): HTMLElement {
+    const lineup = this.lineupFor(def);
+    const playerId = watching ? null : (this.setup.alliance === 'blue' ? 0 : 3) + this.setup.station;
+    const archName = (id: string) => def.archetypes.find((a) => a.id === id)?.name ?? id;
+    const update = (a: 'blue' | 'red', next: AllianceChoice) => {
+      this.setup.lineups[def.id] = { ...lineup, [a]: next };
+      this.showMenu();
+    };
+    const column = (a: 'blue' | 'red', side: number) => {
+      const c = lineup[a];
+      const preset = def.lineups?.find((l) => l.id === c.preset);
+      const presetSel = h(
+        'select',
+        {
+          'aria-label': `${a} alliance preset`,
+          onchange: (e: Event) => {
+            const id = (e.target as HTMLSelectElement).value;
+            if (id !== 'custom') update(a, applyPreset(def, id));
+          },
+        },
+        h('option', { value: 'random', selected: c.preset === 'random' }, 'Random mix'),
+        ...(def.lineups ?? []).map((l) => h('option', { value: l.id, selected: c.preset === l.id }, l.name)),
+        h('option', { value: 'custom', selected: c.preset === 'custom' }, 'Custom'),
+      );
+      const strategySel = h(
+        'select',
+        {
+          'aria-label': `${a} alliance strategy`,
+          onchange: (e: Event) =>
+            update(a, {
+              ...c,
+              preset: 'custom',
+              strategy: (e.target as HTMLSelectElement).value as AllianceChoice['strategy'],
+            }),
+        },
+        ...STRATEGIES.map(([v, label, tip]) =>
+          h('option', { value: v, selected: v === c.strategy, title: tip }, label),
+        ),
+      );
+      const rows = c.slots.map((slot, station) => {
+        const id = side * 3 + station;
+        const label = h(
+          'span',
+          { class: `slotname ${a}` },
+          `${a === 'blue' ? 'Blue' : 'Red'} ${station + 1}`,
+        );
+        if (id === playerId)
+          return h(
+            'div',
+            { class: 'slot you' },
+            label,
+            h('span', { class: 'you' }, `You · ${archName(this.setup.archetype)}`),
+          );
+        const setSlot = (next: Partial<typeof slot>) => {
+          const slots = [...c.slots] as AllianceChoice['slots'];
+          slots[station] = { ...slot, ...next };
+          update(a, { ...c, preset: 'custom', slots });
+        };
+        return h(
+          'div',
+          { class: 'slot' },
+          label,
+          h(
+            'select',
+            {
+              'aria-label': `${a} ${station + 1} robot`,
+              onchange: (e: Event) => setSlot({ archetype: (e.target as HTMLSelectElement).value }),
+            },
+            h('option', { value: 'random', selected: slot.archetype === 'random' }, 'Random'),
+            ...def.archetypes.map((t) =>
+              h('option', { value: t.id, selected: slot.archetype === t.id, title: t.description }, t.name),
+            ),
+          ),
+          h(
+            'select',
+            {
+              'aria-label': `${a} ${station + 1} role`,
+              onchange: (e: Event) =>
+                setSlot({ role: (e.target as HTMLSelectElement).value as typeof slot.role }),
+            },
+            h(
+              'option',
+              {
+                value: 'auto',
+                selected: slot.role === 'auto',
+                title: 'Defenders defend, everyone else scores',
+              },
+              'Auto',
+            ),
+            h('option', { value: 'score', selected: slot.role === 'score' }, 'Score'),
+            h('option', { value: 'defense', selected: slot.role === 'defense' }, 'Defend'),
+          ),
+        );
+      });
+      const tip = preset?.description ?? STRATEGIES.find(([v]) => v === c.strategy)?.[2] ?? '';
+      return h(
+        'div',
+        { class: `alliance ${a}` },
+        h(
+          'div',
+          { class: 'alliance-head' },
+          h('b', {}, a === 'blue' ? 'Blue alliance' : 'Red alliance'),
+          presetSel,
+        ),
+        h('label', { class: 'field' }, h('span', {}, 'Strategy'), strategySel),
+        ...rows,
+        h('p', { class: 'summary small' }, tip),
+      );
+    };
+    return h(
+      'div',
+      {},
+      h('h2', {}, 'Alliances'),
+      h('div', { class: 'alliances' }, column('blue', 0), column('red', 1)),
+    );
   }
 
   private selectField<T extends string>(
@@ -440,6 +583,11 @@ export class App {
               `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${(r.id % 3) + 1}${r.id === playerId ? ' (you)' : ''}: ${
                 def.archetypes.find((a) => a.id === r.archetype)?.name ?? r.archetype
               }`,
+              r.brokeDownAt !== null
+                ? h('span', { class: 'trouble' }, ` broke down at ${fmtTime(r.brokeDownAt)}`)
+                : r.stalls
+                  ? h('span', { class: 'trouble' }, ` lost power ×${r.stalls}`)
+                  : null,
             ),
             h('td', {}, String(r.points)),
             h('td', {}, String(r.piecesScored)),
@@ -497,21 +645,28 @@ class Session {
   ) {
     const watching = setup.mode === 'watch';
     const playerId = watching ? null : (setup.alliance === 'blue' ? 0 : 3) + setup.station;
-    const archetypes: Record<number, string> = playerId === null ? {} : { [playerId]: setup.archetype };
-    if (setup.botRobots === 'mixed') {
-      // Deal out every archetype so each alliance sees a variety of robots.
-      let k = Math.floor(Math.random() * def.archetypes.length);
-      for (let id = 0; id < 6; id++)
-        if (id !== playerId) archetypes[id] = def.archetypes[k++ % def.archetypes.length]!.id;
-    }
-    this.match = new Match(def, { seed: (Math.random() * 2 ** 31) | 0, archetypes });
+    const lineup = resolveLineup(def, sanitizeLineup(def, setup.lineups[def.id]), playerId);
+    const archetypes =
+      playerId === null ? lineup.archetypes : { ...lineup.archetypes, [playerId]: setup.archetype };
+    this.match = new Match(def, {
+      seed: (Math.random() * 2 ** 31) | 0,
+      archetypes,
+      breakdowns: setup.breakdowns !== 'off',
+      ...(setup.breakdowns === 'bots' && playerId !== null ? { breakdownExempt: [playerId] } : {}),
+    });
     this.player = playerId === null ? null : this.match.robots[playerId]!;
     this.followId = playerId ?? 0;
     this.view = new FieldView(this.match.game, this.followId);
     this.rig = watching
       ? new CameraRig(this.match, 'blue', 1, SPECTATOR_CAMERA_MODES)
       : new CameraRig(this.match, setup.alliance, setup.station);
-    this.brains = attachBots(this.match, { partners: setup.partners, opponents: setup.opponents, playerId });
+    this.brains = attachBots(this.match, {
+      partners: setup.partners,
+      opponents: setup.opponents,
+      playerId,
+      roles: lineup.roles,
+      strategies: lineup.strategies,
+    });
     if (this.player) {
       const controller = new PlayerController(input, () => this.rig.driveYaw);
       this.controller = controller;
@@ -606,6 +761,8 @@ type HudMode =
 
 /** Plain-language summary of what a bot is doing right now (spectator commentary). */
 export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): string {
+  if (r.brokenDown) return 'Broken down for the rest of the match';
+  if (r.isOut(m.time)) return 'Lost power, coming back…';
   if (r.endgameDone) {
     const a = m.game.endgame.find((e) => e.id === r.endgameDone!.actionId);
     return `${a?.name ?? 'Endgame'} done`;
@@ -623,6 +780,12 @@ export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): st
   if (m.phase === 'post') return 'Match over';
   const p = brain?.currentPlan;
   if (!p) return 'Idle';
+  const role = brain?.role === 'defense' ? ' (defender)' : '';
+  const lapse = brain?.lapsing ? ' · not watching teammates' : '';
+  return describePlan(m, p) + role + lapse;
+}
+
+function describePlan(m: Match, p: BotBrain['currentPlan']): string {
   switch (p.kind) {
     case 'acquire': {
       const piece = m.pieces[p.pieceId];
@@ -810,6 +973,8 @@ class Hud {
     if (m.phase === 'pre') return 'Get ready…';
     if (m.phase === 'transition') return 'Robots disabled: teleop starts soon';
     if (m.phase === 'post') return 'Match over';
+    if (r.brokenDown) return '<b>Your robot broke down.</b> It stays dead for the rest of the match.';
+    if (r.isOut(m.time)) return '<b>Lost power!</b> Your robot is back in a few seconds.';
     if (m.phase === 'auto' && autoPilot) return '<b>Auto routine running.</b> You take over in teleop.';
     if (r.endgameDone) {
       const a = m.game.endgame.find((e) => e.id === r.endgameDone!.actionId);

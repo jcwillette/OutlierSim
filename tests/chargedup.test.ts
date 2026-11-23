@@ -187,7 +187,7 @@ describe('2023 Charged Up: rules', () => {
     expect(added).toEqual([['blue', 'endgame', -4, 'station-tipped']]);
   });
 
-  it('G207: contact inside the opponent loading zone is a foul on the intruder', () => {
+  const g207 = (rammed: boolean) => {
     const fouls: string[] = [];
     const ctx = {
       vars: {} as Record<string, unknown>,
@@ -196,8 +196,8 @@ describe('2023 Charged Up: rules', () => {
       robots: () =>
         [
           // blue robot inside red's LOADING ZONE (at the blue end, high y), touching a red robot
-          { id: 0, alliance: 'blue', x: 2.0, y: 7.0, endgameAction: null },
-          { id: 3, alliance: 'red', x: 2.7, y: 7.0, endgameAction: null },
+          { id: 0, alliance: 'blue', x: 2.0, y: 7.0, endgameAction: null, vx: rammed ? 0 : 1, vy: 0 },
+          { id: 3, alliance: 'red', x: 2.7, y: 7.0, endgameAction: null, vx: rammed ? -2 : 0, vy: 0 },
         ] as RobotInfo[],
       targetCount: () => 0,
       setTargetEnabled: () => {},
@@ -207,7 +207,13 @@ describe('2023 Charged Up: rules', () => {
     } as unknown as RulesContext;
     rules.onTick!(ctx, 1 / 60);
     rules.onTick!(ctx, 1 / 60); // same contact moments later: not another foul
-    expect(fouls).toEqual(['blue']);
+    return fouls;
+  };
+  it('G207: contact inside the opponent loading zone is a foul on the intruder', () => {
+    expect(g207(false)).toEqual(['blue']);
+  });
+  it('G201: no G207 foul when the zone owner drove into the intruder', () => {
+    expect(g207(true)).toEqual([]);
   });
 
   it('only one auto Charge Station robot counts per alliance', () => {

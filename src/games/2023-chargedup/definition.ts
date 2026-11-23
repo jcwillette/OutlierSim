@@ -539,6 +539,7 @@ export const definition: GameDefinition = {
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.35, reach: 0.2, maxHeight: 1.3 },
       place: { hybrid: 0.8, 'mid-cone': 2.0, 'mid-cube': 1.3, 'high-cone': 2.8, 'high-cube': 1.6 },
       endgame: { 'auto-engage': 4, 'auto-dock': 2, engage: 4, dock: 2 },
+      reliability: 0.97,
       source: 'engineering estimate: R104 frame + bumpers, G107 48 in reach covers the 1.01 m-deep top pole',
     },
     {
@@ -554,6 +555,7 @@ export const definition: GameDefinition = {
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.4, reach: 0.2, maxHeight: 1.2 },
       place: { hybrid: 0.8, 'mid-cone': 2.4, 'mid-cube': 1.4 },
       endgame: { 'auto-engage': 5.5, 'auto-dock': 3, engage: 5.5, dock: 2.5 },
+      reliability: 0.92,
       source:
         'engineering estimate: a simpler arm reaches the 0.58 m-deep mid pole but not the 1.01 m top pole',
     },
@@ -569,6 +571,7 @@ export const definition: GameDefinition = {
       intake: { pieceTypes: ['cube'], timeSec: 0.25, reach: 0.2, maxHeight: 0.3 },
       place: { hybrid: 0.6, 'mid-cube': 1.0, 'high-cube': 1.3 },
       endgame: { 'auto-engage': 3.5, 'auto-dock': 2, engage: 3.5, dock: 2 },
+      reliability: 0.95,
       source:
         'engineering estimate: 71 g cube, walled cube shelves, launching allowed in the community (G404)',
     },
@@ -585,15 +588,123 @@ export const definition: GameDefinition = {
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.6, maxHeight: 0.3 },
       place: { hybrid: 1.2 },
       endgame: { 'auto-dock': 4, dock: 3 },
+      reliability: 0.85,
       source: 'engineering estimate: rookie tank drive (3-3.5 m/s), floor-only roller intake',
+    },
+    {
+      id: 'cone',
+      name: 'Cone specialist',
+      description:
+        'Elevator with a cone-only claw and a funnel that self-centers on the pole. Loads upright cones off the shelf, fastest on the top cone row. No cubes.',
+      frame: { length: 0.84, width: 0.84, height: 0.7 },
+      mass: 125 * LB + 8,
+      drive: { maxSpeed: 4.2, maxAccel: 8.5, maxOmega: 7 },
+      capacity: { cone: 1 },
+      intake: { pieceTypes: ['cone'], timeSec: 0.35, reach: 0.2, maxHeight: 1.3 },
+      place: { hybrid: 0.8, 'mid-cone': 1.5, 'high-cone': 2.0 },
+      endgame: { 'auto-dock': 3, engage: 5, dock: 2 },
+      reliability: 0.95,
+      source:
+        'engineering estimate: specializing in one piece lets the claw self-align over the 1.66 in pole (Manual 5.5)',
+    },
+    {
+      id: 'balancer',
+      name: 'Charge Station specialist',
+      description:
+        'Light, quick swerve with a gyro auto-balance. Engages fast in auto and endgame. Scores only low: hybrid nodes and mid cube shelves.',
+      frame: { length: 0.8, width: 0.8, height: 0.45 },
+      mass: 100 * LB + 8,
+      drive: { maxSpeed: 4.5, maxAccel: 10, maxOmega: 9 },
+      capacity: { cone: 1, cube: 1 },
+      totalCapacity: 1,
+      intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.4, reach: 0.2, maxHeight: 0.3 },
+      place: { hybrid: 0.6, 'mid-cube': 1.0 },
+      endgame: { 'auto-engage': 3, 'auto-dock': 1.5, engage: 2.5, dock: 1.5 },
+      reliability: 0.95,
+      source:
+        'engineering estimate: a light, low robot settles the +/-15 deg station quickly (Manual 5.4); simple flipper for mid cubes',
+    },
+    {
+      id: 'defender',
+      name: 'Defender',
+      description:
+        'Heavy six-wheel tank with high-grip treads and a wide bumper. Plays defense in the middle of the field by default; can push a piece into the bottom row and dock.',
+      frame: { length: 0.94, width: 0.94, height: 0.4 },
+      mass: 125 * LB + 10,
+      drive: { maxSpeed: 4.0, maxAccel: 10, maxOmega: 6, traction: 1.35 },
+      capacity: { cone: 1, cube: 1 },
+      totalCapacity: 1,
+      intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.5, maxHeight: 0.3 },
+      place: { hybrid: 1.0 },
+      endgame: { 'auto-dock': 3, dock: 2 },
+      reliability: 0.93,
+      defaultRole: 'defense',
+      source:
+        'engineering estimate: max-weight (R103), max frame (R104), high-traction wheels; G207 keeps it out of the opponent loading zone and community',
     },
   ],
   defaultArchetype: 'elevator',
+  lineups: [
+    {
+      id: 'powerhouse',
+      name: 'Powerhouse',
+      description: 'Three elevator all-rounders: the ceiling for an alliance.',
+      robots: [{ archetype: 'elevator' }, { archetype: 'elevator' }, { archetype: 'elevator' }],
+    },
+    {
+      id: 'typical',
+      name: 'Typical qualification alliance',
+      description: 'One strong all-rounder, a mid-level arm and a rookie kitbot.',
+      robots: [{ archetype: 'elevator' }, { archetype: 'arm' }, { archetype: 'kitbot' }],
+    },
+    {
+      id: 'specialists',
+      name: 'Specialists',
+      description:
+        'Split the jobs: cones on the poles, cubes on the shelves, and one robot that owns the Charge Station.',
+      robots: [{ archetype: 'cone' }, { archetype: 'cubebot' }, { archetype: 'balancer' }],
+    },
+    {
+      id: 'link-race',
+      name: 'Link race',
+      description:
+        'Fast cyclers going for links. They score until the buzzer instead of leaving early to balance.',
+      robots: [{ archetype: 'elevator' }, { archetype: 'cone' }, { archetype: 'cubebot' }],
+      strategy: 'max-cycles',
+    },
+    {
+      id: 'shutdown',
+      name: 'Shutdown defense',
+      description: 'Two scorers and a heavy defender slowing the other alliance in mid-field.',
+      robots: [
+        { archetype: 'elevator' },
+        { archetype: 'cubebot' },
+        { archetype: 'defender', role: 'defense' },
+      ],
+      strategy: 'aggressive',
+    },
+    {
+      id: 'activation',
+      name: 'Activation first',
+      description:
+        'Make sure of the Charge Station bonus: an auto-balancer plus an early triple dock in the endgame.',
+      robots: [{ archetype: 'balancer' }, { archetype: 'arm' }, { archetype: 'kitbot' }],
+      strategy: 'early-endgame',
+    },
+    {
+      id: 'rookies',
+      name: 'Rookie alliance',
+      description: 'Three kitbots: bottom row, docking, and the occasional breakdown.',
+      robots: [{ archetype: 'kitbot' }, { archetype: 'kitbot' }, { archetype: 'kitbot' }],
+    },
+  ],
   rules,
   botHints: {
     endgameLeadSec: 2,
     defenseShare: 0,
     // G207: a robot touching an opponent inside that opponent's LOADING ZONE or COMMUNITY draws a FOUL.
     protectedZones: ['community', 'loading-zone'],
+    // The station is LEVEL only if the last robot on is a balancer (rules.ts): dock-only robots first.
+    endgameOrder: ['dock', 'engage'],
   },
 };

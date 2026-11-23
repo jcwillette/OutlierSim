@@ -2,6 +2,7 @@ import { solveShot } from '../sim/ballistics.ts';
 import type { XTarget } from '../sim/expand.ts';
 import {
   canReachHandoff,
+  DEFAULT_RELIABILITY,
   IDLE,
   type Match,
   type Robot,
@@ -9,7 +10,7 @@ import {
   type RobotController,
 } from '../sim/match.ts';
 import { clamp, pointInRegion, regionCenter, wrapAngle } from '../sim/math.ts';
-import type { Alliance, Region2D, Vec2 } from '../sim/types.ts';
+import type { Alliance, AllianceStrategy, Region2D, RobotRole, Vec2 } from '../sim/types.ts';
 import { NavGrid, type DynamicObstacle } from './navgrid.ts';
 
 /**
@@ -30,12 +31,17 @@ interface Skill {
   noise: number;
   /** Pause before pressing score after arriving. */
   dwell: number;
+  /**
+   * Base fraction of the time the drive team has tunnel vision: it ignores teammates' calls and
+   * right of way, so robots get in each other's way. Low robot reliability adds to it.
+   */
+  lapse: number;
 }
 
 export const SKILL: Record<Difficulty, Skill> = {
-  easy: { speed: 0.65, think: 0.9, noise: 0.6, dwell: 0.7 },
-  normal: { speed: 0.85, think: 0.4, noise: 0.25, dwell: 0.25 },
-  hard: { speed: 1, think: 0.15, noise: 0.05, dwell: 0.05 },
+  easy: { speed: 0.65, think: 0.9, noise: 0.6, dwell: 0.7, lapse: 0.2 },
+  normal: { speed: 0.85, think: 0.4, noise: 0.25, dwell: 0.25, lapse: 0.08 },
+  hard: { speed: 1, think: 0.15, noise: 0.05, dwell: 0.05, lapse: 0.02 },
 };
 
 type Plan =
@@ -133,8 +139,14 @@ function shotSpots(m: Match, r: Robot, t: XTarget): Vec2[] {
 
 export interface BotOptions {
   difficulty?: Difficulty;
-  role?: 'score' | 'defense';
+  role?: RobotRole;
+  strategy?: AllianceStrategy;
 }
+
+/** Seconds a tunnel-vision lapse lasts (uniform in this range). */
+const LAPSE_SEC: [number, number] = [2, 4];
+/** Each point of robot unreliability (1 - reliability) adds this much lapse fraction. */
+const LAPSE_PER_UNRELIABILITY = 1.5;
 
 export class BotBrain implements RobotController {
   private plan: Plan = { kind: 'idle' };
@@ -155,11 +167,33 @@ export class BotBrain implements RobotController {
   private readonly refillCache = new Map<string, number>();
   /** Opponent id -> match time before which this bot won't harass it again. */
   private readonly harassCooldown = new Map<number, number>();
-  readonly role: 'score' | 'defense';
+  readonly role: RobotRole;
+  readonly strategy: AllianceStrategy;
+  /** Match time until which this bot has tunnel vision (ignores teammates). */
+  private lapseUntil = 0;
+  private now = 0;
+  private wasOut = false;
 
   constructor(opts: BotOptions = {}) {
     this.skill = SKILL[opts.difficulty ?? 'normal'];
     this.role = opts.role ?? 'score';
+    this.strategy = opts.strategy ?? 'balanced';
+  }
+
+  /** In a tunnel-vision lapse right now (ignoring teammates' calls and right of way). */
+  get lapsing(): boolean {
+    return this.now < this.lapseUntil;
+  }
+
+  private updateLapse(m: Match, r: Robot, dt: number): void {
+    this.now = m.time;
+    if (this.lapsing) return;
+    const unreliability = 1 - (r.archetype.reliability ?? DEFAULT_RELIABILITY);
+    const f = Math.min(0.6, this.skill.lapse + unreliability * LAPSE_PER_UNRELIABILITY);
+    const mean = (LAPSE_SEC[0] + LAPSE_SEC[1]) / 2;
+    // Start rate so that lapses cover about fraction f of the match.
+    if (m.random() < (f / (mean * (1 - f))) * dt)
+      this.lapseUntil = m.time + LAPSE_SEC[0] + m.random() * (LAPSE_SEC[1] - LAPSE_SEC[0]);
   }
 
   get currentPlan(): Plan {
@@ -168,6 +202,18 @@ export class BotBrain implements RobotController {
 
   command(m: Match, r: Robot, dt: number): RobotCommand {
     if (r.endgameDone) return IDLE;
+    if (r.isOut(m.time)) {
+      // Broken down or without power: let teammates have our spots and pieces.
+      if (!this.wasOut) {
+        this.wasOut = true;
+        this.plan = { kind: 'idle' };
+        this.setClaim(m, r, null);
+        this.setIntent(m, r, this.plan);
+      }
+      return IDLE;
+    }
+    this.wasOut = false;
+    this.updateLapse(m, r, dt);
     this.thinkTimer -= dt;
     this.pathAge += dt;
     if (!r.action && (this.thinkTimer <= 0 || !this.planValid(m, r))) {
@@ -188,6 +234,7 @@ export class BotBrain implements RobotController {
   }
 
   private claimedByOther(m: Match, r: Robot, key: string): boolean {
+    if (this.lapsing) return false; // didn't hear the call
     const owner = aiFor(m).claims[r.alliance].get(key);
     return owner !== undefined && owner !== r.id;
   }
@@ -207,6 +254,7 @@ export class BotBrain implements RobotController {
 
   /** A teammate has announced it is headed to (or standing at) a spot overlapping `p`. */
   private teammateHeadedTo(m: Match, r: Robot, p: Vec2): boolean {
+    if (this.lapsing) return false;
     const mine = halfSize(r);
     for (const [id, q] of aiFor(m).intents[r.alliance]) {
       if (id === r.id) continue;
@@ -539,7 +587,14 @@ export class BotBrain implements RobotController {
         });
         if (occupied && (a.maxRobotsPerZone ?? Infinity) <= 1) return;
         const point = gridFor(m, r).nearestFree(center);
-        const lead = auto ? 0.5 : (m.def.botHints?.endgameLeadSec ?? 3);
+        const baseLead = m.def.botHints?.endgameLeadSec ?? 3;
+        const lead = auto
+          ? 0.5
+          : this.strategy === 'max-cycles'
+            ? 0.5
+            : this.strategy === 'early-endgame'
+              ? baseLead + 15
+              : baseLead;
         // One-at-a-time actions: also wait for teammates already headed for (or doing) one.
         const queue = a.oneAtATime && !auto ? this.endgameQueue(m, r) * dur : 0;
         const need = this.travelTime(m, r, point) * 1.4 + dur + lead + queue + this.skill.think;
@@ -553,6 +608,27 @@ export class BotBrain implements RobotController {
       });
     }
     return best;
+  }
+
+  /**
+   * `botHints.endgameOrder`: hold off starting `actionId` while a teammate bot is still headed for an
+   * action earlier in the order (e.g. let dock-only robots board before the balancer), unless the
+   * clock says go now.
+   */
+  private waitForBoardingOrder(m: Match, r: Robot, actionId: string): boolean {
+    const order = m.def.botHints?.endgameOrder;
+    const mine = order?.indexOf(actionId) ?? -1;
+    if (!order || mine <= 0 || m.phase !== 'teleop') return false;
+    const dur = r.archetype.endgame?.[actionId] ?? 0;
+    if (m.remaining < dur + 1.5) return false;
+    return m.robots.some((o) => {
+      if (o === r || o.alliance !== r.alliance || o.endgameDone || o.isOut(m.time)) return false;
+      const plan = o.controller instanceof BotBrain ? o.controller.currentPlan : null;
+      if (plan?.kind !== 'endgame') return false;
+      const theirs = m.game.endgame.find((e) => e.id === plan.actionId)?.baseId ?? '';
+      const k = order.indexOf(theirs);
+      return k >= 0 && k < mine;
+    });
   }
 
   /** Teammates that can still do an endgame action (they may need the same platform first). */
@@ -633,7 +709,8 @@ export class BotBrain implements RobotController {
    * bot would earn by cycling. Never inside the opponent's protected zones (`botHints.protectedZones`).
    */
   private harassOption(m: Match, r: Robot): Option | null {
-    const weight = m.def.botHints?.defenseOpportunism ?? 1;
+    const strategyWeight = { balanced: 1, 'max-cycles': 0, 'early-endgame': 1, aggressive: 3 }[this.strategy];
+    const weight = (m.def.botHints?.defenseOpportunism ?? 1) * strategyWeight;
     if (weight <= 0 || m.phase !== 'teleop' || r.held.length > 0 || this.role === 'defense') return null;
     let best: Option | null = null;
     for (const o of m.robots) {
@@ -709,9 +786,10 @@ export class BotBrain implements RobotController {
       Math.hypot(goal.x - this.pathGoal.x, goal.y - this.pathGoal.y) > 0.3 ||
       this.pathAge > 1
     ) {
-      this.path = finalApproach
-        ? [goal]
-        : grid.findPath(r, goal, this.parkedRobots(m, r), opponentZones(m, r.alliance));
+      const zones = opponentZones(m, r.alliance);
+      this.path = finalApproach ? [goal] : grid.findPath(r, goal, this.parkedRobots(m, r), zones);
+      // Parked robots can wall off the only way around (e.g. a barrier end): then path through them.
+      if (!this.path.length && !finalApproach) this.path = grid.findPath(r, goal, [], zones);
       if (!this.path.length) this.path = [goal];
       this.pathGoal = goal;
       this.pathAge = 0;
@@ -748,7 +826,7 @@ export class BotBrain implements RobotController {
       }
       // Teammates talk: in a lane conflict the lower-priority robot steps aside and slows down
       // instead of shoving. (Ahead of us = negative projection of r - o on our direction.)
-      if (o.alliance === r.alliance && od < 1.8 && sp > 1e-3 && !o.endgameDone) {
+      if (o.alliance === r.alliance && od < 1.8 && sp > 1e-3 && !o.endgameDone && !this.lapsing) {
         const ahead = -(ox * ux + oy * uy);
         const lateral = ux * -oy - uy * -ox; // > 0: teammate is to our left
         if (ahead > 0 && Math.abs(lateral) < 1.0 && yieldPriority(m, r, o) < yieldPriority(m, o, r)) {
@@ -846,7 +924,7 @@ export class BotBrain implements RobotController {
           vx: inside && s.dist < 0.25 ? 0 : s.vx,
           vy: inside && s.dist < 0.25 ? 0 : s.vy,
           intake: false,
-          endgame: inside,
+          endgame: inside && !this.waitForBoardingOrder(m, r, a.baseId),
           targetId: p.actionId,
         };
       }
@@ -958,9 +1036,16 @@ export interface TeamSetup {
   opponents: Difficulty;
   /** Player robot id, or null for all-bot matches. */
   playerId: number | null;
+  /** Role per robot id. Default: the archetype's `defaultRole`, else from `botHints.defenseShare`. */
+  roles?: Partial<Record<number, RobotRole>>;
+  /** How each alliance's bots play (default 'balanced'). */
+  strategies?: Partial<Record<Alliance, AllianceStrategy>>;
 }
 
-/** Attach bots to every non-player robot. Defense roles follow `botHints.defenseShare`. */
+/**
+ * Attach bots to every non-player robot. Roles come from `setup.roles`, then the archetype's
+ * `defaultRole`, then `botHints.defenseShare` (the least capable robots defend).
+ */
 export function attachBots(m: Match, setup: TeamSetup): Map<number, BotBrain> {
   const out = new Map<number, BotBrain>();
   const share = m.def.botHints?.defenseShare ?? 0;
@@ -972,9 +1057,12 @@ export function attachBots(m: Match, setup: TeamSetup): Map<number, BotBrain> {
     const defenders = new Set(ranked.slice(0, nDefense).map((r) => r.id));
     const playerAlliance = setup.playerId !== null ? m.robots[setup.playerId]!.alliance : 'blue';
     for (const r of bots) {
+      const role =
+        setup.roles?.[r.id] ?? r.archetype.defaultRole ?? (defenders.has(r.id) ? 'defense' : 'score');
       const brain = new BotBrain({
         difficulty: alliance === playerAlliance ? setup.partners : setup.opponents,
-        role: defenders.has(r.id) ? 'defense' : 'score',
+        role,
+        strategy: setup.strategies?.[alliance] ?? 'balanced',
       });
       r.controller = brain;
       out.set(r.id, brain);

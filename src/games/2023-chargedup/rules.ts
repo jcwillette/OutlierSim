@@ -19,7 +19,8 @@ import {
  *    DOCKED partner is ENGAGED too (6.4.2). A dock-only robot climbing on afterwards tips it, so
  *    nobody is ENGAGED.
  *  - G207 right of way: a robot in its opponent's LOADING ZONE or COMMUNITY that touches an
- *    opponent robot draws a FOUL, whoever started the contact (Manual 7.2).
+ *    opponent robot draws a FOUL, whoever started the contact (Manual 7.2), except when the
+ *    opponent clearly drove into it (G201: violations forced by the opponent aren't penalized).
  */
 
 /** Centers closer than this count as robots touching (two ~0.84 m frames side by side). */
@@ -45,6 +46,15 @@ function checkG207(ctx: RulesContext): void {
         [b, 'blue'],
       ] as const) {
         if (!PROTECTED[owner].some((z) => pointInRegion(intruder, z))) continue;
+        // G201: a violation forced by the opponent isn't penalized. If the zone's owner drove into the
+        // intruder harder than the intruder drove into it, no foul.
+        const other = intruder === a ? b : a;
+        const dx = other.x - intruder.x;
+        const dy = other.y - intruder.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const intruderClosing = (intruder.vx * dx + intruder.vy * dy) / d;
+        const ownerClosing = -(other.vx * dx + other.vy * dy) / d;
+        if (ownerClosing > intruderClosing) continue;
         const key = `${a.id}-${b.id}-${intruder.id}`;
         if (ctx.time - (last[key] ?? -Infinity) < G207_REPEAT_SEC) continue;
         last[key] = ctx.time;

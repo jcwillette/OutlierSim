@@ -402,3 +402,79 @@ label.field {
   color: var(--muted);
   flex: 1 1 150px;
 }
+
+/* Alliance composition (menu) */
+.alliances {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .alliances {
+    grid-template-columns: 1fr;
+  }
+}
+.alliance {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.alliance.blue {
+  border-top: 3px solid var(--blue);
+}
+.alliance.red {
+  border-top: 3px solid var(--red);
+}
+.alliance-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.alliance-head select {
+  max-width: 60%;
+}
+.alliance select {
+  min-width: 0;
+  font-size: 13px;
+  padding: 6px 8px;
+}
+.alliance label.field {
+  flex: none;
+}
+.slot {
+  display: grid;
+  grid-template-columns: 3.4em minmax(0, 1fr) 5.6em;
+  gap: 6px;
+  align-items: center;
+}
+.slot.you {
+  grid-template-columns: 3.6em 1fr;
+}
+.slot .you {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+}
+.slotname {
+  font-size: 13px;
+  font-weight: 600;
+}
+.slotname.blue {
+  color: #7fb3ff;
+}
+.slotname.red {
+  color: #ff8a8a;
+}
+.summary.small {
+  font-size: 12px;
+  margin: 0;
+}
+.results .trouble {
+  color: #ffb347;
+  font-size: 12px;
+}

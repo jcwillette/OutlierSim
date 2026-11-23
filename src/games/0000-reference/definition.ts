@@ -335,6 +335,7 @@ export const definition: GameDefinition = {
       id: 'defender',
       name: 'Defender',
       description: 'Heavy, high-traction and fast. Built to slow the other alliance down.',
+      defaultRole: 'defense',
       frame: { length: 0.9, width: 0.9, height: 0.35 },
       mass: 70,
       drive: { maxSpeed: 5, maxAccel: 12, maxOmega: 9, traction: 1.35 },

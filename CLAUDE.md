@@ -46,6 +46,9 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
     - paths that avoid parked robots (`NavGrid.findPath` dynamic obstacles)
     - yielding in lane conflicts (`yieldPriority`)
   - Opponents defend opportunistically (`harassOption`, `botHints.defenseOpportunism`) and stay out of the other alliance's `botHints.protectedZones`.
+  - Bots have tunnel-vision lapses (`SKILL.lapse` plus robot unreliability), where they ignore teammates.
+  - `attachBots` takes per-robot `roles` and per-alliance `strategies` (`AllianceStrategy`).
+- Imperfect robots: `MatchOptions.breakdowns` rolls each robot's breakdown and power losses from `RobotArchetype.reliability` (seeded). `Robot.isOut(t)` blocks driving and mechanisms. It's off by default in the engine (so tests stay deterministic), on in the app (except the player's robot, by default) and in `npm run sim` (`--perfect` turns it off).
   - Ramps (drivable elements 0.05-0.2 m tall) are slow ground, both in A* cost and in bot speed.
   - `attachBots()` wires up a match. Difficulty (`SKILL`) only changes speed, think rate, utility noise and dwell.
   - If bots can't score in a new game, the definition is usually wrong (unreachable zones, impossible shots). `tests/games.test.ts` checks for this.
@@ -55,6 +58,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `ui/app.ts` holds the `App` (menu, results), `Session` (one match: countdown, the fixed-step `match.advance(dt)`, render) and `Hud`.
   - `Session` calls `attachBots()` for the non-player robots. The player's robot can run a `BotBrain` during auto (the "auto routine" option).
   - Spectator mode (`Setup.mode === 'watch'`, `?watch=1`): `Session.player` is null and all six robots are bots. `CameraRig` uses `SPECTATOR_CAMERA_MODES`, starting on the sideline view. The followed robot gets the ring (`FieldView.highlight`), and `describeBot()` turns its `BotBrain.currentPlan` into HUD commentary. Playback speed scales `match.advance`.
+  - The menu's alliance composition (preset, strategy, robot and role per slot) lives in `ui/lineup.ts` (DOM-free, unit-tested). Games offer presets via `GameDefinition.lineups`.
   - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`. The bot AI uses the same helpers.
 - `src/games/<year>-<slug>/`: one folder per season.
   - `definition.ts`: the `GameDefinition` data (field, elements, pieces, scoring targets, zones, timing, endgame, RPs, robot archetypes).

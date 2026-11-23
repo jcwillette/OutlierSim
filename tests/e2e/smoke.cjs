@@ -80,6 +80,15 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
       await w.goto(`${BASE}/?dev=1&watch=1&game=${encodeURIComponent(id)}`);
       await w.waitForSelector('button.primary');
       const label = await w.$eval('button.primary', (b) => b.textContent);
+      // Alliance composition: pick the game's first lineup preset for blue, if it has any.
+      const presets = await w.$$eval('select[aria-label="blue alliance preset"] option', (os) =>
+        os.map((o) => o.value),
+      );
+      const preset = presets.find((v) => v !== 'random' && v !== 'custom');
+      if (preset) {
+        await w.selectOption('select[aria-label="blue alliance preset"]', preset);
+        await w.waitForSelector('button.primary');
+      }
       await w.click('button.primary');
       await w.waitForFunction(
         // The HUD appears only once physics has loaded, so require it to exist (a missing element
@@ -109,7 +118,9 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
         werrors.length === 0 &&
         following.startsWith('Following Red 1') &&
         players === 0;
-      console.log(`${wok ? 'PASS' : 'FAIL'} ${id} (watch): ${following}, non-bot robots=${players}`);
+      console.log(
+        `${wok ? 'PASS' : 'FAIL'} ${id} (watch${preset ? `, blue=${preset}` : ''}): ${following}, non-bot robots=${players}`,
+      );
       if (!wok) {
         failed++;
         if (label !== 'Watch match') console.log(`  ?watch=1 did not select watch mode (button '${label}')`);

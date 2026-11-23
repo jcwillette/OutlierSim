@@ -50,15 +50,17 @@ Use `mapping-cookbook.md` to decide how each mechanic maps onto the schema, `rul
    - Every `source` field cites the manual.
    - Model field geometry with the minimum set of boxes, cylinders and hulls that gives the right _driving_ feel: footprints, chokepoints, things to drive around or under, and scoring heights. Elements robots drive under, such as a high stage, need `solid: false` on the overhead part and separate solid legs.
    - Make apertures generous enough to reflect real scoring success, but no bigger than the real opening.
-2. **Robot archetypes** (3-5): design them from what the reveal and manual imply competitive robots will do. Typical set: a "full-field" all-rounder, a specialist for the most valuable task, a cheap or simple robot (what rookies build), and optionally a defender. Use real-world numbers:
+2. **Robot archetypes** (4-7): design them from what the reveal and manual imply competitive robots will do. Typical set: a "full-field" all-rounder, a specialist for each high-value task (one game piece, the endgame), a mid-tier robot, a cheap or simple robot (what rookies build), and a defender (`defaultRole: 'defense'`). Use real-world numbers:
    - Swerve top speed 4.0-5.0 m/s and acceleration 8-12 m/s². Tank/kitbot 3-3.5 m/s.
    - Intake 0.2-0.5 s.
    - Placing 0.4-1.5 s, more for high levels.
    - Shooter spread 1-3° for good robots, 4-6° for basic ones.
    - Climb 3-8 s.
    - Frame and bumper size from the robot rules, typically 0.8-0.95 m square with bumpers.
+   - `reliability` 0.85 (rookie kitbot) to 0.97 (elite all-rounder). It drives breakdowns, power losses and bot lapses (see `RobotArchetype.reliability`).
+   - Then add 4-7 `lineups`: alliance presets students can pick (a powerhouse, a typical alliance, specialists, a defense lineup, an endgame-first lineup, rookies), each with an optional `strategy`.
 3. `rules.ts` holds only the mechanics the schema can't express (see the cookbook). Keep the rules state in `ctx.vars`. Use `ctx.setIndicator` so players can see the mechanic's state on the HUD.
-4. `botHints` is optional. Use `targetWeights` to stop bots wasting time on low-value targets, `endgamePreference`, and a `defenseShare` (0-0.34) if defense is a big part of the game.
+4. `botHints` is optional. Use `targetWeights` to stop bots wasting time on low-value targets, `endgamePreference`, `endgameOrder` (boarding order on a shared platform), `protectedZones` (zones bots treat as off limits for contact) and a `defenseShare` (0-0.34) if defense is a big part of the game.
 5. Register the game in `src/games/index.ts`, newest first.
 6. Fill in `SOURCES.md` with every value, its citation and confidence, plus Simplifications and Open questions. Archetype numbers are engineering estimates. Say what each is based on (manual constraints, typical mechanism speeds), never real match results.
 

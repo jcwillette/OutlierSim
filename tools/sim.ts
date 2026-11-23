@@ -3,10 +3,19 @@
  *
  *   npm run sim -- --game 0000-reference --matches 20 [--seed 1] [--difficulty normal] [--json out.json]
  *   [--archetypes allround,turret,stacker]  (blue 1-3, mirrored for red)
+ *   [--lineups blueId,redId]               (the game's `lineups` presets; overrides --archetypes)
+ *   [--strategy balanced|max-cycles|early-endgame|aggressive]  (both alliances, unless a preset sets one)
+ *   [--perfect]                              (no breakdowns or power losses)
  */
 import { writeFileSync } from 'node:fs';
 import { attachBots, type Difficulty } from '../src/engine/ai/bot.ts';
-import { Match, initPhysics, type MatchResult } from '../src/engine/sim/index.ts';
+import {
+  Match,
+  initPhysics,
+  type AllianceStrategy,
+  type MatchResult,
+  type RobotRole,
+} from '../src/engine/sim/index.ts';
 import { GAMES, findGame } from '../src/games/index.ts';
 
 function arg(name: string, fallback?: string): string | undefined {
@@ -22,6 +31,8 @@ export interface SimSummary {
   rpRates: Record<string, number>;
   targetMeans: Record<string, { auto: number; teleop: number }>;
   endgameMeans: Record<string, number>;
+  /** Share of robots that broke down for good, and mean power losses per robot per match. */
+  reliability: { breakdownRate: number; stallsPerRobot: number };
   wallMs: number;
 }
 
@@ -34,7 +45,16 @@ const summarize = (xs: number[]) => {
 export async function runSims(
   gameId: string,
   matches: number,
-  opts: { seed?: number; difficulty?: Difficulty; archetypes?: string[] } = {},
+  opts: {
+    seed?: number;
+    difficulty?: Difficulty;
+    archetypes?: string[];
+    /** Lineup preset ids [blue, red] from the game's `lineups`. */
+    lineups?: [string, string];
+    strategy?: AllianceStrategy;
+    /** Robots can break down / lose power (default true). */
+    breakdowns?: boolean;
+  } = {},
 ): Promise<{ summary: SimSummary; results: MatchResult[] }> {
   await initPhysics();
   const def = findGame(gameId);
@@ -49,8 +69,21 @@ export async function runSims(
       archetypes[k] = a;
       archetypes[k + 3] = a;
     });
-    const m = new Match(def, { seed: (opts.seed ?? 1) + i, archetypes });
-    attachBots(m, { partners: difficulty, opponents: difficulty, playerId: null });
+    const roles: Record<number, RobotRole> = {};
+    const strategies: Partial<Record<'blue' | 'red', AllianceStrategy>> = {};
+    opts.lineups?.forEach((id, side) => {
+      const lineup = def.lineups?.find((l) => l.id === id);
+      if (!lineup)
+        throw new Error(`Unknown lineup '${id}'. Known: ${(def.lineups ?? []).map((l) => l.id).join(', ')}`);
+      lineup.robots.forEach((slot, k) => {
+        archetypes[side * 3 + k] = slot.archetype;
+        if (slot.role) roles[side * 3 + k] = slot.role;
+      });
+      if (lineup.strategy) strategies[side === 0 ? 'blue' : 'red'] = lineup.strategy;
+    });
+    for (const a of ['blue', 'red'] as const) strategies[a] ??= opts.strategy ?? 'balanced';
+    const m = new Match(def, { seed: (opts.seed ?? 1) + i, archetypes, breakdowns: opts.breakdowns ?? true });
+    attachBots(m, { partners: difficulty, opponents: difficulty, playerId: null, roles, strategies });
     results.push(m.runToEnd());
   }
   // Each alliance-match is one sample (both alliances play the same game).
@@ -79,6 +112,11 @@ export async function runSims(
   for (const s of sides)
     for (const [k, n] of Object.entries(s.endgame))
       endgameMeans[k] = (endgameMeans[k] ?? 0) + n / sides.length;
+  const robots = results.flatMap((r) => r.robots);
+  const reliability = {
+    breakdownRate: +(robots.filter((r) => r.brokeDownAt !== null).length / robots.length).toFixed(3),
+    stallsPerRobot: +(robots.reduce((a, r) => a + r.stalls, 0) / robots.length).toFixed(3),
+  };
   return {
     summary: {
       game: gameId,
@@ -88,6 +126,7 @@ export async function runSims(
       rpRates,
       targetMeans,
       endgameMeans,
+      reliability,
       wallMs: Math.round(performance.now() - t0),
     },
     results,
@@ -101,6 +140,9 @@ async function main() {
     seed: Number(arg('seed', '1')),
     difficulty: (arg('difficulty', 'normal') as Difficulty) ?? 'normal',
     ...(arg('archetypes') ? { archetypes: arg('archetypes')!.split(',') } : {}),
+    ...(arg('lineups') ? { lineups: arg('lineups')!.split(',') as [string, string] } : {}),
+    ...(arg('strategy') ? { strategy: arg('strategy') as AllianceStrategy } : {}),
+    breakdowns: !process.argv.includes('--perfect'),
   });
   const json = arg('json');
   if (json) writeFileSync(json, JSON.stringify(summary, null, 2));
@@ -110,6 +152,10 @@ async function main() {
   console.table(summary.targetMeans);
   console.log('Endgame actions per alliance per match (mean):', summary.endgameMeans);
   console.log('RP rates per alliance:', summary.rpRates);
+  console.log(
+    `Reliability: ${(summary.reliability.breakdownRate * 100).toFixed(1)}% of robots broke down, ` +
+      `${summary.reliability.stallsPerRobot.toFixed(2)} power losses per robot`,
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) void main();

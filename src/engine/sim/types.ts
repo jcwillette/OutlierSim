@@ -364,7 +364,42 @@ export interface RobotArchetype {
   };
   /** Endgame action id -> seconds to perform. Missing = cannot do it. */
   endgame?: Record<string, number>;
+  /**
+   * How dependable the robot (and, for bots, its drive team) is, 0..1. Default 0.95. When a match
+   * runs with breakdowns on, lower values mean a higher chance to break down for the rest of the
+   * match (about 0.6 x (1 - reliability)), more short power / comms losses (about 5 x (1 -
+   * reliability) per match, 2-6 s each), and, for bots, more lapses where they ignore teammates.
+   */
+  reliability?: number;
+  /** What a bot driving this robot does by default: score, or play defense all teleop. */
+  defaultRole?: RobotRole;
   source?: Citation;
+}
+
+export type RobotRole = 'score' | 'defense';
+
+/**
+ * How an alliance's bots play the match (any game):
+ * - 'balanced': score, then the endgame on the usual schedule, defend only when it clearly pays.
+ * - 'max-cycles': keep cycling as late as possible, never stop to defend.
+ * - 'early-endgame': head for the endgame ~15 s early to make sure of it.
+ * - 'aggressive': defend opportunistically about three times as readily.
+ */
+export type AllianceStrategy = 'balanced' | 'max-cycles' | 'early-endgame' | 'aggressive';
+
+/** A suggested alliance composition shown in the menu. */
+export interface AllianceLineup {
+  id: string;
+  name: string;
+  description: string;
+  robots: [LineupSlot, LineupSlot, LineupSlot];
+  strategy?: AllianceStrategy;
+}
+
+export interface LineupSlot {
+  archetype: string;
+  /** Default: the archetype's `defaultRole`, else 'score'. */
+  role?: RobotRole;
 }
 
 export interface StartPose {
@@ -397,6 +432,9 @@ export interface RobotInfo {
   yaw: number;
   held: readonly string[];
   endgameAction: string | null;
+  /** Field velocity, m/s (who drove into whom, for contact rules). */
+  vx: number;
+  vy: number;
 }
 
 export interface RulesContext {
@@ -437,6 +475,12 @@ export interface BotHints {
   endgameLeadSec?: number;
   /** Endgame action ids in preference order. */
   endgamePreference?: string[];
+  /**
+   * Boarding order for `oneAtATime` actions, by action id: a bot doing a later action waits until
+   * teammates doing earlier ones are done (e.g. dock-only robots first, the balancer last), unless
+   * time is running out.
+   */
+  endgameOrder?: string[];
   /** Fraction of opposing bots that play defense in teleop (0..1). Default 0. */
   defenseShare?: number;
   /**
@@ -480,6 +524,8 @@ export interface GameDefinition {
   fouls: { minor: number; major: number; source?: Citation };
   archetypes: RobotArchetype[];
   defaultArchetype: string;
+  /** Suggested alliance compositions (specialist mixes and strategies) offered in the menu. */
+  lineups?: AllianceLineup[];
   rules?: GameRules;
   botHints?: BotHints;
 }
