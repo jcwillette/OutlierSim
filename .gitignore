@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+# Pipeline scratch: downloaded manuals, videos, extracted frames. Never commit (copyrighted / large).
+work/
+*.log
+.DS_Store
+.claude/settings.local.json
+test-results/
