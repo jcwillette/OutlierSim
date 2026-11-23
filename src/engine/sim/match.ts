@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GRAVITY, solveShot, type ShotSolution } from './ballistics.ts';
 import { expandDefinition, type ExpandedGame, type XEndgame, type XStation, type XTarget } from './expand.ts';
+import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from './faults.ts';
 import { ScoreLedger } from './ledger.ts';
 import {
   clamp,
@@ -240,26 +241,7 @@ export interface MatchOptions {
   breakdownExempt?: number[];
 }
 
-/** Default `RobotArchetype.reliability`. */
-export const DEFAULT_RELIABILITY = 0.95;
-/** Chance of a breakdown (dead robot) is this x (1 - reliability). */
-const BREAKDOWN_SCALE = 0.6;
-/** Chance of a mechanism failure (drives, can't score) is this x (1 - reliability): 2.5x a breakdown. */
-const MECH_FAIL_SCALE = 1.5;
-/**
- * Chance a breakdown clears is BREAKDOWN_RECOVER_BASE - RECOVER_SLOPE x (1 - reliability) (clamped to
- * RECOVER_RANGE), after BREAKDOWN_RECOVER_SEC. Mechanism failures clear more often and sooner.
- */
-const BREAKDOWN_RECOVER_BASE = 0.7;
-const MECH_RECOVER_BASE = 0.85;
-const RECOVER_SLOPE = 3;
-const RECOVER_RANGE: [number, number] = [0.05, 0.95];
-const BREAKDOWN_RECOVER_SEC: [number, number] = [10, 35];
-const MECH_RECOVER_SEC: [number, number] = [5, 25];
-/** Expected short power / comms losses per match is this x (1 - reliability). */
-const STALL_SCALE = 5;
-const STALL_MIN_SEC = 2;
-const STALL_MAX_SEC = 6;
+export { DEFAULT_RELIABILITY } from './faults.ts';
 
 export interface AllianceResult extends AllianceSummary {
   rp: number;
@@ -387,35 +369,29 @@ export class Match {
     const end = this.def.timing.autoSec + this.def.timing.transitionSec + this.def.timing.teleopSec;
     const between = ([lo, hi]: [number, number]) => lo + this.random() * (hi - lo);
     /** Recovery time for a fault at `at`, or null if it never clears (or not before the end). */
-    const recovery = (at: number, base: number, unreliability: number, sec: [number, number]) => {
-      const chance = clamp(base - RECOVER_SLOPE * unreliability, ...RECOVER_RANGE);
+    const recovery = (at: number, chance: number, sec: [number, number]) => {
       const recovers = this.random() < chance;
       const t = at + between(sec);
       return recovers && t < end ? t : null;
     };
     for (const r of this.robots) {
       if (exempt.includes(r.id)) continue;
-      const unreliability = 1 - clamp(r.archetype.reliability ?? DEFAULT_RELIABILITY, 0, 1);
-      if (this.random() < Math.min(0.9, BREAKDOWN_SCALE * unreliability)) {
+      const f = faultRates(r.archetype);
+      if (this.random() < f.breakdownChance) {
         r.breakdownAt = this.random() * end;
-        r.breakdownRecoverAt = recovery(
-          r.breakdownAt,
-          BREAKDOWN_RECOVER_BASE,
-          unreliability,
-          BREAKDOWN_RECOVER_SEC,
-        );
+        r.breakdownRecoverAt = recovery(r.breakdownAt, f.breakdownRecoverChance, BREAKDOWN_RECOVER_SEC);
       }
       // Poisson number of outages.
-      const limit = Math.exp(-STALL_SCALE * unreliability);
+      const limit = Math.exp(-f.stallsPerMatch);
       let p = this.random();
       while (p > limit) {
-        r.outages.push({ at: this.random() * end, sec: between([STALL_MIN_SEC, STALL_MAX_SEC]) });
+        r.outages.push({ at: this.random() * end, sec: between(STALL_SEC) });
         p *= this.random();
       }
       r.outages.sort((a, b) => a.at - b.at);
-      if (this.random() < Math.min(0.9, MECH_FAIL_SCALE * unreliability)) {
+      if (this.random() < f.mechFailChance) {
         r.mechFailAt = this.random() * end;
-        r.mechRecoverAt = recovery(r.mechFailAt, MECH_RECOVER_BASE, unreliability, MECH_RECOVER_SEC);
+        r.mechRecoverAt = recovery(r.mechFailAt, f.mechRecoverChance, MECH_RECOVER_SEC);
       }
     }
   }

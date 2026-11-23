@@ -4,6 +4,11 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- Robot & field tuning in the menu (collapsible, saved per game):
+  - Per robot type: max speed (ft/s), acceleration (ft/s²), turn rate (°/s), wheel grip, weight (lb), pickup time, place time per target, shooter reload / spread / range (ft), each endgame action's time, and failure chances (breakdown, mechanism failure, each one's recovery chance, power losses per match). Blank = the game's default, shown as the placeholder. Applies to every robot of that type, yours and the bots'.
+  - Per human player station: hand-off time, time between pieces, pieces per alliance.
+  - `src/ui/tuning.ts` (DOM-free, tested) holds the fields and `applyTuning`, which returns a tuned copy of the definition. `npm run sim` takes the same overrides with `--tuning file.json`.
+  - New `RobotArchetype.faults` overrides the fault rates derived from `reliability` (`faultRates()` in `src/engine/sim/faults.ts`).
 - Partial failures and recovery:
   - New mechanism failure: the robot still drives (and can still do endgame actions) but can't intake, place, shoot or use a human player station. Chance about 1.5 × (1 − R) per match, 2.5× a breakdown. Tagged NO MECH; bots with a broken mechanism play defense, then go to the endgame.
   - Breakdowns are no longer always permanent. A broken-down robot comes back after 10-35 s with chance 0.7 − 3 × (1 − R); a failed mechanism comes back after 5-25 s with chance 0.85 − 3 × (1 − R) (both clamped to 5-95%). Better robots come back more often.

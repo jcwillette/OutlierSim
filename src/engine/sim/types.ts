@@ -314,6 +314,20 @@ export type RankingPointRule =
 
 // ---------------------------------------------------------------- robots
 
+/** Per-match fault rates for a robot with breakdowns on. Chances are 0..1. */
+export interface FaultRates {
+  /** Chance to break down (no driving, no mechanisms) at a random time in the match. */
+  breakdownChance: number;
+  /** Chance a breakdown clears 10-35 s later. */
+  breakdownRecoverChance: number;
+  /** Chance the game-piece mechanisms fail (the robot still drives and can do endgame actions). */
+  mechFailChance: number;
+  /** Chance a mechanism failure clears 5-25 s later. */
+  mechRecoverChance: number;
+  /** Expected short (2-6 s) power / comms losses per match. */
+  stallsPerMatch: number;
+}
+
 export interface RobotArchetype {
   id: string;
   name: string;
@@ -373,6 +387,8 @@ export interface RobotArchetype {
    * lapses where they ignore teammates.
    */
   reliability?: number;
+  /** Explicit per-match fault rates, overriding the ones derived from `reliability` (menu tuning). */
+  faults?: Partial<FaultRates>;
   /** What a bot driving this robot does by default: score, or play defense all teleop. */
   defaultRole?: RobotRole;
   source?: Citation;

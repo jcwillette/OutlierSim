@@ -13,6 +13,18 @@ import {
 import { Match, initPhysics, type MatchResult, type Robot } from '../engine/sim/match.ts';
 import type { Alliance, GameDefinition } from '../engine/sim/types.ts';
 import { GAMES } from '../games/index.ts';
+import {
+  applyTuning,
+  emptyTuning,
+  isTuned,
+  robotFields,
+  roundTo,
+  sanitizeTuning,
+  stationFields,
+  type GameTuning,
+  type Overrides,
+  type TuningField,
+} from './tuning.ts';
 import { BotBrain, attachBots, type Difficulty } from '../engine/ai/bot.ts';
 import {
   applyPreset,
@@ -89,6 +101,8 @@ export interface Setup {
   lineups: Record<string, LineupChoice>;
   /** Robots can break down / lose power: never, bots only, or every robot including yours. */
   breakdowns: 'off' | 'bots' | 'all';
+  /** Robot-type and human-player-station overrides, per game id. */
+  tuning: Record<string, GameTuning>;
 }
 
 const STORE_KEY = 'outliersim.setup.v1';
@@ -117,6 +131,9 @@ export class App {
   private session: Session | null = null;
   private setup: Setup;
   private readonly dev = new URLSearchParams(location.search).has('dev');
+  /** Menu state: robot type shown in the tuning section, and whether that section is expanded. */
+  private tuneArch: string | null = null;
+  private tuneOpen = false;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -149,6 +166,7 @@ export class App {
       opponents: saved.opponents ?? 'normal',
       autoPilot: saved.autoPilot ?? true,
       lineups: saved.lineups ?? {},
+      tuning: saved.tuning ?? {},
       breakdowns: saved.breakdowns ?? 'bots',
     };
 
@@ -277,6 +295,7 @@ export class App {
       (v) => (this.setup.breakdowns = v),
     );
     const alliances = this.alliancesSection(def, watching);
+    const tuning = this.tuningSection(def, watching);
     const playSections: Child[] = [
       h('h2', {}, 'Your driver station'),
       stations,
@@ -314,6 +333,7 @@ export class App {
         breakdowns,
       ),
       alliances,
+      tuning,
       h('h2', {}, 'Controls'),
       h(
         'div',
@@ -342,6 +362,7 @@ export class App {
         breakdowns,
       ),
       alliances,
+      tuning,
       h('h2', {}, 'Spectator controls'),
       h(
         'div',
@@ -386,6 +407,147 @@ export class App {
     );
     this.setOverlay(h('div', { class: 'overlay' }, card));
     (card.querySelector('button.primary') as HTMLButtonElement | null)?.focus({ preventScroll: true });
+  }
+
+  /**
+   * Robot & field tuning: edit any robot type's drive, mechanism, endgame and failure numbers, and the
+   * human player stations. Inputs commit on change without re-rendering the menu (keeps focus).
+   */
+  private tuningSection(def: GameDefinition, watching: boolean): HTMLElement {
+    const tuning = sanitizeTuning(def, this.setup.tuning[def.id]);
+    this.setup.tuning[def.id] = tuning;
+    const arch =
+      def.archetypes.find((a) => a.id === this.tuneArch) ??
+      (watching ? undefined : def.archetypes.find((a) => a.id === this.setup.archetype)) ??
+      def.archetypes[0]!;
+    const archId = arch.id;
+    const badge = h('span', { class: 'tuned' }, isTuned(tuning) ? 'modified' : '');
+    const refreshBadge = () => (badge.textContent = isTuned(tuning) ? 'modified' : '');
+
+    const input = <T>(f: TuningField<T>, base: T, store: () => Overrides, drop: () => void) => {
+      const o = store();
+      const dflt = roundTo(f.get(base), f.step);
+      const el = h('input', {
+        type: 'number',
+        min: f.min,
+        max: f.max,
+        step: f.step,
+        placeholder: String(dflt),
+        value: o[f.key] !== undefined ? String(o[f.key]) : '',
+        class: o[f.key] !== undefined ? 'set' : '',
+        'aria-label': `${f.label}${f.unit ? ` (${f.unit})` : ''}`,
+        title: `Default ${dflt}${f.unit ? ` ${f.unit}` : ''}, range ${f.min}-${f.max}. Clear to use the default.`,
+        onchange: (e: Event) => {
+          const t = e.target as HTMLInputElement;
+          const v = t.value.trim() === '' ? NaN : Number(t.value);
+          const s = store();
+          if (!Number.isFinite(v)) delete s[f.key];
+          else s[f.key] = roundTo(Math.min(f.max, Math.max(f.min, v)), f.step);
+          t.value = s[f.key] !== undefined ? String(s[f.key]) : '';
+          t.classList.toggle('set', s[f.key] !== undefined);
+          drop();
+          refreshBadge();
+        },
+      });
+      return h(
+        'label',
+        { class: 'tune' },
+        h('span', {}, f.label, f.unit ? h('em', {}, ` ${f.unit}`) : null),
+        el,
+      );
+    };
+    const groups = <T>(fields: Array<TuningField<T>>, base: T, store: () => Overrides, drop: () => void) => {
+      const byGroup = new Map<string, Array<TuningField<T>>>();
+      for (const f of fields) byGroup.set(f.group, [...(byGroup.get(f.group) ?? []), f]);
+      return [...byGroup].map(([g, fs]) =>
+        h(
+          'fieldset',
+          { class: 'tune-group' },
+          h('legend', {}, g),
+          ...fs.map((f) => input(f, base, store, drop)),
+        ),
+      );
+    };
+
+    const robotStore = () => (tuning.robots[archId] ??= {});
+    const robotDrop = () => {
+      if (!Object.keys(tuning.robots[archId] ?? {}).length) delete tuning.robots[archId];
+    };
+    const archSel = h(
+      'select',
+      {
+        'aria-label': 'Robot type to tune',
+        onchange: (e: Event) => {
+          this.tuneArch = (e.target as HTMLSelectElement).value;
+          this.showMenu();
+        },
+      },
+      ...def.archetypes.map((a) =>
+        h(
+          'option',
+          { value: a.id, selected: a.id === archId },
+          `${a.name}${!watching && a.id === this.setup.archetype ? ' (your robot)' : ''}${tuning.robots[a.id] ? ' *' : ''}`,
+        ),
+      ),
+    );
+    const stationBlocks = def.stations.flatMap((st) =>
+      groups(
+        stationFields(st),
+        st,
+        () => (tuning.stations[st.id] ??= {}),
+        () => {
+          if (!Object.keys(tuning.stations[st.id] ?? {}).length) delete tuning.stations[st.id];
+        },
+      ),
+    );
+    const details = h(
+      'details',
+      {
+        class: 'tuning',
+        open: this.tuneOpen,
+        ontoggle: (e: Event) => (this.tuneOpen = (e.target as HTMLDetailsElement).open),
+      },
+      h('summary', {}, 'Robot & field tuning ', badge),
+      h(
+        'p',
+        { class: 'summary small' },
+        'Blank boxes use the game’s defaults (shown in gray). A robot type’s numbers apply to every robot ' +
+          'of that type in the match, yours and the bots’. Failure chances only matter with Breakdowns on.',
+      ),
+      h(
+        'div',
+        { class: 'row' },
+        h('label', { class: 'field' }, h('span', {}, 'Robot type'), archSel),
+        h(
+          'button',
+          {
+            onclick: () => {
+              delete tuning.robots[archId];
+              this.showMenu();
+            },
+          },
+          'Reset this robot',
+        ),
+      ),
+      ...groups(robotFields(def, arch), arch, robotStore, robotDrop),
+      stationBlocks.length ? h('h3', {}, 'Human player stations') : null,
+      ...stationBlocks,
+      h(
+        'div',
+        { class: 'row end' },
+        h(
+          'button',
+          {
+            onclick: () => {
+              this.setup.tuning[def.id] = emptyTuning();
+              this.showMenu();
+            },
+          },
+          'Reset all tuning',
+        ),
+      ),
+    );
+    return details;
   }
 
   private lineupFor(def: GameDefinition): LineupChoice {
@@ -533,7 +695,8 @@ export class App {
   async start(): Promise<void> {
     saveSetup(this.setup);
     await initPhysics();
-    const def = this.games().find((g) => g.id === this.setup.gameId)!;
+    const base = this.games().find((g) => g.id === this.setup.gameId)!;
+    const def = applyTuning(base, this.setup.tuning[base.id]);
     this.session?.dispose();
     this.input.autoIntake = this.setup.autoIntake;
     this.session = new Session(this, def, this.setup, this.input, this.renderer);

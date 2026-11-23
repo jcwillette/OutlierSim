@@ -18,7 +18,7 @@ npm test                             # all Vitest tests (unit + headless matches
 npx vitest run tests/smoke.test.ts   # single file
 npx vitest run -t "loads Rapier"     # single test by name
 npm run build                        # typecheck + production build to dist/
-npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archetypes a,b,c] [--json out.json]
+npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archetypes a,b,c] [--tuning t.json] [--json out.json]
                                      # headless bot-vs-bot matches (~2.5 s each) -> score/RP/piece stats
 npm run test:e2e                     # build + Playwright: every game loads, plays, no errors; screenshots in test-results/
 npm run calibrate -- --game <id> [--events 2024casj,...] [--matches 30] [--difficulty hard] [--write | --dump]
@@ -63,6 +63,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `Session` calls `attachBots()` for the non-player robots. The player's robot can run a `BotBrain` during auto (the "auto routine" option).
   - Spectator mode (`Setup.mode === 'watch'`, `?watch=1`): `Session.player` is null and all six robots are bots. `CameraRig` uses `SPECTATOR_CAMERA_MODES`, starting on the sideline view. The followed robot gets the ring (`FieldView.highlight`), and `describeBot()` turns its `BotBrain.currentPlan` into HUD commentary. Playback speed scales `match.advance`.
   - The menu's alliance composition (preset, strategy, robot and role per slot) lives in `ui/lineup.ts` (DOM-free, unit-tested). Games offer presets via `GameDefinition.lineups`.
+  - The menu's "Robot & field tuning" lives in `ui/tuning.ts` (DOM-free, unit-tested): per robot type and per human player station overrides in display units (ft, lb, s, %). `applyTuning(def, tuning)` returns a tuned copy of the definition, which `App.start` (and `npm run sim --tuning`) pass to `Match`. Explicit fault rates go in `RobotArchetype.faults` and override `faultRates()` (`sim/faults.ts`).
   - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`. The bot AI uses the same helpers.
 - `src/games/<year>-<slug>/`: one folder per season.
   - `definition.ts`: the `GameDefinition` data (field, elements, pieces, scoring targets, zones, timing, endgame, RPs, robot archetypes).

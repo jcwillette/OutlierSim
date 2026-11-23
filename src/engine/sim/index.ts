@@ -1,5 +1,6 @@
 export * from './types.ts';
 export * from './match.ts';
+export { faultRates } from './faults.ts';
 export * from './expand.ts';
 export * from './validate.ts';
 export * from './ledger.ts';
