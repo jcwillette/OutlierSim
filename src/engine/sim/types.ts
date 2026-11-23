@@ -317,6 +317,7 @@ export interface RobotArchetype {
   place?: Record<string, number>;
   shooter?: {
     pieceTypes: string[];
+    /** Maximum exit speed, m/s. The engine picks speed and hood angle per shot. */
     exitSpeed: number;
     /** 1-sigma aim error, degrees (applied to yaw and pitch). */
     spreadDeg: number;
@@ -324,6 +325,8 @@ export interface RobotArchetype {
     maxRange: number;
     /** Launch height above floor. */
     height: number;
+    /** Hood angle range [min, max] in degrees above horizontal. Default [10, 80]. */
+    pitchRangeDeg?: [number, number];
     /** Target tags this shooter may aim at; omit = any aperture target. */
     tags?: string[];
     /** Turret: no need to face the target. Otherwise robot auto-aligns first. */
