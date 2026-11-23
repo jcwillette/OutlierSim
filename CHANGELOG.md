@@ -4,6 +4,10 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- Partial failures and recovery:
+  - New mechanism failure: the robot still drives (and can still do endgame actions) but can't intake, place, shoot or use a human player station. Chance about 1.5 × (1 − R) per match, 2.5× a breakdown. Tagged NO MECH; bots with a broken mechanism play defense, then go to the endgame.
+  - Breakdowns are no longer always permanent. A broken-down robot comes back after 10-35 s with chance 0.7 − 3 × (1 − R); a failed mechanism comes back after 5-25 s with chance 0.85 − 3 × (1 − R) (both clamped to 5-95%). Better robots come back more often.
+  - Results show when a robot came back or its mechanism was fixed. `npm run sim` reports mechanism-failure and recovery rates.
 - Clean defense:
   - Defenders never mark an opposing defender. Defender-vs-defender time when both alliances bring one: ~136 s → ~0 s per match. A Defender with no worthwhile target scores instead.
   - They drop an opponent within 0.6 m of its protected zones and never wait inside them.

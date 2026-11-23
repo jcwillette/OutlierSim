@@ -15,7 +15,7 @@ Status of the build plan. Update this file in every PR.
 
 ## Known gaps / ideas
 
-- Breakdown and lapse rates are engineering estimates, not measured. There's no partial failure (e.g. a broken intake that still drives), and no tipping.
+- Breakdown and lapse rates are engineering estimates, not measured. Partial failure is one kind only (all game-piece mechanisms at once, the climber keeps working). There's no tipping.
 - The player can't give partner bots instructions during a match (e.g. "you defend now"). Roles and strategies are set before the match.
 
 - Teammate coordination is a shared blackboard (intended spots, yielding), not real multi-robot planning. Head-on meetings in narrow lanes still cost a second or two.

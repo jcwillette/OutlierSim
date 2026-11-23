@@ -54,6 +54,23 @@ const fmtTime = (s: number) => {
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
 };
 
+/** Results-table note on a robot's breakdowns, mechanism failures and power losses ('' if none). */
+export function troubleText(r: MatchResult['robots'][number]): string {
+  const parts: string[] = [];
+  if (r.brokeDownAt !== null)
+    parts.push(
+      `broke down at ${fmtTime(r.brokeDownAt)}` +
+        (r.recoveredAt !== null ? `, back at ${fmtTime(r.recoveredAt)}` : ''),
+    );
+  if (r.mechFailedAt !== null)
+    parts.push(
+      `mechanism failed at ${fmtTime(r.mechFailedAt)}` +
+        (r.mechFixedAt !== null ? `, fixed at ${fmtTime(r.mechFixedAt)}` : ''),
+    );
+  if (r.stalls) parts.push(`lost power ×${r.stalls}`);
+  return parts.join('; ');
+}
+
 // ------------------------------------------------------------------ settings
 
 export interface Setup {
@@ -583,11 +600,7 @@ export class App {
               `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${(r.id % 3) + 1}${r.id === playerId ? ' (you)' : ''}: ${
                 def.archetypes.find((a) => a.id === r.archetype)?.name ?? r.archetype
               }`,
-              r.brokeDownAt !== null
-                ? h('span', { class: 'trouble' }, ` broke down at ${fmtTime(r.brokeDownAt)}`)
-                : r.stalls
-                  ? h('span', { class: 'trouble' }, ` lost power ×${r.stalls}`)
-                  : null,
+              troubleText(r) ? h('span', { class: 'trouble' }, ` ${troubleText(r)}`) : null,
             ),
             h('td', {}, String(r.points)),
             h('td', {}, String(r.piecesScored)),
@@ -761,8 +774,11 @@ type HudMode =
 
 /** Plain-language summary of what a bot is doing right now (spectator commentary). */
 export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): string {
-  if (r.brokenDown) return 'Broken down for the rest of the match';
+  if (r.brokenDown) return 'Broken down: the crew hopes it reboots';
   if (r.isOut(m.time)) return 'Lost power, coming back…';
+  if (r.mechDown && !r.endgameDone && brain?.currentPlan.kind === 'defend')
+    return `Mechanism broken: defending ${robotName(m.robots[brain.currentPlan.opponentId]!)}`;
+  if (r.mechDown && !r.endgameDone && !r.action) return 'Mechanism broken: can drive, can’t score';
   if (r.endgameDone) {
     const a = m.game.endgame.find((e) => e.id === r.endgameDone!.actionId);
     return `${a?.name ?? 'Endgame'} done`;
@@ -973,8 +989,10 @@ class Hud {
     if (m.phase === 'pre') return 'Get ready…';
     if (m.phase === 'transition') return 'Robots disabled: teleop starts soon';
     if (m.phase === 'post') return 'Match over';
-    if (r.brokenDown) return '<b>Your robot broke down.</b> It stays dead for the rest of the match.';
+    if (r.brokenDown) return '<b>Your robot broke down.</b> It may come back online if a reset works.';
     if (r.isOut(m.time)) return '<b>Lost power!</b> Your robot is back in a few seconds.';
+    if (r.mechDown && !r.endgameDone && !r.action)
+      return '<b>Mechanism failure.</b> You can still drive: play defense or get ready for the endgame.';
     if (m.phase === 'auto' && autoPilot) return '<b>Auto routine running.</b> You take over in teleop.';
     if (r.endgameDone) {
       const a = m.game.endgame.find((e) => e.id === r.endgameDone!.actionId);

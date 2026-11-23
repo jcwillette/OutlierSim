@@ -52,7 +52,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
     - it breaks off pins after 3 s and waits 4 s before re-engaging.
   - Bots have tunnel-vision lapses (`SKILL.lapse` plus robot unreliability), where they ignore teammates.
   - `attachBots` takes per-robot `roles` and per-alliance `strategies` (`AllianceStrategy`).
-- Imperfect robots: `MatchOptions.breakdowns` rolls each robot's breakdown and power losses from `RobotArchetype.reliability` (seeded). `Robot.isOut(t)` blocks driving and mechanisms. It's off by default in the engine (so tests stay deterministic), on in the app (except the player's robot, by default) and in `npm run sim` (`--perfect` turns it off).
+- Imperfect robots: `MatchOptions.breakdowns` rolls each robot's breakdown, mechanism failure and power losses from `RobotArchetype.reliability` (seeded). Breakdowns and mechanism failures can clear (more often for reliable robots). `Robot.isOut(t)` blocks driving and mechanisms; `Robot.mechDown` blocks only game-piece handling (endgame still works), and bots with one play defense. It's off by default in the engine (so tests stay deterministic), on in the app (except the player's robot, by default) and in `npm run sim` (`--perfect` turns it off).
   - Ramps (drivable elements 0.05-0.2 m tall) are slow ground, both in A* cost and in bot speed.
   - `attachBots()` wires up a match. Difficulty (`SKILL`) only changes speed, think rate, utility noise and dwell.
   - If bots can't score in a new game, the definition is usually wrong (unreachable zones, impossible shots). `tests/games.test.ts` checks for this.

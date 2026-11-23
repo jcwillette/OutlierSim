@@ -60,6 +60,16 @@ export type RobotAction =
   | { kind: 'place'; targetId: string; pieceType: string; remaining: number; total: number }
   | { kind: 'endgame'; actionId: string; zoneIndex: number; remaining: number; total: number };
 
+/** Breakdowns and mechanism failures a robot actually suffered (match times, null = didn't happen). */
+export interface RobotFaults {
+  brokeDownAt: number | null;
+  /** Came back online after breaking down. */
+  recoveredAt: number | null;
+  mechFailedAt: number | null;
+  /** Mechanisms working again after failing. */
+  mechFixedAt: number | null;
+}
+
 export interface RobotStats {
   piecesScored: number;
   shotsTaken: number;
@@ -82,10 +92,25 @@ export class Robot {
   aimYaw: number | null = null;
   readonly leftZones = new Set<string>();
   readonly stats: RobotStats = { piecesScored: 0, shotsTaken: 0, intakes: 0 };
-  /** Scheduled match-ending breakdown time (match time), if any. */
+  /** Scheduled breakdown time (match time), if any: no driving, no mechanisms. */
   breakdownAt: number | null = null;
-  /** Broke down: dead for the rest of the match (can still be pushed). */
+  /** When a scheduled breakdown clears (the crew resets it), or null: dead for the rest of the match. */
+  breakdownRecoverAt: number | null = null;
+  /** Broken down right now: dead (can still be pushed) until `breakdownRecoverAt`, if any. */
   brokenDown = false;
+  /** Scheduled mechanism failure time, if any: the robot still drives but can't intake, place or shoot. */
+  mechFailAt: number | null = null;
+  /** When a scheduled mechanism failure clears (a jam frees, a reset works), or null: never. */
+  mechRecoverAt: number | null = null;
+  /** Mechanisms down right now (driving still works, and so do endgame actions). */
+  mechDown = false;
+  /** What actually happened this match, for the results. */
+  readonly faults: RobotFaults = {
+    brokeDownAt: null,
+    recoveredAt: null,
+    mechFailedAt: null,
+    mechFixedAt: null,
+  };
   /** Scheduled short outages, sorted by start time. */
   readonly outages: Array<{ at: number; sec: number }> = [];
   /** Match time until which the robot is without power / comms. */
@@ -107,6 +132,11 @@ export class Robot {
   /** Broken down or in a short outage at match time `t`: no driving, no mechanisms. */
   isOut(t: number): boolean {
     return this.brokenDown || t < this.stalledUntil;
+  }
+
+  /** Can intake, place and shoot at match time `t` (not out, mechanisms working). */
+  canHandlePieces(t: number): boolean {
+    return !this.mechDown && !this.isOut(t);
   }
   get y(): number {
     return this.body.translation().y;
@@ -201,8 +231,9 @@ export interface MatchOptions {
   /** Override archetypes per robot id (0-2 blue stations 1-3, 3-5 red stations 1-3). */
   archetypes?: Partial<Record<number, string>>;
   /**
-   * Robots can break down for the rest of the match or lose power / comms for a few seconds, more
-   * often for low `reliability` archetypes. Default off (deterministic engine tests).
+   * Robots can break down (dead, may come back online), suffer a mechanism failure (drives but can't
+   * score, may come back) or lose power / comms for a few seconds, all more often for low
+   * `reliability` archetypes, which also recover less often. Default off (deterministic engine tests).
    */
   breakdowns?: boolean;
   /** Robot ids that never break down even with `breakdowns` on (e.g. the student's robot). */
@@ -211,8 +242,20 @@ export interface MatchOptions {
 
 /** Default `RobotArchetype.reliability`. */
 export const DEFAULT_RELIABILITY = 0.95;
-/** Chance of a match-ending breakdown is this x (1 - reliability). */
+/** Chance of a breakdown (dead robot) is this x (1 - reliability). */
 const BREAKDOWN_SCALE = 0.6;
+/** Chance of a mechanism failure (drives, can't score) is this x (1 - reliability): 2.5x a breakdown. */
+const MECH_FAIL_SCALE = 1.5;
+/**
+ * Chance a breakdown clears is BREAKDOWN_RECOVER_BASE - RECOVER_SLOPE x (1 - reliability) (clamped to
+ * RECOVER_RANGE), after BREAKDOWN_RECOVER_SEC. Mechanism failures clear more often and sooner.
+ */
+const BREAKDOWN_RECOVER_BASE = 0.7;
+const MECH_RECOVER_BASE = 0.85;
+const RECOVER_SLOPE = 3;
+const RECOVER_RANGE: [number, number] = [0.05, 0.95];
+const BREAKDOWN_RECOVER_SEC: [number, number] = [10, 35];
+const MECH_RECOVER_SEC: [number, number] = [5, 25];
 /** Expected short power / comms losses per match is this x (1 - reliability). */
 const STALL_SCALE = 5;
 const STALL_MIN_SEC = 2;
@@ -234,8 +277,14 @@ export interface MatchResult {
       alliance: Alliance;
       archetype: string;
       points: number;
-      /** Match time (s since auto start) the robot broke down for good, or null. */
+      /** Match time (s since auto start) the robot broke down, or null. */
       brokeDownAt: number | null;
+      /** Match time it came back online after breaking down, or null (stayed dead or never broke). */
+      recoveredAt: number | null;
+      /** Match time its mechanisms failed (could still drive), or null. */
+      mechFailedAt: number | null;
+      /** Match time its mechanisms worked again, or null. */
+      mechFixedAt: number | null;
       /** Short power / comms losses it suffered. */
       stalls: number;
     } & RobotStats
@@ -330,36 +379,79 @@ export class Match {
     def.rules?.onInit?.(this.rulesCtx);
   }
 
-  /** Roll each robot's breakdown and outage times from its archetype's reliability (seeded). */
+  /**
+   * Roll each robot's breakdown, mechanism failure and outage times from its archetype's reliability
+   * (seeded). Less reliable robots fail more often and recover less often.
+   */
   private scheduleBreakdowns(exempt: readonly number[]): void {
     const end = this.def.timing.autoSec + this.def.timing.transitionSec + this.def.timing.teleopSec;
+    const between = ([lo, hi]: [number, number]) => lo + this.random() * (hi - lo);
+    /** Recovery time for a fault at `at`, or null if it never clears (or not before the end). */
+    const recovery = (at: number, base: number, unreliability: number, sec: [number, number]) => {
+      const chance = clamp(base - RECOVER_SLOPE * unreliability, ...RECOVER_RANGE);
+      const recovers = this.random() < chance;
+      const t = at + between(sec);
+      return recovers && t < end ? t : null;
+    };
     for (const r of this.robots) {
       if (exempt.includes(r.id)) continue;
       const unreliability = 1 - clamp(r.archetype.reliability ?? DEFAULT_RELIABILITY, 0, 1);
-      if (this.random() < Math.min(0.9, BREAKDOWN_SCALE * unreliability)) r.breakdownAt = this.random() * end;
+      if (this.random() < Math.min(0.9, BREAKDOWN_SCALE * unreliability)) {
+        r.breakdownAt = this.random() * end;
+        r.breakdownRecoverAt = recovery(
+          r.breakdownAt,
+          BREAKDOWN_RECOVER_BASE,
+          unreliability,
+          BREAKDOWN_RECOVER_SEC,
+        );
+      }
       // Poisson number of outages.
       const limit = Math.exp(-STALL_SCALE * unreliability);
       let p = this.random();
       while (p > limit) {
-        r.outages.push({
-          at: this.random() * end,
-          sec: STALL_MIN_SEC + this.random() * (STALL_MAX_SEC - STALL_MIN_SEC),
-        });
+        r.outages.push({ at: this.random() * end, sec: between([STALL_MIN_SEC, STALL_MAX_SEC]) });
         p *= this.random();
       }
       r.outages.sort((a, b) => a.at - b.at);
+      if (this.random() < Math.min(0.9, MECH_FAIL_SCALE * unreliability)) {
+        r.mechFailAt = this.random() * end;
+        r.mechRecoverAt = recovery(r.mechFailAt, MECH_RECOVER_BASE, unreliability, MECH_RECOVER_SEC);
+      }
     }
   }
 
   private updateBreakdowns(): void {
     for (const r of this.robots) {
-      if (r.brokenDown || r.endgameDone) continue;
+      if (r.endgameDone) continue;
       const name = `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${r.station + 1}`;
-      if (r.breakdownAt !== null && this.time >= r.breakdownAt) {
+      if (r.brokenDown) {
+        if (r.breakdownRecoverAt !== null && this.time >= r.breakdownRecoverAt) {
+          r.brokenDown = false;
+          r.faults.recoveredAt = this.time;
+          this.announce(`${name} is back online!`, r.alliance);
+        } else {
+          // Power blips while already dead don't count.
+          while (r.outages.length && r.outages[0]!.at <= this.time) r.outages.shift();
+          continue;
+        }
+      } else if (r.breakdownAt !== null && r.faults.brokeDownAt === null && this.time >= r.breakdownAt) {
         r.brokenDown = true;
+        r.faults.brokeDownAt = this.time;
         r.action = null;
         this.announce(`${name} (${r.archetype.name}) broke down!`, r.alliance);
         continue;
+      }
+      if (r.mechDown) {
+        if (r.mechRecoverAt !== null && this.time >= r.mechRecoverAt) {
+          r.mechDown = false;
+          r.faults.mechFixedAt = this.time;
+          this.announce(`${name}'s mechanism is working again`, r.alliance);
+        }
+      } else if (r.mechFailAt !== null && r.faults.mechFailedAt === null && this.time >= r.mechFailAt) {
+        r.mechDown = true;
+        r.faults.mechFailedAt = this.time;
+        if (r.action?.kind === 'place') r.action = null;
+        this.announce(`${name} (${r.archetype.name}) mechanism failure: it can still drive`, r.alliance);
       }
       while (r.outages.length && r.outages[0]!.at <= this.time) {
         const o = r.outages.shift()!;
@@ -671,6 +763,11 @@ export class Match {
     }
     const cmd = r.command;
     if (cmd.endgame && this.tryStartEndgame(r)) return;
+    // Mechanism failure: the climber / parking still work, the game-piece mechanisms don't.
+    if (r.mechDown) {
+      r.stationDwell = 0;
+      return;
+    }
     if (cmd.intake) {
       this.tryIntake(r);
       this.tryStation(r, dt);
@@ -830,6 +927,7 @@ export class Match {
 
   /** Stations whose zone the robot is in and that could feed it a piece. */
   stationsFor(r: Robot): XStation[] {
+    if (r.mechDown) return [];
     return this.game.stations.filter(
       (st) =>
         (!st.alliance || st.alliance === r.alliance) &&
@@ -879,6 +977,7 @@ export class Match {
   /** Place targets this robot can start placing on right now, best first. */
   placeOptions(r: Robot): Array<{ target: XTarget; time: number; pieceType: string }> {
     const out: Array<{ target: XTarget; time: number; pieceType: string }> = [];
+    if (r.mechDown) return out;
     for (const ts of this.targets.values()) {
       const t = ts.target;
       if (!t.place || !this.canUseTarget(r, ts)) continue;
@@ -915,7 +1014,7 @@ export class Match {
   /** Aperture targets this robot could shoot at from here, best first (ignores heading). */
   shotOptions(r: Robot): Array<{ target: XTarget; pieceType: string; distance: number }> {
     const sh = r.archetype.shooter;
-    if (!sh) return [];
+    if (!sh || r.mechDown) return [];
     const out: Array<{ target: XTarget; pieceType: string; distance: number }> = [];
     for (const ts of this.targets.values()) {
       const t = ts.target;
@@ -1255,7 +1354,7 @@ export class Match {
         alliance: r.alliance,
         archetype: r.archetype.id,
         points: this.ledger.byRobot(r.id),
-        brokeDownAt: r.brokenDown ? r.breakdownAt : null,
+        ...r.faults,
         stalls: r.stallCount,
         ...r.stats,
       })),

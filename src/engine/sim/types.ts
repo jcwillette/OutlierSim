@@ -366,9 +366,11 @@ export interface RobotArchetype {
   endgame?: Record<string, number>;
   /**
    * How dependable the robot (and, for bots, its drive team) is, 0..1. Default 0.95. When a match
-   * runs with breakdowns on, lower values mean a higher chance to break down for the rest of the
-   * match (about 0.6 x (1 - reliability)), more short power / comms losses (about 5 x (1 -
-   * reliability) per match, 2-6 s each), and, for bots, more lapses where they ignore teammates.
+   * runs with breakdowns on, lower values mean a higher chance to break down (about 0.6 x (1 -
+   * reliability)), a higher chance of a mechanism failure that stops scoring but not driving (about
+   * 1.5 x (1 - reliability)), a lower chance of either clearing later in the match, more short
+   * power / comms losses (about 5 x (1 - reliability) per match, 2-6 s each), and, for bots, more
+   * lapses where they ignore teammates.
    */
   reliability?: number;
   /** What a bot driving this robot does by default: score, or play defense all teleop. */

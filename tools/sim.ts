@@ -32,7 +32,15 @@ export interface SimSummary {
   targetMeans: Record<string, { auto: number; teleop: number }>;
   endgameMeans: Record<string, number>;
   /** Share of robots that broke down for good, and mean power losses per robot per match. */
-  reliability: { breakdownRate: number; stallsPerRobot: number };
+  reliability: {
+    breakdownRate: number;
+    /** Of the robots that broke down, the share that came back online. */
+    breakdownRecoveryRate: number;
+    mechFailRate: number;
+    /** Of the robots whose mechanisms failed, the share that got them working again. */
+    mechRecoveryRate: number;
+    stallsPerRobot: number;
+  };
   wallMs: number;
 }
 
@@ -113,8 +121,14 @@ export async function runSims(
     for (const [k, n] of Object.entries(s.endgame))
       endgameMeans[k] = (endgameMeans[k] ?? 0) + n / sides.length;
   const robots = results.flatMap((r) => r.robots);
+  const share = (n: number, d: number) => +(d ? n / d : 0).toFixed(3);
+  const broke = robots.filter((r) => r.brokeDownAt !== null);
+  const mech = robots.filter((r) => r.mechFailedAt !== null);
   const reliability = {
-    breakdownRate: +(robots.filter((r) => r.brokeDownAt !== null).length / robots.length).toFixed(3),
+    breakdownRate: share(broke.length, robots.length),
+    breakdownRecoveryRate: share(broke.filter((r) => r.recoveredAt !== null).length, broke.length),
+    mechFailRate: share(mech.length, robots.length),
+    mechRecoveryRate: share(mech.filter((r) => r.mechFixedAt !== null).length, mech.length),
     stallsPerRobot: +(robots.reduce((a, r) => a + r.stalls, 0) / robots.length).toFixed(3),
   };
   return {
@@ -152,9 +166,12 @@ async function main() {
   console.table(summary.targetMeans);
   console.log('Endgame actions per alliance per match (mean):', summary.endgameMeans);
   console.log('RP rates per alliance:', summary.rpRates);
+  const rel = summary.reliability;
+  const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   console.log(
-    `Reliability: ${(summary.reliability.breakdownRate * 100).toFixed(1)}% of robots broke down, ` +
-      `${summary.reliability.stallsPerRobot.toFixed(2)} power losses per robot`,
+    `Reliability: ${pct(rel.breakdownRate)} of robots broke down (${pct(rel.breakdownRecoveryRate)} came back), ` +
+      `${pct(rel.mechFailRate)} had a mechanism failure (${pct(rel.mechRecoveryRate)} fixed), ` +
+      `${rel.stallsPerRobot.toFixed(2)} power losses per robot`,
   );
 }
 
