@@ -1,6 +1,13 @@
 import { solveShot } from '../sim/ballistics.ts';
 import type { XTarget } from '../sim/expand.ts';
-import { IDLE, type Match, type Robot, type RobotCommand, type RobotController } from '../sim/match.ts';
+import {
+  canReachHandoff,
+  IDLE,
+  type Match,
+  type Robot,
+  type RobotCommand,
+  type RobotController,
+} from '../sim/match.ts';
 import { clamp, pointInRegion, regionCenter, wrapAngle } from '../sim/math.ts';
 import type { Alliance, Vec2 } from '../sim/types.ts';
 import { NavGrid } from './navgrid.ts';
@@ -135,6 +142,9 @@ export class BotBrain implements RobotController {
   private readonly skill: Skill;
   /** Piece id -> match time until which this bot ignores it (it got stuck going for it). */
   private readonly blacklist = new Map<number, number>();
+  /** Target / station ids this bot recently got stuck going to, until a match time. */
+  private readonly spotBlacklist = new Map<string, number>();
+  private readonly refillCache = new Map<string, number>();
   readonly role: 'score' | 'defense';
 
   constructor(opts: BotOptions = {}) {
@@ -288,18 +298,68 @@ export class BotBrain implements RobotController {
     return 1 + (m.random() * 2 - 1) * this.skill.noise;
   }
 
+  /**
+   * Time from `from` to the nearest place this robot could get its next piece. Scoring options are
+   * judged over the whole cycle, so a slow high-value score beats a quick low one when the next
+   * piece is far away (and vice versa).
+   */
+  private refillTime(m: Match, r: Robot, from: Vec2): number {
+    // Only when full: then scoring options compete with each other, not with "grab another first".
+    if (r.held.length < r.totalCapacity) return 0;
+    const key = `${from.x.toFixed(1)},${from.y.toFixed(1)}`;
+    const cached = this.refillCache.get(key);
+    if (cached !== undefined) return cached;
+    const intake = r.archetype.intake;
+    let best = Infinity;
+    if (intake) {
+      for (const p of m.pieces) {
+        if (p.status !== 'field' || !intake.pieceTypes.includes(p.type.id)) continue;
+        if (p.position.z > (intake.maxHeight ?? 0.3) + 0.2) continue;
+        if (this.claimedByOther(m, r, `piece:${p.id}`)) continue;
+        best = Math.min(best, this.travelBetween(r, from, p.position) + intake.timeSec + 0.8);
+      }
+      if (m.phase !== 'auto')
+        for (const st of m.game.stations) {
+          if ((st.alliance && st.alliance !== r.alliance) || !canReachHandoff(r, st)) continue;
+          if (!st.pieceTypes.some((t) => intake.pieceTypes.includes(t))) continue;
+          const used = m.stationUsed.get(`${st.id}:${r.alliance}`) ?? 0;
+          if (st.supply !== undefined && used >= st.supply) continue;
+          const c = regionCenter(st.zone);
+          best = Math.min(
+            best,
+            this.travelBetween(r, from, c) + st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + 0.8,
+          );
+        }
+    }
+    const t = Number.isFinite(best) ? best : 0;
+    this.refillCache.set(key, t);
+    return t;
+  }
+
+  /** Another robot is parked (nearly stopped) where this robot would need to stand. */
+  private spotTaken(m: Match, r: Robot, p: Vec2): boolean {
+    const mine = Math.max(r.archetype.frame.length, r.archetype.frame.width) / 2;
+    return m.robots.some((o) => {
+      if (o === r || o.speed > 0.3) return false;
+      const theirs = Math.max(o.archetype.frame.length, o.archetype.frame.width) / 2;
+      return Math.hypot(o.x - p.x, o.y - p.y) < (mine + theirs) * 0.8;
+    });
+  }
+
   private scoreOptions(m: Match, r: Robot): Option[] {
+    this.refillCache.clear();
     const out: Option[] = [];
     const per = this.period(m);
     for (const t of m.game.targets) {
       if (!this.usableTarget(m, r, t)) continue;
       const pts = t.points[per] * this.weight(m, t);
       if (pts <= 0) continue;
+      if ((this.spotBlacklist.get(t.id) ?? 0) > m.time) continue;
       if (t.place && r.held.some((h) => t.accepts.includes(h))) {
         const time = r.placeTime(t);
         if (time !== null) {
           const point = gridFor(m, r).nearestFree(regionCenter(t.place.zone));
-          if (pointInRegion(point, t.place.zone)) {
+          if (pointInRegion(point, t.place.zone) && !this.spotTaken(m, r, point)) {
             // Soft claim: a teammate already headed here means waiting for them.
             const claim = `place:${t.id}`;
             const wait = this.claimedByOther(m, r, claim) ? time + 2 : 0;
@@ -310,7 +370,9 @@ export class BotBrain implements RobotController {
                 point,
                 ...(t.place.facePoint ? { face: t.place.facePoint } : {}),
               },
-              utility: (pts / (this.travelTime(m, r, point) + time + wait)) * this.noise(m),
+              utility:
+                (pts / (this.travelTime(m, r, point) + time + wait + this.refillTime(m, r, point))) *
+                this.noise(m),
               claim,
             });
           }
@@ -334,7 +396,9 @@ export class BotBrain implements RobotController {
           out.push({
             plan: { kind: 'shoot', targetId: t.id, point: best, aim },
             utility:
-              ((pts * nShots) / (this.travelTime(m, r, best) + sh.reloadSec * nShots + 0.4)) * this.noise(m),
+              ((pts * nShots) /
+                (this.travelTime(m, r, best) + sh.reloadSec * nShots + 0.4 + this.refillTime(m, r, best))) *
+              this.noise(m),
           });
         }
       }
@@ -376,6 +440,8 @@ export class BotBrain implements RobotController {
     for (const st of m.game.stations) {
       if (m.phase === 'auto') break; // human players feed in teleop
       if (st.alliance && st.alliance !== r.alliance) continue;
+      if (!canReachHandoff(r, st)) continue;
+      if ((this.spotBlacklist.get(st.id) ?? 0) > m.time) continue;
       const type = st.pieceTypes.find((t) => r.canHold(t) && intake.pieceTypes.includes(t));
       if (!type) continue;
       const used = m.stationUsed.get(`${st.id}:${r.alliance}`) ?? 0;
@@ -386,40 +452,68 @@ export class BotBrain implements RobotController {
       const wait = this.claimedByOther(m, r, claim) ? st.feedIntervalSec * 2 : 0;
       out.push({
         plan: { kind: 'station', stationId: st.id, point },
-        utility: this.fetchUtility(m, r, point, type, st.feedIntervalSec * 0.5 + 0.8 + wait) * this.noise(m),
+        utility:
+          this.fetchUtility(m, r, point, type, st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + 0.8 + wait) *
+          this.noise(m),
         claim,
       });
     }
     return out;
   }
 
-  private endgameOption(m: Match, r: Robot): Option | null {
-    if (m.phase !== 'teleop' || !r.archetype.endgame) return null;
+  /** `force`: ignore timing (an idle robot pre-positions and waits for the action to open). */
+  private endgameOption(m: Match, r: Robot, force = false): Option | null {
+    if (!r.archetype.endgame) return null;
+    const auto = m.phase === 'auto';
+    if (!auto && m.phase !== 'teleop') return null;
     const pref = m.def.botHints?.endgamePreference;
     let best: Option | null = null;
     for (const a of m.game.endgame) {
       if (a.alliance && a.alliance !== r.alliance) continue;
+      if (auto ? !a.allowInAuto : (a.availableAtRemainingSec ?? 0) < 0) continue;
       const dur = r.archetype.endgame[a.baseId];
       if (dur === undefined) continue;
       const rank = pref ? pref.indexOf(a.baseId) : -1;
       if (pref && rank < 0) continue;
       a.zones.forEach((z, zoneIndex) => {
-        const claim = `eg:${a.id}:${zoneIndex}`;
+        const center = regionCenter(z);
+        // Claims and occupancy are per physical spot, so two different actions that share a zone
+        // (e.g. dock vs. engage on the same platform slot) don't send two robots to one place.
+        const claim = `eg:${a.alliance ?? 'n'}:${center.x.toFixed(2)},${center.y.toFixed(2)}`;
         if (this.claimedByOther(m, r, claim)) return;
-        const occupied = m.robots.some(
-          (o) => o !== r && o.endgameDone?.actionId === a.id && o.endgameDone.zoneIndex === zoneIndex,
-        );
+        const occupied = m.robots.some((o) => {
+          if (o === r || !o.endgameDone) return false;
+          const oa = m.game.endgame.find((e) => e.id === o.endgameDone!.actionId);
+          const oz = oa?.zones[o.endgameDone.zoneIndex];
+          return !!oz && pointInRegion(regionCenter(oz), z);
+        });
         if (occupied && (a.maxRobotsPerZone ?? Infinity) <= 1) return;
-        const point = gridFor(m, r).nearestFree(regionCenter(z));
-        const need =
-          this.travelTime(m, r, point) * 1.4 + dur + (m.def.botHints?.endgameLeadSec ?? 3) + this.skill.think;
-        if (m.remaining > need) return;
-        const utility = a.points / (rank >= 0 ? rank + 1 : 1) - this.travelTime(m, r, point);
+        const point = gridFor(m, r).nearestFree(center);
+        const lead = auto ? 0.5 : (m.def.botHints?.endgameLeadSec ?? 3);
+        // One-at-a-time actions: also wait for teammates already headed for (or doing) one.
+        const queue = a.oneAtATime && !auto ? this.endgameQueue(m, r) * dur : 0;
+        const need = this.travelTime(m, r, point) * 1.4 + dur + lead + queue + this.skill.think;
+        if (m.remaining > need && !force) return;
+        // Too late to finish: in auto there's no time to spare, so keep scoring instead.
+        if (auto && m.remaining < this.travelTime(m, r, point) + dur) return;
+        const pts = auto ? (a.autoPoints ?? a.points) : a.points;
+        const utility = pts / (rank >= 0 ? rank + 1 : 1) - this.travelTime(m, r, point);
         if (!best || utility > best.utility)
           best = { plan: { kind: 'endgame', actionId: a.id, zoneIndex, point }, utility, claim };
       });
     }
     return best;
+  }
+
+  /** Teammates that can still do an endgame action (they may need the same platform first). */
+  private endgameQueue(m: Match, r: Robot): number {
+    return m.robots.filter(
+      (o) =>
+        o !== r &&
+        o.alliance === r.alliance &&
+        !o.endgameDone &&
+        Object.keys(o.archetype.endgame ?? {}).length,
+    ).length;
   }
 
   private parkOption(m: Match, r: Robot): Option | null {
@@ -461,6 +555,8 @@ export class BotBrain implements RobotController {
       // Hysteresis: stick with the current plan unless something is clearly better.
       const current = opts.find((o) => samePlan(this.plan, o.plan));
       if (current && choice && choice.utility < current.utility * 1.3) choice = current;
+      // Nothing to score or fetch (e.g. every reachable target is full): get into endgame position.
+      if (!choice) choice = this.endgameOption(m, r, true);
     }
     const plan = choice?.plan ?? { kind: 'idle' };
     if (choice && samePlan(this.plan, plan)) return;
@@ -492,6 +588,9 @@ export class BotBrain implements RobotController {
         const a = m.random() * 2 * Math.PI;
         this.detour = gridFor(m, r).nearestFree({ x: r.x + Math.cos(a) * 1.2, y: r.y + Math.sin(a) * 1.2 });
         if (this.plan.kind === 'acquire') this.blacklist.set(this.plan.pieceId, m.time + 6);
+        if (this.plan.kind === 'place' || this.plan.kind === 'shoot')
+          this.spotBlacklist.set(this.plan.targetId, m.time + 5);
+        if (this.plan.kind === 'station') this.spotBlacklist.set(this.plan.stationId, m.time + 5);
         this.setClaim(m, r, null);
         this.plan = { kind: 'idle' };
       }

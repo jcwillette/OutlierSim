@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
-import type { ExpandedGame, XElement } from '../sim/expand.ts';
+import { restHeight, type ExpandedGame, type XElement } from '../sim/expand.ts';
 import { regionOutline } from '../sim/math.ts';
 import type { Match, Piece, Robot } from '../sim/match.ts';
 import type { Alliance, PieceShape, Region2D } from '../sim/types.ts';
@@ -30,6 +30,10 @@ function pieceGeometry(shape: PieceShape): THREE.BufferGeometry {
       const tube = (shape.outerRadius - shape.innerRadius) / 2;
       return new THREE.TorusGeometry(shape.innerRadius + tube, tube, 10, 24);
     }
+    case 'cone':
+      return new THREE.CylinderGeometry(shape.radius * 0.18, shape.radius, shape.height, 20).rotateX(
+        Math.PI / 2,
+      );
     case 'box':
       return new THREE.BoxGeometry(shape.size.x, shape.size.y, shape.size.z);
   }
@@ -294,7 +298,8 @@ export class FieldView {
       const q = r.body.rotation();
       v.group.position.set(t.x, t.y, t.z);
       v.group.quaternion.set(q.x, q.y, q.z, q.w);
-      if (r.endgameDone) v.group.position.z += 0.35; // show "climbed"
+      // Show "climbed" for robots still on the floor (a robot on a ramp or platform already looks it).
+      if (r.endgameDone && t.z < r.archetype.frame.height / 2 + 0.05) v.group.position.z += 0.35;
 
       const key = r.held.join(',');
       if (key !== v.heldKey) {
@@ -321,8 +326,20 @@ export class FieldView {
       }
       if (r.id === this.playerId) this.playerRing.position.set(t.x, t.y, 0.01);
     }
+    const stacked = new Map<string, number>();
     for (const p of match.pieces) {
       const m = this.pieceMesh(p);
+      if (p.status === 'scored' && p.scoredIn) {
+        const at = match.targets.get(p.scoredIn)?.target.display;
+        m.visible = !!at;
+        if (at) {
+          const n = stacked.get(p.scoredIn) ?? 0;
+          stacked.set(p.scoredIn, n + 1);
+          m.position.set(at.x, at.y, at.z + n * 2 * restHeight(p.type.shape));
+          m.quaternion.identity();
+        }
+        continue;
+      }
       m.visible = p.status === 'field';
       if (!m.visible) continue;
       const t = p.body.translation();

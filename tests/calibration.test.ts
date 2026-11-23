@@ -12,6 +12,7 @@ const fakeSide = (over: Partial<AllianceResult> = {}): AllianceResult => ({
     mid: { auto: 0, teleop: 4 },
   },
   endgame: {},
+  sources: {},
   fouls: { minor: 0, major: 0 },
   rp: 0,
   rpBreakdown: {},

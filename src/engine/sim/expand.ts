@@ -62,6 +62,7 @@ export function restHeight(shape: PieceShape): number {
       return shape.radius;
     case 'cylinder':
     case 'torus':
+    case 'cone':
       return shape.height / 2;
     case 'box':
       return shape.size.z / 2;
@@ -124,6 +125,7 @@ function flipTarget(t: ScoringTarget, sym: Symmetry, f: FieldDims): ScoringTarge
     };
   }
   if (t.aimPoint) out.aimPoint = flipVec3(t.aimPoint, sym, f);
+  if (t.display) out.display = flipVec3(t.display, sym, f);
   if (t.afterScore?.kind === 'recycle') {
     out.afterScore = {
       ...t.afterScore,

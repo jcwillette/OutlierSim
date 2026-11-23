@@ -2,17 +2,23 @@
 
 Status of the build plan. Update this file in every PR.
 
-| Milestone             | Scope                                                                                                    | Status                         |
-| --------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| M0 Scaffold           | Vite/TS/ESLint/Vitest, CI, Pages deploy, CLAUDE.md, ADRs                                                 | done                           |
-| M1 Headless sim core  | `GameDefinition` + validation, Rapier field, swerve, pieces, mechanisms, scoring, clock, ledger          | not started                    |
-| M2 Reference game     | fictional `0000-reference` that exercises every engine feature, plus a games registry and per-game tests | done                           |
-| M3 Playable 3D client | Three.js renderer, cameras, keyboard/gamepad, HUD, menus, post-match                                     | not started                    |
-| M4 Bot AI             | generic 3v3 AI, nav grid, difficulty, `npm run sim`                                                      | not started                    |
-| M5 Pipeline           | `frc-game-from-manual` skill, ingest + calibrate tools, Playwright smoke                                 | done                           |
-| M6 Stress tests       | blind builds of past seasons from their manuals; real-match comparison only on request                   | waiting for manuals from owner |
+| Milestone             | Scope                                                                                                    | Status                        |
+| --------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| M0 Scaffold           | Vite/TS/ESLint/Vitest, CI, Pages deploy, CLAUDE.md, ADRs                                                 | done                          |
+| M1 Headless sim core  | `GameDefinition` + validation, Rapier field, swerve, pieces, mechanisms, scoring, clock, ledger          | not started                   |
+| M2 Reference game     | fictional `0000-reference` that exercises every engine feature, plus a games registry and per-game tests | done                          |
+| M3 Playable 3D client | Three.js renderer, cameras, keyboard/gamepad, HUD, menus, post-match                                     | not started                   |
+| M4 Bot AI             | generic 3v3 AI, nav grid, difficulty, `npm run sim`                                                      | not started                   |
+| M5 Pipeline           | `frc-game-from-manual` skill, ingest + calibrate tools, Playwright smoke                                 | done                          |
+| M6 Stress tests       | blind builds of past seasons from their manuals; real-match comparison only on request                   | 2023 Charged Up built (blind) |
 
 ## Known gaps / ideas
+
+- 2023 stress test: the sim is optimistic. Strong alliances reach the bonus RPs in most normal matches. Bots drive perfect paths, there's no defense, balancing never fails and tipped cones cost nothing. A balance-failure chance or a loading-zone defense role would bring the rates down (see `src/games/2023-chargedup/SOURCES.md`).
+- The 2023 manual URL now serves the April revision, so a blind January build can't verify that no value changed after January without reading later Team Updates. Archive the kickoff manual at kickoff for future stress tests.
+- Charge Station tilt isn't simulated (static ramp; LEVEL is decided in `rules.ts`). Robots are still pitch/roll-locked boxes.
+- Players can't pick which piece a multi-type station hands out. 2023 works around it with one station (and zone) per piece type.
+- Placement uses the highest-value row first. There's no key to pick a lower row on purpose.
 
 - There's no audio transcription for reveal videos. Captions are used only when a subtitle track exists, and the manual is the source of truth.
 - The optional real-match comparison (`npm run calibrate`) covers alliance-level distributions only, not per-team cycle times.
