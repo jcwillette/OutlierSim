@@ -20,6 +20,7 @@ export default tseslint.config(
         __dirname: 'readonly',
         console: 'readonly',
         process: 'readonly',
+        document: 'readonly', // used inside Playwright page callbacks
       },
     },
     rules: { '@typescript-eslint/no-require-imports': 'off' },

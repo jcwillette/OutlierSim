@@ -389,7 +389,8 @@ class Session {
   readonly player: Robot;
   private readonly controller: PlayerController;
   private state: 'countdown' | 'running' | 'paused' | 'done' = 'countdown';
-  private countdown = 3;
+  /** Wall-clock time the countdown ends (not frame-dt based, so slow frames don't stretch it). */
+  private readonly countdownEnd = performance.now() + 3000;
   private readonly hud: Hud;
 
   constructor(
@@ -439,9 +440,9 @@ class Session {
     if (this.state === 'done') return;
     this.controller.latest = this.input.poll();
     if (this.state === 'countdown') {
-      this.countdown -= dt;
-      this.hud.setCountdown(this.countdown > 0 ? String(Math.ceil(this.countdown)) : null);
-      if (this.countdown <= 0) {
+      const left = (this.countdownEnd - performance.now()) / 1000;
+      this.hud.setCountdown(left > 0 ? String(Math.ceil(left)) : null);
+      if (left <= 0) {
         this.state = 'running';
         this.match.start();
       }

@@ -38,9 +38,20 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
       await p.waitForSelector('button.primary');
       const selected = await p.$eval('select[aria-label="Game"]', (s) => s.value);
       await p.click('button.primary');
-      await p.waitForTimeout(3500); // countdown
+      // Wait for the match to really start and the clock to tick. Software WebGL on CI runners can be
+      // slow, so wait on state instead of fixed sleeps.
+      await p.waitForFunction(
+        () => document.querySelector('.clock .phase')?.textContent !== 'pre-match',
+        null,
+        {
+          timeout: 60_000,
+        },
+      );
+      const t0 = await p.$eval('.clock .time', (e) => e.textContent);
       await p.keyboard.down('KeyW');
-      await p.waitForTimeout(6000);
+      await p.waitForFunction((t) => document.querySelector('.clock .time')?.textContent !== t, t0, {
+        timeout: 60_000,
+      });
       await p.keyboard.up('KeyW');
       const time = await p.$eval('.clock .time', (e) => e.textContent);
       const phase = await p.$eval('.clock .phase', (e) => e.textContent);
