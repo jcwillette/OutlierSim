@@ -4,6 +4,7 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- Spectator mode: **Watch 6 bots** in the menu (or `?watch=1`) runs a match with six bots and no player robot, with a difficulty per alliance. It adds a broadcast-style sideline camera that pans with the robots. You can follow any robot (`1`-`6`, `Tab`, gamepad bumpers) with a ring marker and a panel saying what its bot is doing and how many points it has scored. Playback runs from 0.25x to 4x (`[` / `]`, D-pad). The e2e smoke test now also watches every game in spectator mode.
 - Game: **2023 Charged Up** (`2023-chargedup`), a blind stress-test build from the 2023 manual and January Team Updates only. It has 27 individual nodes per alliance with links, supercharge, the co-op grid, and the Sustainability and Activation RPs. The Charge Station is a drivable ramp with slots: dock and engage, one robot at a time, and LEVEL is decided by who boarded last. It also has a shelf double substation, a single-substation chute, and four archetypes (elevator, mid-level arm, cube specialist, kitbot). Everything is cited in `SOURCES.md`, with simplifications and a plausibility table.
 - Engine (generic, needed by 2023):
   - New schema features:

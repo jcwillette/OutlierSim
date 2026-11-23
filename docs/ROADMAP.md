@@ -5,14 +5,17 @@ Status of the build plan. Update this file in every PR.
 | Milestone             | Scope                                                                                                    | Status                        |
 | --------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------- |
 | M0 Scaffold           | Vite/TS/ESLint/Vitest, CI, Pages deploy, CLAUDE.md, ADRs                                                 | done                          |
-| M1 Headless sim core  | `GameDefinition` + validation, Rapier field, swerve, pieces, mechanisms, scoring, clock, ledger          | not started                   |
+| M1 Headless sim core  | `GameDefinition` + validation, Rapier field, swerve, pieces, mechanisms, scoring, clock, ledger          | done                          |
 | M2 Reference game     | fictional `0000-reference` that exercises every engine feature, plus a games registry and per-game tests | done                          |
-| M3 Playable 3D client | Three.js renderer, cameras, keyboard/gamepad, HUD, menus, post-match                                     | not started                   |
-| M4 Bot AI             | generic 3v3 AI, nav grid, difficulty, `npm run sim`                                                      | not started                   |
+| M3 Playable 3D client | Three.js renderer, cameras, keyboard/gamepad, HUD, menus, post-match                                     | done                          |
+| M4 Bot AI             | generic 3v3 AI, nav grid, difficulty, `npm run sim`                                                      | done                          |
 | M5 Pipeline           | `frc-game-from-manual` skill, ingest + calibrate tools, Playwright smoke                                 | done                          |
 | M6 Stress tests       | blind builds of past seasons from their manuals; real-match comparison only on request                   | 2023 Charged Up built (blind) |
+| M7 Spectator mode     | watch six bots: sideline camera, follow any robot with bot commentary, 0.25x-4x playback                 | done                          |
 
 ## Known gaps / ideas
+
+- Spectator mode has no replay or scrubbing (it only plays forward), and no auto-director that cuts to the most interesting robot.
 
 - 2023 stress test: the sim is optimistic. Strong alliances reach the bonus RPs in most normal matches. Bots drive perfect paths, there's no defense, balancing never fails and tipped cones cost nothing. A balance-failure chance or a loading-zone defense role would bring the rates down (see `src/games/2023-chargedup/SOURCES.md`).
 - The 2023 manual URL now serves the April revision, so a blind January build can't verify that no value changed after January without reading later Team Updates. Archive the kickoff manual at kickoff for future stress tests.

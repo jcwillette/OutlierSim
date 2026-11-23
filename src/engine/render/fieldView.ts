@@ -125,7 +125,7 @@ export class FieldView {
 
   constructor(
     readonly game: ExpandedGame,
-    private readonly playerId: number | null,
+    private playerId: number | null,
   ) {
     const { length: L, width: W, wallHeight: H } = game.def.field;
     this.scene.background = new THREE.Color(0x14171c);
@@ -290,6 +290,12 @@ export class FieldView {
     return m;
   }
 
+  /** Move the ring marker to another robot (spectator follow), or hide it with null. */
+  highlight(robotId: number | null): void {
+    this.playerId = robotId;
+    this.playerRing.visible = robotId !== null;
+  }
+
   /** Copy the current match state into the scene. */
   sync(match: Match): void {
     for (const r of match.robots) {
@@ -324,7 +330,8 @@ export class FieldView {
         const f = 1 - act.remaining / act.total;
         v.progress.scale.set(Math.max(0.01, f) * 0.9, 0.09, 1);
       }
-      if (r.id === this.playerId) this.playerRing.position.set(t.x, t.y, 0.01);
+      if (r.id === this.playerId)
+        this.playerRing.position.set(t.x, t.y, t.z - r.archetype.frame.height / 2 + 0.01);
     }
     const stacked = new Map<string, number>();
     for (const p of match.pieces) {

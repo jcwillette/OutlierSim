@@ -1,6 +1,7 @@
 /**
  * Browser smoke test: every registered game loads, a match starts and runs with bots, the HUD
- * updates, and there are no page errors. Screenshots go to test-results/<game>.png.
+ * updates, and there are no page errors. Each game is also watched in spectator mode (six bots,
+ * fast-forward, follow a robot). Screenshots go to test-results/<game>.png and <game>-watch.png.
  *
  *   npm run test:e2e      (builds first; needs Playwright + Chromium)
  *
@@ -65,6 +66,46 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
         for (const e of errors) console.log(`  error: ${e}`);
       }
       await p.close();
+
+      // Spectator mode: six bots, fast-forward, follow another robot.
+      const w = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+      const werrors = [];
+      w.on('pageerror', (e) => werrors.push(String(e)));
+      w.on('console', (m) => m.type() === 'error' && werrors.push(m.text()));
+      await w.goto(`${BASE}/?dev=1&watch=1&game=${encodeURIComponent(id)}`);
+      await w.waitForSelector('button.primary');
+      const label = await w.$eval('button.primary', (b) => b.textContent);
+      await w.click('button.primary');
+      await w.waitForFunction(
+        () => document.querySelector('.clock .phase')?.textContent !== 'pre-match',
+        null,
+        { timeout: 60_000 },
+      );
+      await w.keyboard.press('BracketRight');
+      await w.keyboard.press('BracketRight');
+      await w.keyboard.press('Digit4');
+      const w0 = await w.$eval('.clock .time', (e) => e.textContent);
+      await w.waitForFunction((t) => document.querySelector('.clock .time')?.textContent !== t, w0, {
+        timeout: 60_000,
+      });
+      const following = await w.$eval('.status .name', (e) => e.textContent);
+      const players = await w.evaluate(() => {
+        const s = window.outlierSim.session;
+        return s.player === null && s.brains.size === 6 ? 0 : 1;
+      });
+      await w.screenshot({ path: path.join(OUT, `${id}-watch.png`) });
+      const wok =
+        label === 'Watch match' &&
+        werrors.length === 0 &&
+        following.startsWith('Following Red 1') &&
+        players === 0;
+      console.log(`${wok ? 'PASS' : 'FAIL'} ${id} (watch): ${following}, non-bot robots=${players}`);
+      if (!wok) {
+        failed++;
+        if (label !== 'Watch match') console.log(`  ?watch=1 did not select watch mode (button '${label}')`);
+        for (const e of werrors) console.log(`  error: ${e}`);
+      }
+      await w.close();
     }
   } finally {
     await browser.close();

@@ -347,7 +347,7 @@ const charge = (
 export const definition: GameDefinition = {
   id: '2023-chargedup',
   year: 2023,
-  name: 'Charged Up (2023)',
+  name: 'Charged Up',
   summary:
     'Grab cones and cubes from the substations at the far end and score them on your grid: ' +
     'bottom row any piece, middle and top rows cones on poles and cubes on shelves. Three filled ' +

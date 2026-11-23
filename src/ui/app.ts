@@ -1,7 +1,15 @@
 import * as THREE from 'three';
-import { CameraRig } from '../engine/render/cameras.ts';
+import { CameraRig, SPECTATOR_CAMERA_MODES } from '../engine/render/cameras.ts';
 import { ALLIANCE_COLOR, FieldView } from '../engine/render/fieldView.ts';
-import { InputManager, KEY_HELP, PAD_HELP, PlayerController } from '../engine/input/input.ts';
+import {
+  InputManager,
+  KEY_HELP,
+  PAD_HELP,
+  PlayerController,
+  SPECTATOR_KEY_HELP,
+  SPECTATOR_PAD_HELP,
+  type ButtonEvent,
+} from '../engine/input/input.ts';
 import { Match, initPhysics, type MatchResult, type Robot } from '../engine/sim/match.ts';
 import type { Alliance, GameDefinition } from '../engine/sim/types.ts';
 import { GAMES } from '../games/index.ts';
@@ -42,6 +50,8 @@ const fmtTime = (s: number) => {
 
 export interface Setup {
   gameId: string;
+  /** 'play': drive one robot. 'watch': spectate a match between six bots. */
+  mode: 'play' | 'watch';
   alliance: Alliance;
   station: number;
   archetype: string;
@@ -95,10 +105,13 @@ export class App {
     const games = this.games();
     const saved = loadSetup();
     // ?game=<id> preselects a game (shareable link for students).
-    const linked = new URLSearchParams(location.search).get('game');
+    const params = new URLSearchParams(location.search);
+    const linked = params.get('game');
     const def = games.find((g) => g.id === linked) ?? games.find((g) => g.id === saved.gameId) ?? games[0]!;
     this.setup = {
       gameId: def.id,
+      // ?watch=1 opens straight into spectator mode.
+      mode: params.has('watch') ? 'watch' : (saved.mode ?? 'play'),
       alliance: saved.alliance ?? 'blue',
       station: saved.station ?? 0,
       archetype: def.archetypes.some((a) => a.id === saved.archetype)
@@ -195,19 +208,42 @@ export class App {
     );
     const keyRows = (rows: Array<[string, string]>) =>
       h('div', { class: 'keys' }, ...rows.flatMap(([k, d]) => [h('kbd', {}, k), h('span', {}, d)]));
-
-    const card = h(
+    const watching = this.setup.mode === 'watch';
+    const modeToggle = h(
       'div',
-      { class: 'card' },
-      h('h1', {}, 'OutlierSim'),
-      h(
-        'p',
-        { class: 'sub' },
-        'Drive one robot in a 3v3 match and get a feel for the game before you build.',
+      { class: 'stations modes', role: 'radiogroup', 'aria-label': 'Mode' },
+      ...(
+        [
+          ['play', 'Drive a robot'],
+          ['watch', 'Watch 6 bots'],
+        ] as const
+      ).map(([m, label]) =>
+        h(
+          'button',
+          {
+            class: this.setup.mode === m ? 'sel' : '',
+            role: 'radio',
+            'aria-checked': String(this.setup.mode === m),
+            onclick: () => {
+              this.setup = { ...this.setup, mode: m };
+              this.showMenu();
+            },
+          },
+          label,
+        ),
       ),
-      h('h2', {}, 'Game'),
-      gameSel,
-      h('p', { class: 'summary' }, def.summary),
+    );
+    const robotTypes = () =>
+      this.selectField(
+        'Robot types',
+        this.setup.botRobots,
+        [
+          ['mixed', 'Mixed'],
+          ['default', 'All default'],
+        ],
+        (v) => (this.setup.botRobots = v),
+      );
+    const playSections: Child[] = [
       h('h2', {}, 'Your driver station'),
       stations,
       h('h2', {}, 'Your robot'),
@@ -241,15 +277,7 @@ export class App {
         { class: 'row' },
         this.selectField('Partners', this.setup.partners, DIFFICULTIES, (v) => (this.setup.partners = v)),
         this.selectField('Opponents', this.setup.opponents, DIFFICULTIES, (v) => (this.setup.opponents = v)),
-        this.selectField(
-          'Robot types',
-          this.setup.botRobots,
-          [
-            ['mixed', 'Mixed'],
-            ['default', 'All default'],
-          ],
-          (v) => (this.setup.botRobots = v),
-        ),
+        robotTypes(),
       ),
       h('h2', {}, 'Controls'),
       h(
@@ -258,10 +286,60 @@ export class App {
         keyRows(KEY_HELP),
         keyRows(PAD_HELP),
       ),
+    ];
+    const watchSections: Child[] = [
+      h('h2', {}, 'Bots'),
+      h(
+        'div',
+        { class: 'row' },
+        this.selectField(
+          'Blue alliance',
+          this.setup.partners,
+          DIFFICULTIES,
+          (v) => (this.setup.partners = v),
+        ),
+        this.selectField(
+          'Red alliance',
+          this.setup.opponents,
+          DIFFICULTIES,
+          (v) => (this.setup.opponents = v),
+        ),
+        robotTypes(),
+      ),
+      h('h2', {}, 'Spectator controls'),
+      h(
+        'div',
+        { class: 'row', style: 'align-items:flex-start;gap:28px' },
+        keyRows(SPECTATOR_KEY_HELP),
+        keyRows(SPECTATOR_PAD_HELP),
+      ),
+    ];
+
+    const card = h(
+      'div',
+      { class: 'card' },
+      h('h1', {}, 'OutlierSim'),
+      h(
+        'p',
+        { class: 'sub' },
+        watching
+          ? 'Watch six bots play a full 3v3 match. Follow any robot and see what it is doing.'
+          : 'Drive one robot in a 3v3 match and get a feel for the game before you build.',
+      ),
+      h('h2', {}, 'Game'),
+      gameSel,
+      h('p', { class: 'summary' }, def.summary),
+      h('h2', {}, 'Mode'),
+      modeToggle,
+      ...(watching ? watchSections : playSections),
       h(
         'div',
         { class: 'row end' },
-        h('button', { class: 'primary', onclick: () => void this.start() }, 'Start match'),
+        h(
+          'button',
+          { class: 'primary', onclick: () => void this.start() },
+          watching ? 'Watch match' : 'Start match',
+        ),
       ),
       h(
         'p',
@@ -302,7 +380,7 @@ export class App {
     this.resize();
   }
 
-  showResults(def: GameDefinition, result: MatchResult, playerId: number): void {
+  showResults(def: GameDefinition, result: MatchResult, playerId: number | null): void {
     const row = (label: string, b: number | string, r: number | string) =>
       h(
         'tr',
@@ -373,7 +451,11 @@ export class App {
         'div',
         { class: 'row end' },
         h('button', { onclick: () => this.showMenu() }, 'Change setup'),
-        h('button', { class: 'primary', onclick: () => void this.start() }, 'Play again'),
+        h(
+          'button',
+          { class: 'primary', onclick: () => void this.start() },
+          playerId === null ? 'Watch another' : 'Play again',
+        ),
       ),
     );
     this.setOverlay(h('div', { class: 'overlay' }, card));
@@ -382,16 +464,29 @@ export class App {
 
 // ------------------------------------------------------------------ session
 
+const SPEEDS = [0.25, 0.5, 1, 2, 4] as const;
+const robotName = (r: Robot) => `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${r.station + 1}`;
+
+/**
+ * One match on screen. With `setup.mode === 'play'` the student drives one robot; with 'watch' all
+ * six robots are bots and the camera follows whichever robot the spectator picks.
+ */
 class Session {
   readonly match: Match;
   readonly view: FieldView;
   readonly rig: CameraRig;
-  readonly player: Robot;
-  private readonly controller: PlayerController;
+  /** The student's robot, or null when spectating. */
+  readonly player: Robot | null;
+  readonly brains: Map<number, BotBrain>;
+  private readonly controller: PlayerController | null;
   private state: 'countdown' | 'running' | 'paused' | 'done' = 'countdown';
   /** Wall-clock time the countdown ends (not frame-dt based, so slow frames don't stretch it). */
   private readonly countdownEnd = performance.now() + 3000;
   private readonly hud: Hud;
+  /** Robot the camera follows (the player's robot when playing). */
+  private followId: number;
+  /** Playback speed index into SPEEDS (spectator only). */
+  private speedIndex = SPEEDS.indexOf(1);
 
   constructor(
     private readonly app: App,
@@ -400,8 +495,9 @@ class Session {
     private readonly input: InputManager,
     private readonly renderer: THREE.WebGLRenderer,
   ) {
-    const playerId = (setup.alliance === 'blue' ? 0 : 3) + setup.station;
-    const archetypes: Record<number, string> = { [playerId]: setup.archetype };
+    const watching = setup.mode === 'watch';
+    const playerId = watching ? null : (setup.alliance === 'blue' ? 0 : 3) + setup.station;
+    const archetypes: Record<number, string> = playerId === null ? {} : { [playerId]: setup.archetype };
     if (setup.botRobots === 'mixed') {
       // Deal out every archetype so each alliance sees a variety of robots.
       let k = Math.floor(Math.random() * def.archetypes.length);
@@ -409,36 +505,72 @@ class Session {
         if (id !== playerId) archetypes[id] = def.archetypes[k++ % def.archetypes.length]!.id;
     }
     this.match = new Match(def, { seed: (Math.random() * 2 ** 31) | 0, archetypes });
-    this.player = this.match.robots[playerId]!;
-    this.view = new FieldView(this.match.game, playerId);
-    this.rig = new CameraRig(this.match, setup.alliance, setup.station);
-    this.controller = new PlayerController(input, () => this.rig.driveYaw);
-    attachBots(this.match, { partners: setup.partners, opponents: setup.opponents, playerId });
-    const autoBrain = new BotBrain({ difficulty: 'hard' });
-    const manual = this.controller;
-    // During auto the player's robot optionally runs the bot AI as its "auto routine".
-    this.player.controller = setup.autoPilot
-      ? { command: (m, r, dt) => (m.phase === 'auto' ? autoBrain : manual).command(m, r, dt) }
-      : manual;
-    this.hud = new Hud(this.match, this.player, setup.autoPilot);
+    this.player = playerId === null ? null : this.match.robots[playerId]!;
+    this.followId = playerId ?? 0;
+    this.view = new FieldView(this.match.game, this.followId);
+    this.rig = watching
+      ? new CameraRig(this.match, 'blue', 1, SPECTATOR_CAMERA_MODES)
+      : new CameraRig(this.match, setup.alliance, setup.station);
+    this.brains = attachBots(this.match, { partners: setup.partners, opponents: setup.opponents, playerId });
+    if (this.player) {
+      const controller = new PlayerController(input, () => this.rig.driveYaw);
+      this.controller = controller;
+      const autoBrain = new BotBrain({ difficulty: 'hard' });
+      // During auto the player's robot optionally runs the bot AI as its "auto routine".
+      this.player.controller = setup.autoPilot
+        ? { command: (m, r, dt) => (m.phase === 'auto' ? autoBrain : controller).command(m, r, dt) }
+        : controller;
+      this.hud = new Hud(this.match, { kind: 'play', player: this.player, autoPilot: setup.autoPilot });
+    } else {
+      this.controller = null;
+      this.hud = new Hud(this.match, { kind: 'watch', brains: this.brains });
+      this.hud.setFollow(this.followed);
+      this.hud.setSpeed(this.speed);
+    }
+    this.hud.setCamera(this.rig.mode);
     app.setOverlay(this.hud.root);
+  }
+
+  private get followed(): Robot {
+    return this.match.robots[this.followId]!;
+  }
+
+  private get speed(): number {
+    return SPEEDS[this.speedIndex]!;
   }
 
   dispose(): void {
     this.state = 'done';
   }
 
-  onButton(e: 'camera' | 'pause' | 'help'): void {
+  onButton(e: ButtonEvent): void {
     if (e === 'camera') this.hud.setCamera(this.rig.cycle());
     if (e === 'pause' && (this.state === 'running' || this.state === 'paused')) {
       this.state = this.state === 'running' ? 'paused' : 'running';
       this.hud.setPaused(this.state === 'paused', () => this.app.showMenu());
     }
+    if (this.player) return; // the rest are spectator controls
+    const n = this.match.robots.length;
+    if (e === 'next') this.follow((this.followId + 1) % n);
+    if (e === 'prev') this.follow((this.followId + n - 1) % n);
+    if (e.startsWith('follow')) this.follow(Number(e.slice(6)));
+    if (e === 'faster' || e === 'slower') {
+      this.speedIndex = Math.max(0, Math.min(SPEEDS.length - 1, this.speedIndex + (e === 'faster' ? 1 : -1)));
+      this.hud.setSpeed(this.speed);
+    }
+  }
+
+  private follow(id: number): void {
+    if (!this.match.robots[id]) return;
+    this.followId = id;
+    this.view.highlight(id);
+    this.hud.setFollow(this.followed);
   }
 
   frame(dt: number): void {
     if (this.state === 'done') return;
-    this.controller.latest = this.input.poll();
+    const input = this.input.poll(); // also delivers gamepad button events
+    if (this.controller) this.controller.latest = input;
     if (this.state === 'countdown') {
       const left = (this.countdownEnd - performance.now()) / 1000;
       this.hud.setCountdown(left > 0 ? String(Math.ceil(left)) : null);
@@ -447,20 +579,73 @@ class Session {
         this.match.start();
       }
     } else if (this.state === 'running') {
-      this.match.advance(dt);
+      // Match.advance caps one call at 0.25 s of sim time, so split fast-forward into chunks.
+      let left = dt * (this.player ? 1 : this.speed);
+      while (left > 1e-6 && !this.match.isOver) {
+        const chunk = Math.min(left, 0.2);
+        this.match.advance(chunk);
+        left -= chunk;
+      }
     }
     this.view.sync(this.match);
-    this.rig.update(this.player, dt);
+    this.rig.update(this.player ?? this.followed, dt);
     this.renderer.render(this.view.scene, this.rig.camera);
     this.hud.update();
     if (this.match.isOver && this.state === 'running') {
       this.state = 'done';
-      setTimeout(() => this.app.showResults(this.def, this.match.getResult(), this.player.id), 1200);
+      const id = this.player?.id ?? null;
+      setTimeout(() => this.app.showResults(this.def, this.match.getResult(), id), 1200);
     }
   }
 }
 
 // ------------------------------------------------------------------ HUD
+
+type HudMode =
+  { kind: 'play'; player: Robot; autoPilot: boolean } | { kind: 'watch'; brains: Map<number, BotBrain> };
+
+/** Plain-language summary of what a bot is doing right now (spectator commentary). */
+export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): string {
+  if (r.endgameDone) {
+    const a = m.game.endgame.find((e) => e.id === r.endgameDone!.actionId);
+    return `${a?.name ?? 'Endgame'} done`;
+  }
+  const act = r.action;
+  if (act) {
+    const pct = Math.round((1 - act.remaining / act.total) * 100);
+    if (act.kind === 'place')
+      return `Placing on ${m.targets.get(act.targetId)?.target.name ?? 'target'}… ${pct}%`;
+    const a = m.game.endgame.find((e) => e.id === act.actionId);
+    return `${a?.name ?? 'Endgame'}… ${pct}%`;
+  }
+  if (m.phase === 'pre') return 'Waiting for the match to start';
+  if (m.phase === 'transition') return 'Disabled until teleop';
+  if (m.phase === 'post') return 'Match over';
+  const p = brain?.currentPlan;
+  if (!p) return 'Idle';
+  switch (p.kind) {
+    case 'acquire': {
+      const piece = m.pieces[p.pieceId];
+      return `Going for a ${piece?.type.name.toLowerCase() ?? 'game piece'}`;
+    }
+    case 'station':
+      return `Loading at ${m.game.stations.find((s) => s.id === p.stationId)?.name ?? 'the human player station'}`;
+    case 'place':
+      return `Taking it to ${m.targets.get(p.targetId)?.target.name ?? 'a target'}`;
+    case 'shoot':
+      return `Lining up a shot at ${m.targets.get(p.targetId)?.target.name ?? 'a target'}`;
+    case 'endgame':
+      return `Heading for ${m.game.endgame.find((e) => e.id === p.actionId)?.name ?? 'the endgame'}`;
+    case 'park':
+      return 'Parking for the endgame';
+    case 'defend': {
+      const o = m.robots[p.opponentId];
+      return o ? `Defending ${robotName(o)}` : 'Playing defense';
+    }
+    case 'idle':
+      return 'Idle';
+  }
+}
 
 class Hud {
   readonly root: HTMLElement;
@@ -471,44 +656,72 @@ class Hud {
   private readonly clock = h('div', { class: 'clock' }, this.time, this.phase);
   private readonly indicators = h('div', { class: 'indicators' });
   private readonly toasts = h('div', { class: 'toasts' });
+  private readonly name = h('div', { class: 'name' });
   private readonly held = h('div', { class: 'held' });
   private readonly hint = h('div', { class: 'hint' });
-  private readonly cam = h('div', { class: 'camlabel' }, 'Camera: driver station (C)');
+  private readonly cam = h('div', { class: 'camlabel' });
   private readonly countdown = h('div', { class: 'countdown' });
   private pauseCard: HTMLElement | null = null;
   private lastIndicatorKey = '';
   private lastToastKey = '';
+  /** Robot shown in the status panel: the player, or the followed robot when spectating. */
+  private robot: Robot;
+  private speed = 1;
+  private camMode = 'driver';
 
   constructor(
     private readonly match: Match,
-    private readonly player: Robot,
-    private readonly autoPilot: boolean,
+    private readonly mode: HudMode,
   ) {
+    this.robot = mode.kind === 'play' ? mode.player : match.robots[0]!;
     this.root = h(
       'div',
-      { class: 'hud' },
+      { class: `hud ${mode.kind === 'watch' ? 'spectating' : ''}` },
       h('div', { class: 'scorebar' }, this.blue, this.clock, this.red),
       this.indicators,
       this.toasts,
-      h(
-        'div',
-        { class: 'status' },
-        h(
-          'div',
-          { class: 'name', style: `color:#${ALLIANCE_COLOR[player.alliance].toString(16).padStart(6, '0')}` },
-          `You: ${player.alliance === 'blue' ? 'Blue' : 'Red'} ${player.station + 1} · ${player.archetype.name}`,
-        ),
-        this.held,
-        this.hint,
-      ),
+      h('div', { class: 'status' }, this.name, this.held, this.hint),
       this.cam,
       this.countdown,
     );
+    this.renderName();
+  }
+
+  private renderName(): void {
+    const r = this.robot;
+    const color = `#${ALLIANCE_COLOR[r.alliance].toString(16).padStart(6, '0')}`;
+    this.name.setAttribute('style', `color:${color}`);
+    this.name.textContent =
+      this.mode.kind === 'play'
+        ? `You: ${robotName(r)} · ${r.archetype.name}`
+        : `Following ${robotName(r)} · ${r.archetype.name}`;
+  }
+
+  setFollow(r: Robot): void {
+    this.robot = r;
+    this.renderName();
+  }
+
+  setSpeed(speed: number): void {
+    this.speed = speed;
+    this.renderCam();
   }
 
   setCamera(mode: string): void {
-    const names: Record<string, string> = { driver: 'driver station', chase: 'chase', overhead: 'overhead' };
-    this.cam.textContent = `Camera: ${names[mode] ?? mode} (C)`;
+    this.camMode = mode;
+    this.renderCam();
+  }
+
+  private renderCam(): void {
+    const names: Record<string, string> = {
+      driver: 'driver station',
+      chase: 'chase',
+      overhead: 'overhead',
+      sideline: 'sideline',
+    };
+    const cam = `Camera: ${names[this.camMode] ?? this.camMode} (C)`;
+    this.cam.textContent =
+      this.mode.kind === 'watch' ? `${cam} · Speed ${this.speed}× ([ ]) · Follow: 1-6 / Tab` : cam;
   }
 
   setCountdown(text: string | null): void {
@@ -575,7 +788,7 @@ class Hud {
       );
     }
 
-    const r = this.player;
+    const r = this.robot;
     const cap = r.totalCapacity;
     const colors = new Map(m.def.pieces.map((p) => [p.id, p.color]));
     this.held.replaceChildren(
@@ -586,16 +799,18 @@ class Hud {
           : h('span', { class: 'empty' });
       }),
     );
-    this.hint.innerHTML = this.hintHtml();
+    if (this.mode.kind === 'watch') {
+      this.hint.textContent = `${describeBot(m, r, this.mode.brains.get(r.id))} · ${m.ledger.byRobot(r.id)} pts`;
+    } else this.hint.innerHTML = this.hintHtml(this.mode.autoPilot);
   }
 
-  private hintHtml(): string {
+  private hintHtml(autoPilot: boolean): string {
     const m = this.match;
-    const r = this.player;
+    const r = this.robot;
     if (m.phase === 'pre') return 'Get ready…';
     if (m.phase === 'transition') return 'Robots disabled: teleop starts soon';
     if (m.phase === 'post') return 'Match over';
-    if (m.phase === 'auto' && this.autoPilot) return '<b>Auto routine running.</b> You take over in teleop.';
+    if (m.phase === 'auto' && autoPilot) return '<b>Auto routine running.</b> You take over in teleop.';
     if (r.endgameDone) {
       const a = m.game.endgame.find((e) => e.id === r.endgameDone!.actionId);
       return `<b>${a?.name ?? 'Endgame'}</b> complete. Robot locked.`;
