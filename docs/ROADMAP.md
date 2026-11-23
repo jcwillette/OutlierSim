@@ -9,14 +9,16 @@ Status of the build plan. Update this file in every PR.
 | M2 Reference game     | fictional `0000-reference` that exercises every engine feature, plus a games registry and per-game tests | done                           |
 | M3 Playable 3D client | Three.js renderer, cameras, keyboard/gamepad, HUD, menus, post-match                                     | not started                    |
 | M4 Bot AI             | generic 3v3 AI, nav grid, difficulty, `npm run sim`                                                      | not started                    |
-| M5 Pipeline           | `frc-game-from-manual` skill, ingest + calibrate tools, Playwright smoke                                 | not started                    |
-| M6 Stress tests       | past seasons from real manuals, calibrated vs TBA                                                        | waiting for manuals from owner |
+| M5 Pipeline           | `frc-game-from-manual` skill, ingest + calibrate tools, Playwright smoke                                 | done                           |
+| M6 Stress tests       | blind builds of past seasons from their manuals; real-match comparison only on request                   | waiting for manuals from owner |
 
 ## Known gaps / ideas
 
+- There's no audio transcription for reveal videos. Captions are used only when a subtitle track exists, and the manual is the source of truth.
+- The optional real-match comparison (`npm run calibrate`) covers alliance-level distributions only, not per-team cycle times.
 - Bots don't reason about opponents beyond avoidance and the simple defense role. There's no shot-blocking or counter-defense.
 - Bots don't plan auto routines per game. Auto uses the same planner, restricted to the bot's own half of the field.
-- The reference game's tower recycles orbs right back to midfield, so scores are unrealistically high (~650/alliance). That's fine for an engine test, but don't calibrate against it.
+- The reference game's tower recycles orbs right back to midfield, so scores are unrealistically high (~650/alliance). That's fine for an engine test.
 
 - No touch controls, so phones and tablets can only use the menus. Matches need a keyboard or gamepad.
 - The bundle is about 4.9 MB (Rapier's WASM is inlined by `rapier3d-compat`). Consider the non-compat build with a separate `.wasm` file if load time matters on school networks.

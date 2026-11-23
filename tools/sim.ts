@@ -1,5 +1,5 @@
 /**
- * Headless bot-vs-bot matches for sanity checks and calibration.
+ * Headless bot-vs-bot matches for plausibility checks (and the optional real-match comparison).
  *
  *   npm run sim -- --game 0000-reference --matches 20 [--seed 1] [--difficulty normal] [--json out.json]
  *   [--archetypes allround,turret,stacker]  (blue 1-3, mirrored for red)

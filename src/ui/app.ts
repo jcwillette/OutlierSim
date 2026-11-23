@@ -26,7 +26,7 @@ function h<K extends keyof HTMLElementTagNameMap>(
     if (v === undefined || v === null || v === false) continue;
     if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v as EventListener);
     else if (k === 'class') el.className = String(v);
-    else if (k === 'style') el.setAttribute('style', String(v));
+    else if (k === 'style' || k.includes('-')) el.setAttribute(k, String(v));
     else (el as unknown as Record<string, unknown>)[k] = v;
   }
   for (const c of children) if (c !== null && c !== undefined && c !== false) el.append(c);
@@ -94,7 +94,9 @@ export class App {
 
     const games = this.games();
     const saved = loadSetup();
-    const def = games.find((g) => g.id === saved.gameId) ?? games[0]!;
+    // ?game=<id> preselects a game (shareable link for students).
+    const linked = new URLSearchParams(location.search).get('game');
+    const def = games.find((g) => g.id === linked) ?? games.find((g) => g.id === saved.gameId) ?? games[0]!;
     this.setup = {
       gameId: def.id,
       alliance: saved.alliance ?? 'blue',
@@ -387,7 +389,8 @@ class Session {
   readonly player: Robot;
   private readonly controller: PlayerController;
   private state: 'countdown' | 'running' | 'paused' | 'done' = 'countdown';
-  private countdown = 3;
+  /** Wall-clock time the countdown ends (not frame-dt based, so slow frames don't stretch it). */
+  private readonly countdownEnd = performance.now() + 3000;
   private readonly hud: Hud;
 
   constructor(
@@ -437,9 +440,9 @@ class Session {
     if (this.state === 'done') return;
     this.controller.latest = this.input.poll();
     if (this.state === 'countdown') {
-      this.countdown -= dt;
-      this.hud.setCountdown(this.countdown > 0 ? String(Math.ceil(this.countdown)) : null);
-      if (this.countdown <= 0) {
+      const left = (this.countdownEnd - performance.now()) / 1000;
+      this.hud.setCountdown(left > 0 ? String(Math.ceil(left)) : null);
+      if (left <= 0) {
         this.state = 'running';
         this.match.start();
       }

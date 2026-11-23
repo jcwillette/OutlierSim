@@ -1,3 +1,4 @@
+import type { CalibrationSpec } from '../engine/sim/calibration.ts';
 import type { GameDefinition } from '../engine/sim/types.ts';
 import { definition as reference } from './0000-reference/definition.ts';
 
@@ -8,6 +9,8 @@ import { definition as reference } from './0000-reference/definition.ts';
 export interface GameEntry {
   definition: GameDefinition;
   hidden?: boolean;
+  /** Only when the owner asks: how to compare against real matches (see tools/calibrate.ts, ADR 0004). */
+  calibration?: CalibrationSpec;
 }
 
 export const GAMES: GameEntry[] = [{ definition: reference, hidden: false }];
