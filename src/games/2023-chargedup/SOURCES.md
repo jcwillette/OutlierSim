@@ -56,9 +56,14 @@ This is an unofficial simulation for team practice. **Confidence**: high (stated
   - Only robots whose intake reaches the 0.95 m shelf (elevator, arm) can use it.
   - The single substation drops a cube onto the floor if the robot can hold one, else a cone. A cone dropped down the chute lands on its side, which floor intakes handle far better with cubes.
   - Each station has its own supply count.
-- **Rules not modeled**: G403's multi-piece control (robots hold 1), G404 launch zone, G209 endgame Charge Station protection, pins, G405 descoring, the 3 s post-period grading grace, auto points restoration after descoring, CHARGE STATION/LINK light states.
+- **Rules not modeled**: G403's multi-piece control (robots hold 1), G404 launch zone, G209's penalty (opponents touched become DOCKED/ENGAGED), G405 descoring, the 3 s post-period grading grace, auto points restoration after descoring, CHARGE STATION/LINK light states.
 - **G207 right of way** (modeled, `rules.ts`): a robot whose center is in the opponent's LOADING ZONE or COMMUNITY and that touches an opponent robot (centers within 0.95 m) draws a FOUL, once per pair per 3 s. Bots treat those zones as protected (`botHints.protectedZones`): they don't chase loose pieces there, don't defend there, and path around them when that isn't much longer. A few incidental fouls per match remain.
-- **Defense**: no dedicated defenders (`defenseShare: 0`). Any empty-handed bot may briefly (≤ 4 s) block a nearby opponent carrying a piece home when that costs the opponent more than the bot would score in the time. Low-scoring robots (kitbot) do this most.
+- **G202 pinning** (modeled, `rules.ts`): driving into an opponent that is trying to move but can't (centers within 0.95 m, opponent slower than 0.25 m/s while commanding a move) for 5 s straight is a FOUL, then a TECH FOUL every further 5 s. The count resets once they separate.
+- **Defense**: no dedicated defenders by default (`defenseShare: 0`). The Defender archetype, or any slot set to Defend, marks the opponent carrying the most. Any empty-handed bot may briefly (≤ 4 s) block a nearby opponent carrying a piece home when that costs the opponent more than the bot would score in the time; low-scoring robots (kitbot) do this most. Defense is clean by design:
+  - It never targets an opposing defender (blocking a blocker scores nothing). A Defender with no worthwhile target scores instead.
+  - It drops an opponent that comes within 0.6 m of its community or loading zone, and never waits inside them (G207).
+  - It breaks off after 3 s pressed against a stopped opponent and leaves that robot alone for 4 s (G202's 5-count, 3 s before re-pinning).
+  - In the endgame it leaves robots on or near their Charge Station alone (G209, `botHints.endgameProtectedZones`). In 2023 the station is inside the community anyway.
 - **Pieces**: cones are rigid; physics treats a cone as a cylinder of 80% base radius. Tipped cones can be intaken in any orientation.
 
 ## Archetype rationale
@@ -111,7 +116,7 @@ Head-to-head against a _Typical_ alliance (16 matches each, normal, breakdowns o
 | Activation first | 110        | 157                 | 0%        | 50%                 | 81%             | 96         |
 | Rookie alliance  | 67         | 154                 | 0%        | 0%                  | 6%              | 92         |
 
-Shutdown's defender takes about 10 teleop points off the opponent and draws about four G207 fouls a match from opponents who bump it inside blue's loading zone. Fouls forced by the defender driving into an opponent aren't called (G201).
+One defender is worth about 3 teleop points against a typical alliance. That's measured with the same Shutdown lineup and the Defender defending vs scoring, over 40 matches: −3.1 points of red teleop. The 16-match table above is too noisy to show it. Defending adds about 0.3 fouls per match by the defending alliance, mostly incidental traffic while the Defender is loading or docking. Over 24 Shutdown matches, only one foul happened while a robot was actually defending. Opponents still draw some G207 fouls bumping into blue robots inside blue's own zones. Fouls forced by the defender driving into an opponent aren't called (G201).
 
 ## Plausibility (blind, manual-derived)
 

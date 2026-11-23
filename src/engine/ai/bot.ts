@@ -9,7 +9,7 @@ import {
   type RobotCommand,
   type RobotController,
 } from '../sim/match.ts';
-import { clamp, pointInRegion, regionCenter, wrapAngle } from '../sim/math.ts';
+import { clamp, pointInRegion, regionCenter, regionOutline, wrapAngle } from '../sim/math.ts';
 import type { Alliance, AllianceStrategy, Region2D, RobotRole, Vec2 } from '../sim/types.ts';
 import { NavGrid, type DynamicObstacle } from './navgrid.ts';
 
@@ -165,8 +165,10 @@ export class BotBrain implements RobotController {
   /** Target / station ids this bot recently got stuck going to, until a match time. */
   private readonly spotBlacklist = new Map<string, number>();
   private readonly refillCache = new Map<string, number>();
-  /** Opponent id -> match time before which this bot won't harass it again. */
+  /** Opponent id -> match time before which this bot won't defend it again. */
   private readonly harassCooldown = new Map<number, number>();
+  /** Seconds pressed against a stopped opponent (pin count). */
+  private pinTime = 0;
   readonly role: RobotRole;
   readonly strategy: AllianceStrategy;
   /** Match time until which this bot has tunnel vision (ignores teammates). */
@@ -282,7 +284,8 @@ export class BotBrain implements RobotController {
       }
       case 'defend': {
         const o = m.robots[p.opponentId]!;
-        if (o.endgameDone || !this.defensePointOk(m, r, o, blockPoint(m, o))) return false;
+        if ((this.harassCooldown.get(o.id) ?? 0) > m.time) return false; // broke off (pin count)
+        if (!this.worthDefending(m, r, o)) return false;
         if (p.until !== undefined && (m.time > p.until || o.held.length === 0)) {
           this.harassCooldown.set(o.id, m.time + 6);
           return false;
@@ -655,10 +658,8 @@ export class BotBrain implements RobotController {
 
   private defenseOption(m: Match, r: Robot): Option | null {
     if (this.role !== 'defense' || m.phase !== 'teleop') return null;
-    const opps = m.robots.filter(
-      (o) => o.alliance !== r.alliance && !o.endgameDone && this.defensePointOk(m, r, o, blockPoint(m, o)),
-    );
-    if (!opps.length) return null;
+    const opps = m.robots.filter((o) => this.worthDefending(m, r, o));
+    if (!opps.length) return null; // nobody worth marking (all defending, broken, protected): score instead
     // Mark the opponent carrying the most pieces, nearest first.
     opps.sort(
       (a, b) =>
@@ -714,12 +715,10 @@ export class BotBrain implements RobotController {
     if (weight <= 0 || m.phase !== 'teleop' || r.held.length > 0 || this.role === 'defense') return null;
     let best: Option | null = null;
     for (const o of m.robots) {
-      if (o.alliance === r.alliance || o.endgameDone || o.action || o.held.length === 0) continue;
-      if ((this.harassCooldown.get(o.id) ?? 0) > m.time) continue;
+      if (o.action || o.held.length === 0 || !this.worthDefending(m, r, o)) continue;
       const d = Math.hypot(o.x - r.x, o.y - r.y);
       if (d > 3.5) continue;
       const point = blockPoint(m, o);
-      if (!this.defensePointOk(m, r, o, point)) continue;
       // Only worth it if they're actually heading home with it.
       const home = { x: o.alliance === 'blue' ? 0 : m.def.field.length, y: o.y };
       if ((home.x - o.x) * o.vx < 0) continue;
@@ -737,13 +736,36 @@ export class BotBrain implements RobotController {
     return best;
   }
 
-  /** Neither the opponent nor the spot we'd block from is in that opponent's protected zones. */
-  private defensePointOk(m: Match, r: Robot, o: Robot, point: Vec2): boolean {
+  /**
+   * Clean defense: whether `o` is a fair, useful target right now. Not a defender itself (blocking a
+   * blocker scores nothing), not done/broken, not in the pin cool-down, and far enough from its
+   * protected zones that contact can't happen inside them (G207-style), including endgame-only zones
+   * (G209-style). Our own spot must be clear of those zones too.
+   */
+  private worthDefending(m: Match, r: Robot, o: Robot): boolean {
+    if (o.alliance === r.alliance || o.endgameDone || o.brokenDown) return false;
+    if (isDefending(o)) return false;
+    if ((this.harassCooldown.get(o.id) ?? 0) > m.time) return false;
+    const point = blockPoint(m, o);
+    const endgame = m.isEndgame;
     return (
-      !inProtectedZone(m, o, o.alliance) &&
-      !inProtectedZone(m, point, o.alliance) &&
-      !inProtectedZone(m, r, o.alliance)
+      !nearProtectedZone(m, o, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
+      !nearProtectedZone(m, point, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
+      !nearProtectedZone(m, r, o.alliance, 0, endgame)
     );
+  }
+
+  /**
+   * Pin 5-count (G202-style): pressed against a stopped opponent for PIN_BREAK_SEC, back off and
+   * leave that robot alone for PIN_COOLDOWN_SEC.
+   */
+  private watchPin(m: Match, r: Robot, o: Robot, dt: number): boolean {
+    const touching = Math.hypot(o.x - r.x, o.y - r.y) < halfSize(o) + halfSize(r) + 0.1;
+    this.pinTime = touching && o.speed < 0.25 ? this.pinTime + dt : Math.max(0, this.pinTime - dt * 2);
+    if (this.pinTime < PIN_BREAK_SEC) return false;
+    this.pinTime = 0;
+    this.harassCooldown.set(o.id, m.time + PIN_COOLDOWN_SEC);
+    return true;
   }
 
   // ---------------------------------------------------------------- execution
@@ -934,6 +956,17 @@ export class BotBrain implements RobotController {
       }
       case 'defend': {
         const o = m.robots[p.opponentId]!;
+        if (this.watchPin(m, r, o, dt)) {
+          // Release the pin: back straight away from them, then re-plan.
+          const d = Math.hypot(r.x - o.x, r.y - o.y) || 1;
+          this.detour = gridFor(m, r).nearestFree({
+            x: r.x + ((r.x - o.x) / d) * 1.5,
+            y: r.y + ((r.y - o.y) / d) * 1.5,
+          });
+          this.plan = { kind: 'idle' };
+          this.setIntent(m, r, this.plan);
+          return cmd;
+        }
         const s = this.steer(m, r, blockPoint(m, o), Math.hypot(o.x - r.x, o.y - r.y) < 3);
         return { ...cmd, vx: s.vx, vy: s.vy, omega: this.faceCmd(r, Math.atan2(o.y - r.y, o.x - r.x)) };
       }
@@ -969,6 +1002,13 @@ function samePlan(a: Plan, b: Plan): boolean {
   }
 }
 
+/** Defenders keep this far (m) from an opponent's protected zones, so contact can't happen inside. */
+const DEFENSE_ZONE_MARGIN = 0.6;
+/** Break off after this long pressed against a stopped opponent (manual pin counts are 5 s). */
+const PIN_BREAK_SEC = 3;
+/** ...and leave that robot alone this long (manuals require 3 s before re-pinning). */
+const PIN_COOLDOWN_SEC = 4;
+
 /** Bots drive no faster than this (m/s) on ramps and platforms. */
 const RAMP_SPEED = 1.5;
 
@@ -998,11 +1038,43 @@ function blockPoint(m: Match, o: Robot): Vec2 {
 
 /** `p` is inside one of `alliance`'s protected zones (`botHints.protectedZones`). */
 function inProtectedZone(m: Match, p: Vec2, alliance: Alliance): boolean {
-  const ids = m.def.botHints?.protectedZones;
-  if (!ids?.length) return false;
+  return nearProtectedZone(m, p, alliance, 0, false);
+}
+
+/**
+ * `p` is inside, or within `margin` m of, one of `alliance`'s protected zones (plus its
+ * endgame-only protected zones when `endgame`).
+ */
+function nearProtectedZone(m: Match, p: Vec2, alliance: Alliance, margin: number, endgame: boolean): boolean {
+  const hints = m.def.botHints;
+  const ids = [...(hints?.protectedZones ?? []), ...(endgame ? (hints?.endgameProtectedZones ?? []) : [])];
+  if (!ids.length) return false;
   return m.game.zones.some(
-    (z) => z.alliance === alliance && ids.includes(z.baseId) && pointInRegion(p, z.region),
+    (z) =>
+      (z.alliance === alliance || z.alliance === null) &&
+      ids.includes(z.baseId) &&
+      (pointInRegion(p, z.region) || (margin > 0 && distToRegion(p, z.region) < margin)),
   );
+}
+
+function distToRegion(p: Vec2, region: Region2D): number {
+  const pts = regionOutline(region);
+  let best = Infinity;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j]!;
+    const b = pts[i]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1e-9)));
+    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+  }
+  return best;
+}
+
+/** A bot that is defending (role or current plan): not worth defending against. */
+function isDefending(o: Robot): boolean {
+  const b = o.controller instanceof BotBrain ? o.controller : null;
+  return !!b && (b.role === 'defense' || b.currentPlan.kind === 'defend');
 }
 
 /** The opponent's protected zones, as a path penalty for `alliance`'s robots. */

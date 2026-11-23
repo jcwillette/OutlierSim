@@ -216,6 +216,44 @@ describe('2023 Charged Up: rules', () => {
     expect(g207(true)).toEqual([]);
   });
 
+  it('G202: pinning a robot that is trying to move is a FOUL at 5 s, then a TECH FOUL every 5 s', () => {
+    const pin = (victimTrying: boolean, seconds: number) => {
+      const fouls: string[] = [];
+      const ctx = {
+        vars: {} as Record<string, unknown>,
+        time: 50,
+        phase: 'teleop',
+        robots: () =>
+          [
+            // blue pushes (+x) into red, which is stuck mid-field (no protected zone involved)
+            { id: 0, alliance: 'blue', x: 8.0, y: 2.0, endgameAction: null, vx: 0, vy: 0, cmdX: 1, cmdY: 0 },
+            {
+              id: 3,
+              alliance: 'red',
+              x: 8.85,
+              y: 2.0,
+              endgameAction: null,
+              vx: 0,
+              vy: 0,
+              cmdX: 0,
+              cmdY: victimTrying ? 1 : 0,
+            },
+          ] as RobotInfo[],
+        targetCount: () => 0,
+        setTargetEnabled: () => {},
+        setIndicator: () => {},
+        announce: () => {},
+        foul: (against: string, severity: string) => fouls.push(`${against}:${severity}`),
+      } as unknown as RulesContext;
+      for (let t = 0; t < seconds; t += 1 / 60) rules.onTick!(ctx, 1 / 60);
+      return fouls;
+    };
+    expect(pin(true, 4.5)).toEqual([]);
+    expect(pin(true, 5.5)).toEqual(['blue:minor']);
+    expect(pin(true, 10.5)).toEqual(['blue:minor', 'blue:major']);
+    expect(pin(false, 10.5)).toEqual([]); // red wasn't trying to move: not a pin
+  });
+
   it('only one auto Charge Station robot counts per alliance', () => {
     const { ctx, added } = fakeCtx(
       [

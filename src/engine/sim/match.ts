@@ -1275,6 +1275,8 @@ export class Match {
       endgameAction: r.endgameDone?.actionId ?? null,
       vx: r.vx,
       vy: r.vy,
+      cmdX: r.command.vx,
+      cmdY: r.command.vy,
     };
   }
 

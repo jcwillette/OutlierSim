@@ -131,6 +131,73 @@ describe('bot teamwork and defense on 2023 Charged Up', () => {
   });
 });
 
+describe('clean defense on 2023 Charged Up', () => {
+  const cu = findGame('2023-chargedup')!;
+  type Brainish = {
+    defenseOption: (m: Match, r: unknown) => { plan: { kind: string; opponentId?: number } } | null;
+    worthDefending: (m: Match, r: unknown, o: unknown) => boolean;
+  };
+  const setup = (redRoles: Record<number, 'score' | 'defense'>, def = cu) => {
+    const m = new Match(def, {
+      seed: 2,
+      archetypes: { 0: 'defender', 3: 'defender', 4: 'elevator', 5: 'arm' },
+    });
+    const bots = attachBots(m, {
+      partners: 'normal',
+      opponents: 'normal',
+      playerId: null,
+      roles: { 0: 'defense', ...redRoles },
+    });
+    m.start();
+    while (m.phase !== 'teleop') m.step();
+    // Park everyone mid-field, clear of protected zones.
+    m.robots.forEach((r, i) => {
+      r.body.setTranslation(
+        { x: 7 + (i % 3), y: 3 + Math.floor(i / 3) * 2, z: r.archetype.frame.height / 2 + 0.01 },
+        true,
+      );
+      r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    });
+    return { m, me: m.robots[0]!, brain: bots.get(0)! as unknown as Brainish };
+  };
+  it('never marks an opposing defender', () => {
+    const { m, me, brain } = setup({});
+    const opt = brain.defenseOption(m, me);
+    expect(opt?.plan.kind).toBe('defend');
+    expect(opt!.plan.opponentId).not.toBe(3); // red 1 is a defender
+  });
+  it('goes back to scoring when every opponent is a defender', () => {
+    const { m, me, brain } = setup({ 4: 'defense', 5: 'defense' });
+    expect(brain.defenseOption(m, me)).toBeNull();
+  });
+  it('leaves robots near their Charge Station alone in the endgame (endgameProtectedZones)', () => {
+    // In 2023 the station is inside the always-protected community; switch that off to isolate
+    // the endgame-only protection (G209), which matters in games where the climb is elsewhere.
+    const endgameOnly = { ...cu, botHints: { ...cu.botHints, protectedZones: [] } };
+    const { m, me, brain } = setup({}, endgameOnly);
+    const o = m.robots[4]!;
+    o.body.setTranslation(
+      { x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 },
+      true,
+    );
+    me.body.setTranslation(
+      { x: cu.field.length - 6.2, y: 2.745, z: me.archetype.frame.height / 2 + 0.01 },
+      true,
+    );
+    expect(brain.worthDefending(m, me, o)).toBe(true); // not endgame yet
+    while (!m.isEndgame) m.step();
+    o.body.setTranslation(
+      { x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 },
+      true,
+    );
+    me.body.setTranslation(
+      { x: cu.field.length - 6.2, y: 2.745, z: me.archetype.frame.height / 2 + 0.01 },
+      true,
+    );
+    expect(brain.worthDefending(m, me, o)).toBe(false);
+  });
+});
+
 describe('bot AI on the reference game', () => {
   it('plays a full 3v3 match: both alliances score in auto, teleop and endgame', () => {
     const m = new Match(ref, { seed: 7 });

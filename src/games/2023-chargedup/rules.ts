@@ -21,6 +21,8 @@ import {
  *  - G207 right of way: a robot in its opponent's LOADING ZONE or COMMUNITY that touches an
  *    opponent robot draws a FOUL, whoever started the contact (Manual 7.2), except when the
  *    opponent clearly drove into it (G201: violations forced by the opponent aren't penalized).
+ *  - G202 pinning: 5 s of driving into an opponent that can't move is a FOUL, then a TECH FOUL every
+ *    further 5 s.
  */
 
 /** Centers closer than this count as robots touching (two ~0.84 m frames side by side). */
@@ -31,6 +33,45 @@ const PROTECTED = {
   blue: [forAlliance(COMMUNITY, 'blue'), forAlliance(LOADING_ZONE, 'blue')],
   red: [forAlliance(COMMUNITY, 'red'), forAlliance(LOADING_ZONE, 'red')],
 } as const;
+
+/** G202: a pin longer than this is a FOUL, plus a TECH FOUL for each further period. */
+const PIN_COUNT_SEC = 5;
+
+/**
+ * G202 pinning: a robot that keeps driving into an opponent that is trying to move but can't (it's
+ * pinned against something) for 5 s draws a FOUL, then a TECH FOUL every further 5 s. The count
+ * resets once they separate.
+ */
+function checkG202(ctx: RulesContext, dt: number): void {
+  if (ctx.phase !== 'teleop' && ctx.phase !== 'auto') return;
+  const pins = (ctx.vars.pins ??= {}) as Record<string, { t: number; called: number }>;
+  const robots = ctx.robots();
+  for (const a of robots) {
+    for (const v of robots) {
+      if (a.alliance === v.alliance) continue;
+      const key = `${a.id}>${v.id}`;
+      const dx = v.x - a.x;
+      const dy = v.y - a.y;
+      const d = Math.hypot(dx, dy);
+      const victimStuck =
+        Math.hypot(v.vx, v.vy) < 0.25 && Math.hypot(v.cmdX, v.cmdY) > 0.3 && !v.endgameAction;
+      const pushing = d > 1e-3 && (a.cmdX * dx + a.cmdY * dy) / d > 0.3;
+      if (d < CONTACT_DIST && victimStuck && pushing) {
+        const p = (pins[key] ??= { t: 0, called: 0 });
+        p.t += dt;
+        const periods = Math.floor(p.t / PIN_COUNT_SEC);
+        if (periods > p.called) {
+          p.called = periods;
+          ctx.foul(
+            a.alliance,
+            periods === 1 ? 'minor' : 'major',
+            `G202 pinning for ${periods * PIN_COUNT_SEC} s`,
+          );
+        }
+      } else if (d > CONTACT_DIST + 0.3) delete pins[key];
+    }
+  }
+}
 
 function checkG207(ctx: RulesContext): void {
   if (ctx.phase !== 'auto' && ctx.phase !== 'teleop') return;
@@ -73,8 +114,9 @@ export const rules: GameRules = {
     for (const a of ALLIANCES) ctx.setTargetEnabled(`supercharge.${a}`, false);
   },
 
-  onTick(ctx) {
+  onTick(ctx, dt) {
     checkG207(ctx);
+    checkG202(ctx, dt);
     // When each robot finished its endgame action (to know who got on the Charge Station last).
     const doneAt = (ctx.vars.doneAt ??= {}) as Record<number, number>;
     for (const r of ctx.robots()) {

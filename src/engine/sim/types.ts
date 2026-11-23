@@ -435,6 +435,12 @@ export interface RobotInfo {
   /** Field velocity, m/s (who drove into whom, for contact rules). */
   vx: number;
   vy: number;
+  /**
+   * Where the driver (or bot) is trying to go: the commanded field-relative drive, -1..1 per axis.
+   * With velocity it tells a pinned robot (wants to move, can't) from one that is parked.
+   */
+  cmdX: number;
+  cmdY: number;
 }
 
 export interface RulesContext {
@@ -494,6 +500,11 @@ export interface BotHints {
    * and bots don't go after loose pieces lying in the opponent's protected zones.
    */
   protectedZones?: string[];
+  /**
+   * Zone base ids where an alliance's robots are protected only during the endgame (e.g. a
+   * charge station or climbing area): defenders leave opponents near them alone then.
+   */
+  endgameProtectedZones?: string[];
 }
 
 // ---------------------------------------------------------------- the definition
