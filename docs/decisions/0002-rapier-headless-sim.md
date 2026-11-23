@@ -11,7 +11,7 @@ We need real collisions between robots, game pieces and field elements, because 
 
 - Use `@dimforge/rapier3d-compat` (WASM, deterministic, runs in browser and Node).
 - `src/engine/sim` and `src/engine/ai` never import Three.js, the DOM, UI or input. ESLint enforces this. The renderer only reads sim state.
-- Fixed 60 Hz timestep. Sim coordinates are WPILib field coordinates (meters, Z-up, origin at the blue alliance wall corner). Only the renderer converts to Three.js's Y-up.
+- Fixed 60 Hz timestep. Sim coordinates are WPILib field coordinates (meters, Z-up, origin at the blue alliance wall corner). The Three.js scene uses the same Z-up frame (camera `up = +Z`) rather than converting to Y-up. This was amended during M3 because it removes a whole class of axis bugs.
 
 ## Consequences
 
