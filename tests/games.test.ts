@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { attachBots } from '../src/engine/ai/index.ts';
 import { IDLE, Match, initPhysics, validateDefinition } from '../src/engine/sim/index.ts';
 import { GAMES } from '../src/games/index.ts';
 
@@ -26,6 +27,14 @@ describe.each(GAMES.map((g) => [g.definition.id, g.definition] as const))('game 
     // nothing should fall through the floor
     for (const p of m.pieces) if (p.status === 'field') expect(p.position.z).toBeGreaterThan(-0.1);
   });
+  it('bots can score points in a full match (catches unreachable targets / broken definitions)', () => {
+    const m = new Match(def, { seed: 11 });
+    attachBots(m, { partners: 'normal', opponents: 'normal', playerId: null });
+    const res = m.runToEnd();
+    expect(res.blue.score + res.red.score).toBeGreaterThan(0);
+    expect(res.blue.breakdown.teleop + res.red.breakdown.teleop).toBeGreaterThan(0);
+  });
+
   it('every robot archetype can be instantiated', () => {
     for (const a of def.archetypes) {
       const m = new Match(def, { archetypes: { 0: a.id } });

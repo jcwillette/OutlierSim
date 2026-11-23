@@ -16,6 +16,8 @@ npm test                             # all Vitest tests (unit + headless matches
 npx vitest run tests/smoke.test.ts   # single file
 npx vitest run -t "loads Rapier"     # single test by name
 npm run build                        # typecheck + production build to dist/
+npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archetypes a,b,c] [--json out.json]
+                                     # headless bot-vs-bot matches (~2.5 s each) -> score/RP/piece stats
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, format check, typecheck, test and build on every PR. `pages.yml` deploys `dist/` on push to `main`, with `VITE_BASE=/<repo>/`.
@@ -27,7 +29,13 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
 - `src/engine/sim/`: the headless, deterministic core.
   - Rapier physics at a fixed 60 Hz step, match clock and phases, scoring sensors, and a score ledger with a TBA-style breakdown.
   - **Must never import Three.js, the DOM, `ui/`, `input/` or `render/`.** ESLint `no-restricted-imports` enforces this for `sim/`, `ai/` and `games/`. That rule is what lets full matches run in Node for tests and calibration.
-- `src/engine/ai/`: the generic bot brain for the 5 non-player robots (cycle planner, endgame timing, defense, nav). It is also headless.
+- `src/engine/ai/`: the generic bot AI. It is headless and drives robots only through `RobotCommand`, the same as the player, so it never cheats.
+  - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m.
+  - `BotBrain` is a utility planner. Each option is scored as points per second over the whole cycle (fetch, travel to score, action time), with hysteresis.
+  - It picks shot spots precomputed with `solveShot`, uses approach headings so intakes can reach pieces, makes time-boxed endgame decisions, and plays defense when `botHints.defenseShare` > 0.
+  - Teammates coordinate through soft claims.
+  - `attachBots()` wires up a match. Difficulty (`SKILL`) only changes speed, think rate, utility noise and dwell.
+  - If bots can't score in a new game, the definition is usually wrong (unreachable zones, impossible shots). `tests/games.test.ts` checks for this.
 - `src/engine/render/`, `src/engine/input/`, `src/ui/`: browser-only.
   - `FieldView` builds the Three.js scene from the `ExpandedGame` and copies sim state into it each frame (`sync`). It never mutates the match.
   - `CameraRig` has the driver-station, chase and overhead views. It also supplies `driveYaw`, which makes `PlayerController` field-oriented from the active view.

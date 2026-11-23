@@ -5,6 +5,13 @@ import { InputManager, KEY_HELP, PAD_HELP, PlayerController } from '../engine/in
 import { Match, initPhysics, type MatchResult, type Robot } from '../engine/sim/match.ts';
 import type { Alliance, GameDefinition } from '../engine/sim/types.ts';
 import { GAMES } from '../games/index.ts';
+import { BotBrain, attachBots, type Difficulty } from '../engine/ai/bot.ts';
+
+const DIFFICULTIES: ReadonlyArray<readonly [Difficulty, string]> = [
+  ['easy', 'Easy'],
+  ['normal', 'Normal'],
+  ['hard', 'Hard'],
+];
 
 // ------------------------------------------------------------------ tiny DOM helper
 
@@ -39,6 +46,12 @@ export interface Setup {
   station: number;
   archetype: string;
   autoIntake: boolean;
+  partners: Difficulty;
+  opponents: Difficulty;
+  /** Your robot runs the bot AI during autonomous (like a programmed auto routine). */
+  autoPilot: boolean;
+  /** Other robots: all the game's default archetype, or a mix of every archetype. */
+  botRobots: 'default' | 'mixed';
 }
 
 const STORE_KEY = 'outliersim.setup.v1';
@@ -57,12 +70,6 @@ function saveSetup(s: Setup): void {
   }
 }
 
-/** Hook for the bot AI (M4). Returns a controller for a non-player robot, or null to leave it idle. */
-export type BotFactory = (
-  match: Match,
-  robot: Robot,
-) => import('../engine/sim/match.ts').RobotController | null;
-
 // ------------------------------------------------------------------ app
 
 export class App {
@@ -73,7 +80,6 @@ export class App {
   private session: Session | null = null;
   private setup: Setup;
   private readonly dev = new URLSearchParams(location.search).has('dev');
-  botFactory: BotFactory = () => null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -97,6 +103,10 @@ export class App {
         ? saved.archetype!
         : def.defaultArchetype,
       autoIntake: saved.autoIntake ?? true,
+      partners: saved.partners ?? 'normal',
+      opponents: saved.opponents ?? 'normal',
+      autoPilot: saved.autoPilot ?? true,
+      botRobots: saved.botRobots ?? 'mixed',
     };
 
     this.input.on((e) => this.session?.onButton(e));
@@ -212,6 +222,33 @@ export class App {
         }),
         'Auto-intake (intake runs whenever you have room)',
       ),
+      h(
+        'label',
+        { class: 'check' },
+        h('input', {
+          type: 'checkbox',
+          checked: this.setup.autoPilot,
+          onchange: (e: Event) =>
+            (this.setup = { ...this.setup, autoPilot: (e.target as HTMLInputElement).checked }),
+        }),
+        'Run an auto routine for me in autonomous (uncheck to drive auto yourself)',
+      ),
+      h('h2', {}, 'Other robots'),
+      h(
+        'div',
+        { class: 'row' },
+        this.selectField('Partners', this.setup.partners, DIFFICULTIES, (v) => (this.setup.partners = v)),
+        this.selectField('Opponents', this.setup.opponents, DIFFICULTIES, (v) => (this.setup.opponents = v)),
+        this.selectField(
+          'Robot types',
+          this.setup.botRobots,
+          [
+            ['mixed', 'Mixed'],
+            ['default', 'All default'],
+          ],
+          (v) => (this.setup.botRobots = v),
+        ),
+      ),
       h('h2', {}, 'Controls'),
       h(
         'div',
@@ -233,6 +270,24 @@ export class App {
     );
     this.setOverlay(h('div', { class: 'overlay' }, card));
     (card.querySelector('button.primary') as HTMLButtonElement | null)?.focus({ preventScroll: true });
+  }
+
+  private selectField<T extends string>(
+    label: string,
+    value: T,
+    options: ReadonlyArray<readonly [T, string]>,
+    onChange: (v: T) => void,
+  ): HTMLElement {
+    return h(
+      'label',
+      { class: 'field' },
+      h('span', {}, label),
+      h(
+        'select',
+        { onchange: (e: Event) => onChange((e.target as HTMLSelectElement).value as T) },
+        ...options.map(([v, text]) => h('option', { value: v, selected: v === value }, text)),
+      ),
+    );
   }
 
   async start(): Promise<void> {
@@ -343,17 +398,26 @@ class Session {
     private readonly renderer: THREE.WebGLRenderer,
   ) {
     const playerId = (setup.alliance === 'blue' ? 0 : 3) + setup.station;
-    this.match = new Match(def, {
-      seed: (Math.random() * 2 ** 31) | 0,
-      archetypes: { [playerId]: setup.archetype },
-    });
+    const archetypes: Record<number, string> = { [playerId]: setup.archetype };
+    if (setup.botRobots === 'mixed') {
+      // Deal out every archetype so each alliance sees a variety of robots.
+      let k = Math.floor(Math.random() * def.archetypes.length);
+      for (let id = 0; id < 6; id++)
+        if (id !== playerId) archetypes[id] = def.archetypes[k++ % def.archetypes.length]!.id;
+    }
+    this.match = new Match(def, { seed: (Math.random() * 2 ** 31) | 0, archetypes });
     this.player = this.match.robots[playerId]!;
     this.view = new FieldView(this.match.game, playerId);
     this.rig = new CameraRig(this.match, setup.alliance, setup.station);
     this.controller = new PlayerController(input, () => this.rig.driveYaw);
-    this.player.controller = this.controller;
-    for (const r of this.match.robots) if (r !== this.player) r.controller = app.botFactory(this.match, r);
-    this.hud = new Hud(this.match, this.player);
+    attachBots(this.match, { partners: setup.partners, opponents: setup.opponents, playerId });
+    const autoBrain = new BotBrain({ difficulty: 'hard' });
+    const manual = this.controller;
+    // During auto the player's robot optionally runs the bot AI as its "auto routine".
+    this.player.controller = setup.autoPilot
+      ? { command: (m, r, dt) => (m.phase === 'auto' ? autoBrain : manual).command(m, r, dt) }
+      : manual;
+    this.hud = new Hud(this.match, this.player, setup.autoPilot);
     app.setOverlay(this.hud.root);
   }
 
@@ -415,6 +479,7 @@ class Hud {
   constructor(
     private readonly match: Match,
     private readonly player: Robot,
+    private readonly autoPilot: boolean,
   ) {
     this.root = h(
       'div',
@@ -527,6 +592,7 @@ class Hud {
     if (m.phase === 'pre') return 'Get ready…';
     if (m.phase === 'transition') return 'Robots disabled: teleop starts soon';
     if (m.phase === 'post') return 'Match over';
+    if (m.phase === 'auto' && this.autoPilot) return '<b>Auto routine running.</b> You take over in teleop.';
     if (r.endgameDone) {
       const a = m.game.endgame.find((e) => e.id === r.endgameDone!.actionId);
       return `<b>${a?.name ?? 'Endgame'}</b> complete. Robot locked.`;
