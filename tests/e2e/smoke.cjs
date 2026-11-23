@@ -42,7 +42,12 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
       // Wait for the match to really start and the clock to tick. Software WebGL on CI runners can be
       // slow, so wait on state instead of fixed sleeps.
       await p.waitForFunction(
-        () => document.querySelector('.clock .phase')?.textContent !== 'pre-match',
+        // The HUD appears only once physics has loaded, so require it to exist (a missing element
+        // would otherwise satisfy "not pre-match" immediately).
+        () => {
+          const phase = document.querySelector('.clock .phase')?.textContent;
+          return !!phase && phase !== 'pre-match';
+        },
         null,
         {
           timeout: 60_000,
@@ -77,7 +82,12 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
       const label = await w.$eval('button.primary', (b) => b.textContent);
       await w.click('button.primary');
       await w.waitForFunction(
-        () => document.querySelector('.clock .phase')?.textContent !== 'pre-match',
+        // The HUD appears only once physics has loaded, so require it to exist (a missing element
+        // would otherwise satisfy "not pre-match" immediately).
+        () => {
+          const phase = document.querySelector('.clock .phase')?.textContent;
+          return !!phase && phase !== 'pre-match';
+        },
         null,
         { timeout: 60_000 },
       );
@@ -90,7 +100,7 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
       });
       const following = await w.$eval('.status .name', (e) => e.textContent);
       const players = await w.evaluate(() => {
-        const s = window.outlierSim.session;
+        const s = globalThis.outlierSim.session;
         return s.player === null && s.brains.size === 6 ? 0 : 1;
       });
       await w.screenshot({ path: path.join(OUT, `${id}-watch.png`) });
