@@ -102,7 +102,9 @@ export function sinkRampBase(verts: readonly Vec3[], baseZ: number): Vec3[] {
 
 export type RobotAction =
   | { kind: 'place'; targetId: string; pieceType: string; remaining: number; total: number }
-  | { kind: 'endgame'; actionId: string; zoneIndex: number; remaining: number; total: number };
+  | { kind: 'endgame'; actionId: string; zoneIndex: number; remaining: number; total: number }
+  /** Getting a piece that is already in reach into the robot (`intake.timeSec`); the robot stops. */
+  | { kind: 'intake'; pieceType: string; remaining: number; total: number };
 
 /** Breakdowns and mechanism failures a robot actually suffered (match times, null = didn't happen). */
 export interface RobotFaults {
@@ -126,6 +128,11 @@ export class Robot {
   endgameDone: { actionId: string; zoneIndex: number } | null = null;
   /** Seconds spent intaking at a station with a `handoffSec`. */
   stationDwell = 0;
+  /**
+   * Multiplies `RobotArchetype.alignSec` for this robot's drive team (`attachBots` sets it from the
+   * bot difficulty). Default 1.
+   */
+  alignScale = 1;
   /** `endgameDone` happened during auto; the robot is released when teleop starts. */
   endgameInAuto = false;
   command: RobotCommand = IDLE;
@@ -370,6 +377,11 @@ export interface MatchOptions {
   breakdowns?: boolean;
   /** Robot ids that never break down even with `breakdowns` on (e.g. the student's robot). */
   breakdownExempt?: number[];
+  /**
+   * Robot ids whose drive team doesn't pay `RobotArchetype.alignSec`: the student's robot, whose
+   * drive team is the student.
+   */
+  alignExempt?: number[];
 }
 
 export { DEFAULT_RELIABILITY } from './faults.ts';
@@ -479,10 +491,13 @@ export class Match {
   private accumulator = 0;
   private result: MatchResult | null = null;
   private nextPieceId = 0;
+  /** `MatchOptions.alignExempt`. */
+  private readonly alignExempt: ReadonlySet<number>;
 
   constructor(def: GameDefinition, opts: MatchOptions = {}) {
     assertValid(def);
     this.def = def;
+    this.alignExempt = new Set(opts.alignExempt ?? []);
     this.game = expandDefinition(def);
     this.random = makeRng(opts.seed ?? 1);
     this.world = new RAPIER.World({ x: 0, y: 0, z: -GRAVITY });
@@ -590,7 +605,7 @@ export class Match {
       } else if (r.mechFailAt !== null && r.faults.mechFailedAt === null && this.time >= r.mechFailAt) {
         r.mechDown = true;
         r.faults.mechFailedAt = this.time;
-        if (r.action?.kind === 'place') r.action = null;
+        if (r.action?.kind === 'place' || r.action?.kind === 'intake') r.action = null;
         this.announce(`${name} (${r.archetype.name}) mechanism failure: it can still drive`, r.alliance);
       }
       while (r.outages.length && r.outages[0]!.at <= this.time) {
@@ -934,7 +949,10 @@ export class Match {
 
   private continueAction(r: Robot, dt: number): void {
     const act = r.action!;
-    if (act.kind === 'place') {
+    if (act.kind === 'intake') {
+      act.remaining -= dt;
+      if (act.remaining <= 0) r.action = null;
+    } else if (act.kind === 'place') {
       const ts = this.targets.get(act.targetId)!;
       const place = ts.target.place!;
       if (!pointInRegion(r, place.zone)) {
@@ -1091,9 +1109,19 @@ export class Match {
     }
     if (best) {
       this.holdPiece(r, best);
-      r.intakeCooldown = intake.timeSec;
-      r.stats.intakes++;
+      this.startGrab(r, best.type.id);
     }
+  }
+
+  /**
+   * The piece is in the robot's hands: it stops for `intake.timeSec` to get it in (a timed action,
+   * like placing), and can't take another piece sooner.
+   */
+  private startGrab(r: Robot, pieceType: string): void {
+    const sec = (r.archetype.intake?.timeSec ?? 0) + this.alignSec(r);
+    r.intakeCooldown = sec;
+    r.stats.intakes++;
+    if (sec > 0) r.action = { kind: 'intake', pieceType, remaining: sec, total: sec };
   }
 
   /**
@@ -1162,8 +1190,7 @@ export class Match {
         }
         const p = this.spawnPiece(type, { x: r.x, y: r.y, z: 1 });
         this.holdPiece(r, p);
-        r.intakeCooldown = r.archetype.intake.timeSec;
-        r.stats.intakes++;
+        this.startGrab(r, type);
       } else {
         this.spawnPiece(type, st.dropPoint!, st.dropVelocity);
       }
@@ -1182,6 +1209,20 @@ export class Match {
     return true;
   }
 
+  /** Extra points the game's rules tell bots a piece in `targetId` is worth now (`GameRules.botValue`). */
+  botValue(alliance: Alliance, targetId: string): number {
+    return this.def.rules?.botValue?.(this.rulesCtx, alliance, targetId) ?? 0;
+  }
+
+  /**
+   * Seconds the robot's drive team adds to each pickup and placement now (`RobotArchetype.alignSec`):
+   * teleop only, since auto routines are programmed, and not for `alignExempt` robots.
+   */
+  alignSec(r: Robot): number {
+    if (this.scoringPeriod !== 'teleop' || this.alignExempt.has(r.id)) return 0;
+    return (r.archetype.alignSec ?? 0) * r.alignScale;
+  }
+
   /** Place targets this robot can start placing on right now, best first. */
   placeOptions(r: Robot): Array<{ target: XTarget; time: number; pieceType: string }> {
     const out: Array<{ target: XTarget; time: number; pieceType: string }> = [];
@@ -1189,8 +1230,9 @@ export class Match {
     for (const ts of this.targets.values()) {
       const t = ts.target;
       if (!t.place || !this.canUseTarget(r, ts)) continue;
-      const time = r.placeTime(t);
-      if (time === null) continue;
+      const mech = r.placeTime(t);
+      if (mech === null) continue;
+      const time = mech + this.alignSec(r);
       const pieceType = r.held.find((h) => t.accepts.includes(h));
       if (!pieceType) continue;
       if (!pointInRegion(r, t.place.zone)) continue;

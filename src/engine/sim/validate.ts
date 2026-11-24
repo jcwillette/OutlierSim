@@ -260,6 +260,15 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
       if (typeof v !== 'number' || !(v >= 0 && v <= max))
         err(path, `faults.${k} must be between 0 and ${max}`);
     }
+    if (a.auto) {
+      const { pieces, success } = a.auto;
+      if (pieces !== undefined && !(Number.isInteger(pieces) && pieces >= 0))
+        err(path, 'auto.pieces must be a whole number, 0 or more');
+      if (success !== undefined && !(success >= 0 && success <= 1))
+        err(path, 'auto.success must be between 0 and 1');
+    }
+    if (a.intake && !(a.intake.timeSec >= 0)) err(path, 'intake.timeSec must be 0 or more');
+    if (a.alignSec !== undefined && !(a.alignSec >= 0)) err(path, 'alignSec must be 0 or more');
   });
   const archIds = new Set(def.archetypes.map((a) => a.id));
   unique(

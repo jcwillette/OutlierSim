@@ -1291,6 +1291,8 @@ class Session {
       archetypes,
       breakdowns: setup.breakdowns !== 'off',
       ...(setup.breakdowns === 'bots' && playerId !== null ? { breakdownExempt: [playerId] } : {}),
+      // The student is their robot's drive team: no typical team's line-up time.
+      ...(playerId !== null ? { alignExempt: [playerId] } : {}),
     });
     this.player = playerId === null ? null : this.match.robots[playerId]!;
     this.followId = playerId ?? 0;
@@ -1309,7 +1311,8 @@ class Session {
       const controller = new PlayerController(input, () => this.rig.driveYaw);
       controller.pieceType = this.match.choiceTypes(this.player)[0];
       this.controller = controller;
-      const autoBrain = new BotBrain({ difficulty: 'hard' });
+      // The player's auto routine always runs (`autoCanFail`), like its robot doesn't break down.
+      const autoBrain = new BotBrain({ difficulty: 'hard', autoCanFail: false });
       // During auto the player's robot optionally runs the bot AI as its "auto routine".
       this.player.controller = setup.autoPilot
         ? { command: (m, r, dt) => (m.phase === 'auto' ? autoBrain : controller).command(m, r, dt) }
@@ -1427,6 +1430,8 @@ export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): st
     const pct = Math.round((1 - act.remaining / act.total) * 100);
     if (act.kind === 'place')
       return `Placing on ${m.targets.get(act.targetId)?.target.name ?? 'target'}… ${pct}%`;
+    if (act.kind === 'intake')
+      return `Grabbing a ${(m.def.pieces.find((p) => p.id === act.pieceType)?.name ?? act.pieceType).toLowerCase()}… ${pct}%`;
     const a = m.game.endgame.find((e) => e.id === act.actionId);
     return `${a?.name ?? 'Endgame'}… ${pct}%`;
   }
@@ -1456,6 +1461,8 @@ function describePlan(m: Match, p: BotBrain['currentPlan']): string {
       return `Heading for ${m.game.endgame.find((e) => e.id === p.actionId)?.name ?? 'the endgame'}`;
     case 'park':
       return 'Parking for the endgame';
+    case 'leave':
+      return 'Driving out of the starting zone (auto routine)';
     case 'defend': {
       const o = m.robots[p.opponentId];
       return o ? `Defending ${robotName(o)}` : 'Playing defense';
@@ -1648,6 +1655,10 @@ class Hud {
       if (act.kind === 'place') {
         const t = m.targets.get(act.targetId)?.target;
         return `Placing on <b>${t?.name ?? ''}</b>… ${pct}%`;
+      }
+      if (act.kind === 'intake') {
+        const name = m.def.pieces.find((p) => p.id === act.pieceType)?.name ?? act.pieceType;
+        return `Grabbing the <b>${name.toLowerCase()}</b>… ${pct}%`;
       }
       const a = m.game.endgame.find((e) => e.id === act.actionId);
       return `${a?.name ?? 'Endgame'}… ${pct}%`;

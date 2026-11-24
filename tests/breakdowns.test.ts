@@ -11,6 +11,13 @@ beforeAll(async () => {
 const cu = findGame('2023-chargedup')!;
 const all = (id: string) => Object.fromEntries([0, 1, 2, 3, 4, 5].map((i) => [i, id]));
 
+/** The fault model at fixed reliability tiers, whatever 2023's calibrated robot types use. */
+const TIERS: Record<string, number> = { kitbot: 0.85, arm: 0.92, elevator: 0.97 };
+const tiered = {
+  ...cu,
+  archetypes: cu.archetypes.map((a) => ({ ...a, reliability: TIERS[a.id] ?? a.reliability })),
+};
+
 describe('breakdowns', () => {
   const rates = (archetype: string, n: number) => {
     let dead = 0;
@@ -19,7 +26,7 @@ describe('breakdowns', () => {
     let mechBack = 0;
     let stalls = 0;
     for (let seed = 1; seed <= n; seed++) {
-      const m = new Match(cu, { seed, archetypes: all(archetype), breakdowns: true });
+      const m = new Match(tiered, { seed, archetypes: all(archetype), breakdowns: true });
       for (const r of m.robots) {
         if (r.breakdownAt !== null) dead++;
         if (r.breakdownRecoverAt !== null) deadBack++;

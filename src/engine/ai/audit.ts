@@ -143,7 +143,11 @@ export function auditDefinition(def: GameDefinition): AuditIssue[] {
     const subject = `endgame ${a.baseId}`;
     const able = navs.filter((n) => n.arch.endgame?.[a.baseId] !== undefined);
     if (!able.length) {
-      warn(subject, 'no robot type can do it');
+      // An action that is only another one's `fallback` (a failed engage still docks) is fine.
+      const fallbackOf = game.endgame.filter(
+        (x) => x.fallback === a.baseId && navs.some((n) => n.arch.endgame?.[x.baseId] !== undefined),
+      );
+      if (!fallbackOf.length) warn(subject, 'no robot type can do it');
       continue;
     }
     const bad = able.filter(
