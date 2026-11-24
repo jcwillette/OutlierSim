@@ -75,8 +75,8 @@ const CS_DEPTH = (6 * 12 + 4.125) * IN; // 1.93
 const CS_WIDTH = (8 * 12 + 1.25) * IN; // 2.47
 const CS_TOP_DEPTH = 4 * 12 * IN; // 1.22
 const CS_TOP_WIDTH = 8 * 12 * IN; // 2.44
-/** Real top is 9 1/8 in (0.23 m); modeled 0.18 m so the bot nav grid treats it as drivable. */
-const CS_TOP_Z = 0.18;
+/** Top 9 1/8 in (0.23 m) above the carpet when level. `nav: 'ramp'` makes it drivable for the bots. */
+const CS_TOP_Z = 9.125 * IN;
 
 const DS_DEPTH = 14 * IN; // double substation protrudes 1 ft 2 in
 const DS_WIDTH = 8 * 12 * IN; // 2.44

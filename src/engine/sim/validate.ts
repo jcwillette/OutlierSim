@@ -68,6 +68,11 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
       err(path, "nav must be 'auto', 'wall', 'ramp' or 'none'");
     if (e.nav !== undefined && e.nav !== 'auto' && e.solid === false)
       warn(path, 'nav only applies to solid elements (bots ignore non-solid ones)');
+    if (e.nav === 'ramp' && e.shape.kind !== 'hull')
+      warn(
+        path,
+        "a 'ramp' with vertical sides is a step robots only get over with a run-up: use a hull with sloped sides",
+      );
   });
   def.field.zones.forEach((z, i) => checkRegion(`field.zones[${i}] ${z.id}`, z.region));
 

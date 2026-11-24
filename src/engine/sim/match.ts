@@ -65,6 +65,38 @@ export interface RobotController {
 /** A vector as Rapier's (x, y, z) arguments. */
 const xyz = (v: Vec3): [number, number, number] => [v.x, v.y, v.z];
 
+/** How far (m) a ramp's floor edges continue below the floor in physics. */
+const RAMP_SINK = 0.03;
+
+/**
+ * A ramp hull (`nav: 'ramp'`) for physics: each vertex on the floor moves down `RAMP_SINK` along the
+ * line from its nearest raised vertex, so the slope continues just below the floor. Robots are flat
+ * boxes that can't pitch; driving into a slope that stops exactly at floor level, their bottom edge
+ * hits the ramp's edge like a wall and they only get on with a run-up. With the slope continued,
+ * they meet the sloped face and drive up at any speed. Nothing above the floor changes.
+ * `verts` are offsets from the element's position (already rotated); `baseZ` is its height.
+ */
+export function sinkRampBase(verts: readonly Vec3[], baseZ: number): Vec3[] {
+  const onFloor = (v: Vec3) => baseZ + v.z <= 1e-6;
+  const raised = verts.filter((v) => !onFloor(v));
+  if (!raised.length) return [...verts];
+  return verts.map((v) => {
+    if (!onFloor(v)) return v;
+    let top = raised[0]!;
+    let best = Infinity;
+    for (const r of raised) {
+      const d = Math.hypot(r.x - v.x, r.y - v.y, r.z - v.z);
+      if (d < best) {
+        best = d;
+        top = r;
+      }
+    }
+    // Continue the line top -> v down to RAMP_SINK below the floor.
+    const k = (baseZ + v.z + RAMP_SINK) / (top.z - v.z);
+    return { x: v.x + (v.x - top.x) * k, y: v.y + (v.y - top.y) * k, z: v.z - (top.z - v.z) * k };
+  });
+}
+
 export type RobotAction =
   | { kind: 'place'; targetId: string; pieceType: string; remaining: number; total: number }
   | { kind: 'endgame'; actionId: string; zoneIndex: number; remaining: number; total: number };
@@ -616,12 +648,15 @@ export class Match {
             eulerToQuat({ roll: Math.PI / 2 }),
           );
           break;
-        case 'hull':
+        case 'hull': {
           // Vertices in physics axes (with the element's rotation applied), so the body isn't rotated.
+          const verts = e.shape.vertices.map((v) => rotateVec(q, v));
+          const shape = e.nav === 'ramp' ? sinkRampBase(verts, e.position.z) : verts;
           desc = RAPIER.ColliderDesc.convexHull(
-            new Float32Array(e.shape.vertices.flatMap((v) => xyz(this.physics.vector(rotateVec(q, v))))),
+            new Float32Array(shape.flatMap((v) => xyz(this.physics.vector(v)))),
           );
           break;
+        }
       }
       if (!desc) throw new Error(`Element '${e.id}' produced no collider (degenerate hull?)`);
       desc.setFriction(e.friction ?? 0.5).setRestitution(e.restitution ?? 0.2);

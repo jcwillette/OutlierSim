@@ -72,6 +72,21 @@ describe('2023 Charged Up: engine features it relies on', () => {
     expect(r.speed).toBeGreaterThan(0.5);
   });
 
+  it.each(definition.archetypes.map((a) => a.id))(
+    'a %s robot drives onto the Charge Station from a slow approach (no run-up needed)',
+    (id) => {
+      const m = new Match(definition, { archetypes: { 1: id } });
+      const r = m.robots[1]!; // blue station 2 starts in front of the Charge Station
+      // The bots' ramp speed (1.5 m/s), straight at the station until its center.
+      const v = Math.min(1, 1.5 / r.archetype.drive.maxSpeed);
+      r.controller = ctl((_mm, rr) => ({ vx: rr.x < 3.94 ? v : 0 }));
+      m.start();
+      stepFor(m, 4);
+      expect(r.x).toBeGreaterThan(3.8);
+      expect(r.z).toBeGreaterThan(r.archetype.frame.height / 2 + 0.2); // on the 0.23 m top
+    },
+  );
+
   it('shelf stations need a tall intake and take handoffSec to load', () => {
     const def = { ...definition, preload: {} };
     const m = new Match(def, { archetypes: { 0: 'elevator', 1: 'kitbot' } });

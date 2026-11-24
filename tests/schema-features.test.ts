@@ -6,6 +6,7 @@ import {
   Match,
   expandDefinition,
   initPhysics,
+  sinkRampBase,
   sourceBase,
   validateDefinition,
   type FieldElement,
@@ -110,6 +111,26 @@ describe('navigation hints on field elements', () => {
     expect(validateDefinition(def).some((i) => i.level === 'error' && i.message.startsWith('nav must'))).toBe(
       true,
     );
+  });
+});
+
+describe('ramps in physics', () => {
+  it("continue a 'ramp' hull's floor edges just below the floor, along the slope", () => {
+    // A 1 m wide ramp: floor edge at x = 0, top edge 0.2 m up at x = 0.4.
+    const verts = [
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 1, z: 0 },
+      { x: 0.4, y: 0, z: 0.2 },
+      { x: 0.4, y: 1, z: 0.2 },
+    ];
+    const out = sinkRampBase(verts, 0);
+    expect(out[2]).toEqual(verts[2]);
+    expect(out[3]).toEqual(verts[3]);
+    expect(out[0]!.z).toBeCloseTo(-0.03, 12);
+    expect(out[0]!.x).toBeCloseTo(-0.06, 12); // same slope: 0.03 down is 0.06 back
+    expect(out[1]).toEqual({ x: out[0]!.x, y: 1, z: out[0]!.z });
+    // A hull raised off the floor isn't touched.
+    expect(sinkRampBase(verts, 0.5)).toEqual(verts);
   });
 });
 
