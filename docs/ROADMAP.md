@@ -37,7 +37,7 @@ Status of the build plan. Update this file in every PR.
 - The 2023 manual URL now serves the April revision, so a blind January build can't verify that no value changed after January without reading later Team Updates. Archive the kickoff manual at kickoff for future stress tests.
 - Charge Station tilt isn't simulated (static ramp at its real height; LEVEL is decided in `rules.ts`). Robots are pitch/roll-locked boxes; ramps (`nav: 'ramp'` hulls) continue 3 cm below the floor in physics so they can drive up at any speed.
 - A station hands out the first piece type the robot can hold unless it has `choice: true` (players switch with F / gamepad X; bots ask for what they plan to score). 2023 still models its double substation as one shelf per piece type, from before `choice` existed; merging them would be a model change for the owner to decide.
-- Placement uses the highest-value row first. There's no key to pick a lower row on purpose.
+- Placement uses the highest-value target first; players switch levels with V (D-pad ← →). Bots always weigh every level by points per second.
 
 - There's no audio transcription for reveal videos. Captions are used only when a subtitle track exists, and the manual is the source of truth.
 - The optional real-match comparison (`npm run calibrate`) covers alliance-level distributions only, not per-team cycle times.

@@ -234,3 +234,28 @@ describe('2023 Charged Up: rules', () => {
     expect(added).toEqual([['blue', 'auto', -8, 'auto-charge-limit']]);
   });
 });
+
+describe('2023 Charged Up: the player picks the row to place on', () => {
+  it('Space places on the best row; V switches to the next one at the same column', async () => {
+    const { PlayerController } = await import('../src/engine/input/input.ts');
+    const m = new Match({ ...definition, preload: { cone: 1 } }, { seed: 1, archetypes: { 0: 'elevator' } });
+    const r = m.robots[0]!;
+    m.start();
+    m.step();
+    // In front of column 1 (a cone column), facing the grid.
+    r.setPosition({ x: 1.43 + 0.5, y: 2.75 - 4 * 0.559, z: r.archetype.frame.height / 2 + 0.01 });
+    r.body.setRotation({ x: 0, y: 0, z: 1, w: 0 }, true); // yaw = pi
+    m.step();
+    const input = { autoIntake: false } as unknown as ConstructorParameters<typeof PlayerController>[0];
+    const pc = new PlayerController(input, () => 0);
+    pc.latest = { ...pc.latest, score: true };
+    expect(m.placeOptions(r).map((o) => o.target.baseId)).toEqual(['high-1', 'mid-1', 'hybrid-1']);
+    expect(pc.placeChoice(m, r)?.target.baseId).toBe('high-1');
+    expect(pc.command(m, r).targetId).toBeUndefined(); // the default: best row
+    pc.placeRank++;
+    expect(pc.placeChoice(m, r)?.target.baseId).toBe('mid-1');
+    expect(pc.command(m, r).targetId).toBe('mid-1.blue');
+    pc.placeRank += 2; // wraps around
+    expect(pc.placeChoice(m, r)?.target.baseId).toBe('high-1');
+  });
+});

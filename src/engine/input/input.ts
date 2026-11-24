@@ -19,6 +19,8 @@ export type ButtonEvent =
   | 'help'
   /** Switch the piece to ask for at a human player station that offers a choice. */
   | 'piece'
+  /** Switch which target (level) Space places on when there are several here. */
+  | 'level'
   /** Spectator: follow the next / previous robot, or robot 1-6 (blue 1-3, red 1-3). */
   | 'next'
   | 'prev'
@@ -35,6 +37,7 @@ export const KEY_HELP: Array<[string, string]> = [
   ['G', 'endgame action (climb etc.)'],
   ['R', 'eject a piece'],
   ['F', 'switch the piece to ask for (stations with a choice)'],
+  ['V', 'switch the level / target Space places on (when there are several)'],
   ['C', 'cycle camera'],
   ['Esc / P', 'pause'],
 ];
@@ -62,6 +65,7 @@ export const PAD_HELP: Array<[string, string]> = [
   ['A', 'endgame'],
   ['B', 'eject'],
   ['X', 'switch the piece to ask for'],
+  ['D-pad ← →', 'switch the level to place on'],
   ['Y', 'camera'],
   ['Start', 'pause'],
 ];
@@ -105,6 +109,7 @@ export class InputManager {
     if (!e.repeat) {
       if (e.code === 'KeyC') this.emit('camera');
       if (e.code === 'KeyF') this.emit('piece');
+      if (e.code === 'KeyV') this.emit('level');
       if (e.code === 'Escape' || e.code === 'KeyP') this.emit('pause');
       if (e.code === 'KeyH') this.emit('help');
       if (e.code === 'Tab') this.emit(e.shiftKey ? 'prev' : 'next');
@@ -153,6 +158,7 @@ export class InputManager {
       const pressed = pad.buttons.map((_, i) => btn(i));
       const edge = (i: number) => pressed[i] && !this.prevPadButtons[i];
       if (edge(2)) this.emit('piece');
+      if (edge(14) || edge(15)) this.emit('level');
       if (edge(3)) this.emit('camera');
       if (edge(4)) this.emit('prev');
       if (edge(5)) this.emit('next');
@@ -172,6 +178,11 @@ export class InputManager {
 export class PlayerController implements RobotController {
   /** The piece to ask for at a station that offers a choice (switched with F / X). */
   pieceType: string | undefined;
+  /**
+   * Which of the targets the robot could place on here Space uses: 0 = the highest-value one, then
+   * the next (switched with V / D-pad). Wraps around when there are fewer.
+   */
+  placeRank = 0;
   latest: DriverInput = {
     moveX: 0,
     moveY: 0,
@@ -187,7 +198,13 @@ export class PlayerController implements RobotController {
     private readonly driveYaw: () => number,
   ) {}
 
-  command(_m: Match, r: Robot): RobotCommand {
+  /** The place option Space would use right now, if any (also shown on the HUD). */
+  placeChoice(m: Match, r: Robot): ReturnType<Match['placeOptions']>[number] | undefined {
+    const opts = m.placeOptions(r);
+    return opts.length ? opts[this.placeRank % opts.length] : undefined;
+  }
+
+  command(m: Match, r: Robot): RobotCommand {
     const i = this.latest;
     const yaw = this.driveYaw();
     // forward = (cos yaw, sin yaw); right = (sin yaw, -cos yaw)
@@ -204,6 +221,11 @@ export class PlayerController implements RobotController {
       endgame: i.endgame,
       eject: i.eject,
       ...(this.pieceType ? { pieceType: this.pieceType } : {}),
+      // Place on the chosen level (only matters where several targets share a spot).
+      ...(i.score && this.placeRank > 0 ? placeTarget(this.placeChoice(m, r)) : {}),
     };
   }
 }
+
+const placeTarget = (o: { target: { id: string } } | undefined): { targetId?: string } =>
+  o ? { targetId: o.target.id } : {};

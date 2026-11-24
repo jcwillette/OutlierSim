@@ -1293,7 +1293,12 @@ class Session {
       this.player.controller = setup.autoPilot
         ? { command: (m, r, dt) => (m.phase === 'auto' ? autoBrain : controller).command(m, r, dt) }
         : controller;
-      this.hud = new Hud(this.match, { kind: 'play', player: this.player, autoPilot: setup.autoPilot });
+      this.hud = new Hud(this.match, {
+        kind: 'play',
+        player: this.player,
+        autoPilot: setup.autoPilot,
+        controller,
+      });
     } else {
       this.controller = null;
       this.hud = new Hud(this.match, { kind: 'watch', brains: this.brains });
@@ -1322,6 +1327,7 @@ class Session {
       this.state = this.state === 'running' ? 'paused' : 'running';
       this.hud.setPaused(this.state === 'paused', () => this.app.showMenu());
     }
+    if (e === 'level' && this.controller) this.controller.placeRank++;
     if (e === 'piece' && this.player && this.controller) {
       // Next piece to ask the human player for, at stations that offer a choice.
       const types = this.match.choiceTypes(this.player);
@@ -1381,7 +1387,8 @@ class Session {
 // ------------------------------------------------------------------ HUD
 
 type HudMode =
-  { kind: 'play'; player: Robot; autoPilot: boolean } | { kind: 'watch'; brains: Map<number, BotBrain> };
+  | { kind: 'play'; player: Robot; autoPilot: boolean; controller: PlayerController }
+  | { kind: 'watch'; brains: Map<number, BotBrain> };
 
 /** Plain-language summary of what a bot is doing right now (spectator commentary). */
 export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): string {
@@ -1591,10 +1598,10 @@ class Hud {
     );
     if (this.mode.kind === 'watch') {
       this.hint.textContent = `${describeBot(m, r, this.mode.brains.get(r.id))} · ${m.ledger.byRobot(r.id)} pts`;
-    } else this.hint.innerHTML = this.hintHtml(this.mode.autoPilot);
+    } else this.hint.innerHTML = this.hintHtml(this.mode.autoPilot, this.mode.controller);
   }
 
-  private hintHtml(autoPilot: boolean): string {
+  private hintHtml(autoPilot: boolean, controller: PlayerController): string {
     const m = this.match;
     const r = this.robot;
     if (m.phase === 'pre') return 'Get ready…';
@@ -1622,8 +1629,12 @@ class Hud {
     const lines: string[] = [];
     const eg = m.availableEndgame(r)[0];
     if (eg) lines.push(`<b>G</b>: ${eg.action.name} (+${eg.action.points})`);
-    const place = m.placeOptions(r)[0];
-    if (place) lines.push(`<b>Space</b>: place on ${place.target.name}`);
+    const place = controller.placeChoice(m, r);
+    const places = m.placeOptions(r).length;
+    if (place)
+      lines.push(
+        `<b>Space</b>: place on ${place.target.name}${places > 1 ? ' (<b>V</b>: another level)' : ''}`,
+      );
     else {
       const shot = m.shotOptions(r)[0];
       if (shot) lines.push(`<b>Space</b>: shoot at ${shot.target.name} (${shot.distance.toFixed(1)} m)`);
