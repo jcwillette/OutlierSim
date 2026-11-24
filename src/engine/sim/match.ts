@@ -966,23 +966,40 @@ export class Match {
       act.remaining -= dt;
       if (act.remaining <= 0) {
         r.action = null;
-        r.endgameDone = { actionId: ga.id, zoneIndex: act.zoneIndex };
+        const done = this.endgameOutcome(r, ga);
+        if (!done) return;
+        r.endgameDone = { actionId: done.id, zoneIndex: act.zoneIndex };
         r.endgameInAuto = this.scoringPeriod === 'auto';
         r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
         r.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         r.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
         const inAuto = this.scoringPeriod === 'auto';
-        const pts = inAuto ? (ga.autoPoints ?? ga.points) : ga.points;
+        const pts = inAuto ? (done.autoPoints ?? done.points) : done.points;
         this.ledger.add({
           time: this.time,
           alliance: r.alliance,
           category: inAuto ? 'auto' : 'endgame',
           points: pts,
-          source: ga.id,
+          source: done.id,
           robotId: r.id,
         });
       }
     }
+  }
+
+  /**
+   * What a finished endgame attempt counts as: the action itself, or, when it fails
+   * (`RobotArchetype.endgameSuccess`), its fallback or nothing. Rolls only when success isn't certain.
+   */
+  private endgameOutcome(r: Robot, ga: XEndgame): XEndgame | null {
+    const chance = r.archetype.endgameSuccess?.[ga.baseId] ?? 1;
+    if (chance >= 1 || this.random() < chance) return ga;
+    const fallback = ga.fallback
+      ? this.game.endgame.find((e) => e.baseId === ga.fallback && e.alliance === ga.alliance)
+      : undefined;
+    const name = `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${r.station + 1}`;
+    this.announce(`${name}: ${ga.name} failed${fallback ? ` (${fallback.name})` : ''}`, r.alliance);
+    return fallback ?? null;
   }
 
   /** Endgame actions this robot could start right now, best first. */

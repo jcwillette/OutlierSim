@@ -678,7 +678,7 @@ export class BotBrain implements RobotController {
         // (e.g. dock vs. engage on the same platform slot) don't send two robots to one place.
         if (this.claimedByOther(m, r, spot.claim)) continue;
         if ((a.maxRobotsPerZone ?? Infinity) <= 1 && spotOccupied(m, r, spot.zone)) continue;
-        const pts = auto ? (a.autoPoints ?? a.points) : a.points;
+        const pts = expectedEndgamePoints(m, r, a, auto);
         const utility = pts / (rank >= 0 ? rank + 1 : 1) - this.travelTime(m, r, point);
         if (!best || utility > best.utility)
           best = { plan: { kind: 'endgame', actionId: a.id, zoneIndex, point }, utility, claim: spot.claim };
@@ -1181,6 +1181,20 @@ function spotOccupied(m: Match, r: Robot, zone: Region2D): boolean {
     const spot = oa && endgameSpots(oa)[o.endgameDone.zoneIndex];
     return !!spot && pointInRegion(spot.center, zone);
   });
+}
+
+/**
+ * Points this robot can expect from an endgame action: its points, or with an uncertain attempt
+ * (`endgameSuccess`) the chance-weighted mix with its fallback's points.
+ */
+function expectedEndgamePoints(m: Match, r: Robot, a: XEndgame, auto: boolean): number {
+  const value = (x: XEndgame) => (auto ? (x.autoPoints ?? x.points) : x.points);
+  const chance = r.archetype.endgameSuccess?.[a.baseId] ?? 1;
+  if (chance >= 1) return value(a);
+  const fallback = a.fallback
+    ? m.game.endgame.find((e) => e.baseId === a.fallback && e.alliance === a.alliance)
+    : undefined;
+  return chance * value(a) + (1 - chance) * (fallback ? value(fallback) : 0);
 }
 
 /** Where a defender stands to block `o`: just in front of it, toward its own alliance wall. */

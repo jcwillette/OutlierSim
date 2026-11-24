@@ -188,6 +188,17 @@ export function robotFields(def: GameDefinition, a: RobotArchetype): Array<Tunin
       get: (x) => x.endgame![id]!,
       set: (x, v) => (x.endgame![id] = v),
     });
+    out.push({
+      key: `endgameSuccess:${id}`,
+      label: `${name}: success chance`,
+      unit: '%',
+      group: 'Endgame',
+      min: 0,
+      max: 100,
+      step: 1,
+      get: (x) => (x.endgameSuccess?.[id] ?? 1) * 100,
+      set: (x, v) => (x.endgameSuccess = { ...x.endgameSuccess, [id]: v / 100 }),
+    });
   }
   out.push(
     fault('breakdownChance', 'Breakdown (dead) chance', 90),

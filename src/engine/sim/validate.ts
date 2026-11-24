@@ -136,6 +136,13 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
   const endgameIds = new Set(def.endgame.map((e) => e.id));
   def.endgame.forEach((a, i) => {
     if (a.zones.length === 0) err(`endgame[${i}] ${a.id}`, 'needs at least one zone');
+    if (a.fallback !== undefined) {
+      const fb = def.endgame.find((e) => e.id === a.fallback);
+      if (!fb || fb.id === a.id)
+        err(`endgame[${i}] ${a.id}`, `fallback '${a.fallback}' is not another endgame action`);
+      else if (fb.zones.length < a.zones.length)
+        warn(`endgame[${i}] ${a.id}`, `fallback '${fb.id}' has fewer zones (the robot keeps its zone index)`);
+    }
     a.zones.forEach((z, j) => checkRegion(`endgame[${i}].zones[${j}]`, z));
   });
   unique(
@@ -233,6 +240,10 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
       if (!allTags.has(tag)) err(path, `place tag '${tag}' matches no target`);
     for (const id of Object.keys(a.endgame ?? {}))
       if (!endgameIds.has(id)) err(path, `endgame '${id}' is not an endgame action`);
+    for (const [id, p] of Object.entries(a.endgameSuccess ?? {})) {
+      if (!endgameIds.has(id)) err(path, `endgameSuccess '${id}' is not an endgame action`);
+      if (!(p >= 0 && p <= 1)) err(path, `endgameSuccess.${id} must be between 0 and 1`);
+    }
     // Preload is handed out in listed order while the robot has room, so a robot only needs to be
     // able to hold one of the listed types (e.g. "1 cone or 1 cube").
     const preload = Object.entries(def.preload);

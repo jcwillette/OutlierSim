@@ -336,6 +336,8 @@ const charge = (
   pts: { points: number; autoPoints?: number },
   zones: Region2D[],
   auto: boolean,
+  /** A failed balance (`endgameSuccess` below 100 %) still leaves the robot docked. */
+  fallback?: string,
 ): EndgameAction => ({
   id,
   name,
@@ -344,6 +346,7 @@ const charge = (
   maxRobotsPerZone: 1,
   oneAtATime: true,
   points: pts.points,
+  ...(fallback ? { fallback } : {}),
   ...(auto
     ? { allowInAuto: true, autoPoints: pts.autoPoints ?? pts.points, availableAtRemainingSec: -1 }
     : {}),
@@ -487,9 +490,9 @@ export const definition: GameDefinition = {
     },
   ],
   endgame: [
-    charge('auto-engage', 'Engage (auto)', { points: 0, autoPoints: 12 }, autoZone, true),
+    charge('auto-engage', 'Engage (auto)', { points: 0, autoPoints: 12 }, autoZone, true, 'auto-dock'),
     charge('auto-dock', 'Dock (auto)', { points: 0, autoPoints: 8 }, autoZone, true),
-    charge('engage', 'Dock & engage', { points: 10 }, slots, false),
+    charge('engage', 'Dock & engage', { points: 10 }, slots, false, 'dock'),
     charge('dock', 'Dock', { points: 6 }, slots, false),
   ],
   awards: [

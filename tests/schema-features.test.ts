@@ -114,6 +114,67 @@ describe('navigation hints on field elements', () => {
   });
 });
 
+describe('endgame attempts that can fail', () => {
+  /** Mini game whose 'bar' (10) falls back to 'hang' (4) on the same zone. */
+  const game = (success: number, fallback = true): GameDefinition => {
+    const base = miniGame();
+    const bar = base.endgame[0]!;
+    return {
+      ...base,
+      endgame: [
+        { ...bar, ...(fallback ? { fallback: 'hang' } : {}) },
+        { ...bar, id: 'hang', name: 'Hang', points: 4 },
+      ],
+      archetypes: [
+        { ...base.archetypes[0]!, endgame: { bar: 2, hang: 1 }, endgameSuccess: { bar: success } },
+      ],
+    };
+  };
+  const climb = (def: GameDefinition, seed = 1) => {
+    const m = new Match(def, { seed });
+    const r = m.robots[1]!; // starts in the bar zone
+    r.controller = ctl(() => ({ endgame: true, targetId: 'bar.blue' }));
+    m.start();
+    while (!m.isEndgame) m.step();
+    for (let i = 0; i < 60 * 2.5; i++) m.step();
+    return { m, r };
+  };
+  it('always count at the default success chance', () => {
+    const { m, r } = climb(miniGame());
+    expect(r.endgameDone?.actionId).toBe('bar.blue');
+    expect(m.ledger.bySource('blue')['bar.blue']).toBe(10);
+  });
+  it('a failed attempt earns the fallback action instead', () => {
+    const { m, r } = climb(game(0));
+    expect(r.endgameDone?.actionId).toBe('hang.blue');
+    expect(m.ledger.bySource('blue')).toMatchObject({ 'hang.blue': 4 });
+    expect(m.announcements.some((a) => a.text.includes('failed'))).toBe(true);
+  });
+  it('without a fallback the robot is free to try again, and earns nothing', () => {
+    const { m, r } = climb(game(0, false));
+    expect(r.endgameDone).toBeNull();
+    expect(m.ledger.bySource('blue')['bar.blue']).toBeUndefined();
+  });
+  it('succeeds about as often as the chance says', () => {
+    let ok = 0;
+    for (let seed = 1; seed <= 60; seed++)
+      if (climb(game(0.7), seed).r.endgameDone?.actionId === 'bar.blue') ok++;
+    expect(ok / 60).toBeGreaterThan(0.5);
+    expect(ok / 60).toBeLessThan(0.9);
+  });
+  it('is validated', () => {
+    const bad = game(1.5);
+    bad.endgame[0]!.fallback = 'nope';
+    const msgs = validateDefinition(bad)
+      .filter((i) => i.level === 'error')
+      .map((i) => i.message);
+    expect(msgs).toEqual([
+      "fallback 'nope' is not another endgame action",
+      'endgameSuccess.bar must be between 0 and 1',
+    ]);
+  });
+});
+
 describe('ramps in physics', () => {
   it("continue a 'ramp' hull's floor edges just below the floor, along the slope", () => {
     // A 1 m wide ramp: floor edge at x = 0, top edge 0.2 m up at x = 0.4.

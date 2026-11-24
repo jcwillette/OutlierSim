@@ -259,6 +259,12 @@ export interface EndgameAction {
    */
   allowInAuto?: boolean;
   autoPoints?: number;
+  /**
+   * Action id credited instead when an attempt fails (`RobotArchetype.endgameSuccess`): e.g. a
+   * balance that doesn't settle still leaves the robot docked. Without one, a failed attempt earns
+   * nothing and the robot is free to try again.
+   */
+  fallback?: string;
   source?: Citation;
 }
 
@@ -473,6 +479,11 @@ export interface RobotArchetype {
   };
   /** Endgame action id -> seconds to perform. Missing = cannot do it. */
   endgame?: Record<string, number>;
+  /**
+   * Endgame action id -> chance (0..1) that a finished attempt counts. Default 1. A failed attempt
+   * earns the action's `fallback` instead, if it has one, else nothing (the robot may try again).
+   */
+  endgameSuccess?: Record<string, number>;
   /**
    * How dependable the robot (and, for bots, its drive team) is, 0..1. Default 0.95. When a match
    * runs with breakdowns on, lower values mean a higher chance to break down (about 0.6 x (1 -
