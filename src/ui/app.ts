@@ -34,6 +34,16 @@ import {
   type AllianceChoice,
   type LineupChoice,
 } from './lineup.ts';
+import {
+  dealRng,
+  pickReplays,
+  specKey,
+  summarize,
+  type MatchupSample,
+  type MonteCarloSpec,
+  type MonteCarloSummary,
+} from './montecarlo.ts';
+import { MonteCarloRun } from './montecarloPool.ts';
 
 const DIFFICULTIES: ReadonlyArray<readonly [Difficulty, string]> = [
   ['easy', 'Easy'],
@@ -103,7 +113,11 @@ export interface Setup {
   breakdowns: 'off' | 'bots' | 'all';
   /** Robot-type and human-player-station overrides, per game id. */
   tuning: Record<string, GameTuning>;
+  /** Spectator mode: how many match-ups a win-probability (Monte Carlo) run plays. */
+  mcMatches: number;
 }
+
+export const MC_MATCH_COUNTS = [100, 250, 500, 1000, 2500] as const;
 
 const STORE_KEY = 'outliersim.setup.v1';
 function loadSetup(): Partial<Setup> {
@@ -134,6 +148,9 @@ export class App {
   /** Menu state: robot type shown in the tuning section, and whether that section is expanded. */
   private tuneArch: string | null = null;
   private tuneOpen = false;
+  /** The latest win-probability run (kept after it ends so its results can be revisited). */
+  private mc: MonteCarloRun | null = null;
+  private mcView: MonteCarloView | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -168,6 +185,9 @@ export class App {
       lineups: saved.lineups ?? {},
       tuning: saved.tuning ?? {},
       breakdowns: saved.breakdowns ?? 'bots',
+      mcMatches: MC_MATCH_COUNTS.includes(saved.mcMatches as (typeof MC_MATCH_COUNTS)[number])
+        ? saved.mcMatches!
+        : 1000,
     };
 
     this.input.on((e) => this.session?.onButton(e));
@@ -203,6 +223,7 @@ export class App {
   showMenu(): void {
     this.session?.dispose();
     this.session = null;
+    this.mc?.stop();
     const games = this.games();
     const def = games.find((g) => g.id === this.setup.gameId) ?? games[0]!;
     const arch = def.archetypes.find((a) => a.id === this.setup.archetype) ?? def.archetypes[0]!;
@@ -363,6 +384,7 @@ export class App {
       ),
       alliances,
       tuning,
+      this.monteCarloSection(def),
       h('h2', {}, 'Spectator controls'),
       h(
         'div',
@@ -686,21 +708,120 @@ export class App {
       h('span', {}, label),
       h(
         'select',
-        { onchange: (e: Event) => onChange((e.target as HTMLSelectElement).value as T) },
+        { 'aria-label': label, onchange: (e: Event) => onChange((e.target as HTMLSelectElement).value as T) },
         ...options.map(([v, text]) => h('option', { value: v, selected: v === value }, text)),
       ),
     );
   }
 
-  async start(): Promise<void> {
+  /**
+   * Start a match. `replaySeed` (spectator mode) replays one Monte Carlo match-up exactly: same
+   * robots dealt, same breakdowns, same bot decisions, so it ends with the same score.
+   */
+  async start(replaySeed?: number): Promise<void> {
     saveSetup(this.setup);
+    this.mc?.stop();
     await initPhysics();
     const base = this.games().find((g) => g.id === this.setup.gameId)!;
     const def = applyTuning(base, this.setup.tuning[base.id]);
     this.session?.dispose();
     this.input.autoIntake = this.setup.autoIntake;
-    this.session = new Session(this, def, this.setup, this.input, this.renderer);
+    this.session = new Session(this, def, this.setup, this.input, this.renderer, replaySeed);
     this.resize();
+  }
+
+  // ---------------------------------------------------------------- win probability (Monte Carlo)
+
+  /** The Monte Carlo setup for the menu's current spectator settings. */
+  private mcSpec(def: GameDefinition): MonteCarloSpec {
+    return {
+      gameId: def.id,
+      lineup: this.lineupFor(def),
+      difficulty: { blue: this.setup.partners, red: this.setup.opponents },
+      breakdowns: this.setup.breakdowns !== 'off',
+      tuning: sanitizeTuning(def, this.setup.tuning[def.id]),
+    };
+  }
+
+  private monteCarloSection(def: GameDefinition): HTMLElement {
+    const counts = MC_MATCH_COUNTS.map((n) => [String(n), n.toLocaleString()] as const);
+    const last = this.mc && specKey(this.mc.spec) === specKey(this.mcSpec(def)) ? this.mc : null;
+    const lastSummary = last && last.samples.length ? summarize(last.samples) : null;
+    return h(
+      'div',
+      {},
+      h('h2', {}, 'Win probability'),
+      h(
+        'p',
+        { class: 'summary small' },
+        'Play this exact setup (robots, roles, strategies, bot skill, breakdowns and tuning) many times ' +
+          'without drawing it, and estimate how often each alliance wins. Random robot slots are re-dealt ' +
+          'every match-up. Runs on all but one of your CPU cores.',
+      ),
+      h(
+        'div',
+        { class: 'row' },
+        Object.assign(
+          this.selectField('Match-ups', String(this.setup.mcMatches), counts, (v) => {
+            this.setup.mcMatches = Number(v);
+          }),
+          { className: 'field mc-count' },
+        ),
+        h(
+          'button',
+          { class: 'mc-run', onclick: () => this.showMonteCarlo(true), style: 'align-self:flex-end' },
+          'Simulate match-ups',
+        ),
+        lastSummary
+          ? h(
+              'button',
+              { onclick: () => this.showMonteCarlo(false), style: 'align-self:flex-end' },
+              `Last run: Blue ${pct0(lastSummary.blue.winRate)} · Red ${pct0(lastSummary.red.winRate)}`,
+            )
+          : null,
+      ),
+    );
+  }
+
+  /** Win-probability screen. `fresh` starts a new run of the menu's setup; otherwise shows the last one. */
+  showMonteCarlo(fresh: boolean): void {
+    const base = this.games().find((g) => g.id === this.setup.gameId)!;
+    const spec = this.mcSpec(base);
+    saveSetup(this.setup);
+    if (fresh || !this.mc) {
+      this.mc?.stop();
+      const def = applyTuning(base, spec.tuning);
+      let pending = false;
+      // Redraw only while this run's screen is the one showing, at most once per frame.
+      const redraw = (r: MonteCarloRun) => {
+        const v = this.mcView;
+        if (v && v.run === r && this.uiLayer.contains(v.root)) v.update();
+      };
+      this.mc = new MonteCarloRun(spec, {
+        total: this.setup.mcMatches,
+        baseSeed: (Math.random() * 2 ** 30) | 0,
+        def,
+        onUpdate: (r) => {
+          if (r.state !== 'running') return redraw(r);
+          if (pending) return;
+          pending = true;
+          requestAnimationFrame(() => {
+            pending = false;
+            redraw(r);
+          });
+        },
+      });
+    }
+    const run = this.mc;
+    const view = new MonteCarloView(base, run, {
+      stop: () => run.stop(),
+      again: () => this.showMonteCarlo(true),
+      watch: (seed) => void this.start(seed),
+      back: () => this.showMenu(),
+    });
+    this.mcView = view;
+    this.setOverlay(h('div', { class: 'overlay' }, view.root));
+    view.update();
   }
 
   showResults(def: GameDefinition, result: MatchResult, playerId: number | null): void {
@@ -775,6 +896,9 @@ export class App {
         'div',
         { class: 'row end' },
         h('button', { onclick: () => this.showMenu() }, 'Change setup'),
+        playerId === null && this.mc?.samples.length
+          ? h('button', { onclick: () => this.showMonteCarlo(false) }, 'Back to win probability')
+          : null,
         h(
           'button',
           { class: 'primary', onclick: () => void this.start() },
@@ -785,6 +909,293 @@ export class App {
     this.setOverlay(h('div', { class: 'overlay' }, card));
   }
 }
+
+// ------------------------------------------------------------------ win probability screen
+
+const pct0 = (x: number) => `${Math.round(x * 100)}%`;
+const pct1 = (x: number) => `${(x * 100).toFixed(1)}%`;
+const fmtNum = (x: number) => (Number.isInteger(x) || Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(1));
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svg(
+  tag: string,
+  attrs: Record<string, string | number>,
+  ...children: Array<Node | string>
+): SVGElement {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  el.append(...children);
+  return el;
+}
+
+/** One line per alliance: strategy, bot skill and robots, e.g. "Balanced · Normal bots · Shooter, Random, Stacker (defends)". */
+export function describeAlliance(def: GameDefinition, spec: MonteCarloSpec, a: Alliance): string {
+  const c = spec.lineup[a];
+  const strategy = STRATEGIES.find(([v]) => v === c.strategy)?.[1] ?? c.strategy;
+  const skill = DIFFICULTIES.find(([v]) => v === spec.difficulty[a])?.[1] ?? spec.difficulty[a];
+  const preset = def.lineups?.find((l) => l.id === c.preset)?.name;
+  const robots = c.slots
+    .map((s) => {
+      const name =
+        s.archetype === 'random'
+          ? 'Random'
+          : (def.archetypes.find((x) => x.id === s.archetype)?.name ?? s.archetype);
+      return s.role === 'auto' ? name : `${name} (${s.role === 'defense' ? 'defends' : 'scores'})`;
+    })
+    .join(', ');
+  return `${preset ? `${preset}: ` : ''}${strategy} · ${skill} bots · ${robots}`;
+}
+
+/**
+ * Live Monte Carlo results: progress, each alliance's win chance with its 95 % interval, score and
+ * RP stats, and a histogram of winning margins. Rebuilt from the run's samples on every update.
+ */
+class MonteCarloView {
+  readonly root: HTMLElement;
+  private readonly progress = h('div', { class: 'mc-progress' });
+  private readonly body = h('div', { class: 'mc-body' });
+  private readonly buttons = h('div', { class: 'row end' });
+
+  constructor(
+    private readonly def: GameDefinition,
+    readonly run: MonteCarloRun,
+    private readonly actions: {
+      stop: () => void;
+      again: () => void;
+      watch: (seed: number) => void;
+      back: () => void;
+    },
+  ) {
+    const side = (a: Alliance) =>
+      h(
+        'div',
+        { class: `mc-side ${a}` },
+        h('b', {}, a === 'blue' ? 'Blue alliance' : 'Red alliance'),
+        h('span', {}, describeAlliance(def, run.spec, a)),
+      );
+    this.root = h(
+      'div',
+      { class: 'card mc' },
+      h('h1', {}, 'Win probability'),
+      h(
+        'p',
+        { class: 'sub' },
+        `${def.year > 0 ? def.year + ' ' : ''}${def.name} · ${run.total.toLocaleString()} bot-vs-bot match-ups · ` +
+          `breakdowns ${run.spec.breakdowns ? 'on' : 'off'}`,
+      ),
+      h('div', { class: 'mc-sides' }, side('blue'), side('red')),
+      this.progress,
+      this.body,
+      this.buttons,
+      h(
+        'p',
+        { class: 'disclaimer' },
+        'Estimates from the simulator’s bots and robot models, not from real teams or real matches. The ' +
+          'range is a 95% confidence interval for the simulated win rate: more match-ups make it narrower.',
+      ),
+    );
+  }
+
+  update(): void {
+    const run = this.run;
+    const n = run.samples.length;
+    const s = n ? summarize(run.samples) : null;
+    // Progress line
+    const status =
+      run.state === 'running'
+        ? `${n.toLocaleString()} of ${run.total.toLocaleString()} match-ups · ${run.inline ? 'main thread' : `${run.threads} workers`} · ` +
+          `${fmtTime(run.elapsedSec)} elapsed${run.etaSec !== null ? ` · about ${fmtTime(run.etaSec)} left` : ''}`
+        : run.state === 'done'
+          ? `Finished ${n.toLocaleString()} match-ups in ${fmtTime(run.elapsedSec)}`
+          : run.state === 'stopped'
+            ? `Stopped after ${n.toLocaleString()} of ${run.total.toLocaleString()} match-ups`
+            : `Error: ${run.error}`;
+    this.progress.replaceChildren(
+      h(
+        'div',
+        {
+          class: 'mc-bar',
+          role: 'progressbar',
+          'aria-valuemin': 0,
+          'aria-valuemax': run.total,
+          'aria-valuenow': n,
+        },
+        h('div', { style: `width:${(100 * n) / run.total}%` }),
+      ),
+      h('div', { class: `mc-status${run.state === 'error' ? ' err' : ''}` }, status),
+    );
+    this.body.replaceChildren(
+      ...(s ? this.results(s) : [h('p', { class: 'summary' }, 'Starting the simulators…')]),
+    );
+    // Buttons
+    const replays = run.state === 'running' ? {} : pickReplays(run.samples);
+    const watchBtn = (label: string, sample: MatchupSample | undefined, title: string) =>
+      sample
+        ? h(
+            'button',
+            { onclick: () => this.actions.watch(sample.seed), title },
+            `${label} (${sample.score.blue}-${sample.score.red})`,
+          )
+        : null;
+    this.buttons.replaceChildren(
+      ...[
+        h('button', { onclick: this.actions.back }, 'Back to setup'),
+        watchBtn(
+          'Watch a typical match',
+          replays.typical,
+          'Replay the match-up closest to the median margin',
+        ),
+        watchBtn(
+          'Watch an upset',
+          replays.upset,
+          'Replay the biggest win by the alliance that usually loses',
+        ),
+        run.state === 'running'
+          ? h('button', { class: 'primary', onclick: this.actions.stop }, 'Stop')
+          : h('button', { class: 'primary', onclick: this.actions.again }, 'Run again'),
+      ].filter((x): x is HTMLButtonElement => !!x),
+    );
+  }
+
+  private results(s: MonteCarloSummary): Element[] {
+    const tie = s.ties / s.n;
+    const seg = (cls: string, share: number, label: string) =>
+      share > 0
+        ? h('div', { class: `seg ${cls}`, style: `flex:${share} 0 0`, title: `${label}: ${pct1(share)}` })
+        : null;
+    const head = (a: Alliance) => {
+      const o = s[a];
+      return h(
+        'div',
+        { class: `mc-head ${a}` },
+        h('div', { class: 'big' }, pct1(o.winRate)),
+        h(
+          'div',
+          { class: 'small' },
+          `${a === 'blue' ? 'Blue' : 'Red'} wins · 95%: ${pct0(o.winCI[0])}–${pct0(o.winCI[1])}`,
+        ),
+      );
+    };
+    const winbar = h(
+      'div',
+      {
+        class: 'mc-winbar',
+        role: 'img',
+        'aria-label': `Blue ${pct1(s.blue.winRate)}, tie ${pct1(tie)}, red ${pct1(s.red.winRate)}`,
+      },
+      seg('blue', s.blue.winRate, 'Blue wins'),
+      seg('tie', tie, 'Ties'),
+      seg('red', s.red.winRate, 'Red wins'),
+    );
+    const row = (label: string, b: string, r: string) =>
+      h('tr', {}, h('td', {}, label), h('td', { class: 'blue' }, b), h('td', { class: 'red' }, r));
+    const both = (f: (o: MonteCarloSummary['blue']) => string) => [f(s.blue), f(s.red)] as const;
+    const bonusIds = [...new Set([...Object.keys(s.blue.bonusRates), ...Object.keys(s.red.bonusRates)])];
+    const bonusName = (k: string) => this.def.rankingPoints.bonuses.find((b) => b.id === k)?.name ?? k;
+    const table = h(
+      'table',
+      { class: 'results' },
+      h('tr', {}, h('th', {}, ''), h('th', { class: 'blue' }, 'Blue'), h('th', { class: 'red' }, 'Red')),
+      row('Wins', ...both((o) => `${o.wins.toLocaleString()} (${pct1(o.winRate)})`)),
+      row('Average score', ...both((o) => `${fmtNum(o.score.mean)} ± ${fmtNum(o.score.sd)}`)),
+      row(
+        'Median score (10th–90th pct)',
+        ...both((o) => `${fmtNum(o.score.median)} (${fmtNum(o.score.p10)}–${fmtNum(o.score.p90)})`),
+      ),
+      row('Average ranking points', ...both((o) => o.rp.toFixed(2))),
+      ...bonusIds.map((k) => row(`RP: ${bonusName(k)}`, ...both((o) => pct1(o.bonusRates[k] ?? 0)))),
+    );
+    const m = s.margin.mean;
+    const lead =
+      Math.abs(m) < 0.05
+        ? 'Even on average'
+        : `${m > 0 ? 'Blue' : 'Red'} by ${fmtNum(Math.abs(m))} on average`;
+    return [
+      h(
+        'div',
+        { class: 'mc-heads' },
+        head('blue'),
+        h('div', { class: 'mc-tie small' }, `Tie ${pct1(tie)}`),
+        head('red'),
+      ),
+      winbar,
+      table,
+      h('h2', {}, 'Winning margin'),
+      this.histogram(s),
+      h(
+        'p',
+        { class: 'summary small' },
+        `${lead} · ${pct0(s.closeRate)} of match-ups decided by ${s.closeMargin} points or fewer · ` +
+          `middle 80% of margins: ${marginText(Math.round(s.margin.p10))} to ${marginText(Math.round(s.margin.p90))}`,
+      ),
+    ];
+  }
+
+  /** Bars of blue − red margin: red wins left of center, blue wins right, the bin around 0 gray. */
+  private histogram(s: MonteCarloSummary): HTMLElement {
+    const { start, width, bins } = s.histogram;
+    const W = 640;
+    const H = 130;
+    const pad = { l: 8, r: 8, t: 8, b: 2 };
+    const max = Math.max(1, ...bins);
+    const bw = (W - pad.l - pad.r) / bins.length;
+    const y0 = H - pad.b;
+    const out = svg('svg', {
+      viewBox: `0 0 ${W} ${H}`,
+      class: 'mc-hist',
+      role: 'img',
+      'aria-label': 'Histogram of winning margins',
+    });
+    bins.forEach((count, i) => {
+      const lo = start + i * width;
+      const center = lo + width / 2;
+      const x = pad.l + i * bw;
+      const hgt = ((y0 - pad.t) * count) / max;
+      const fill = Math.abs(center) < 1e-9 ? 'var(--muted)' : center > 0 ? 'var(--blue)' : 'var(--red)';
+      const label =
+        width === 1
+          ? marginText(center)
+          : Math.abs(center) < 1e-9
+            ? `Within ${width / 2} points`
+            : `${center > 0 ? 'Blue' : 'Red'} by ${Math.ceil(Math.abs(center) - width / 2)}–${Math.floor(Math.abs(center) + width / 2 - 1e-9)}`;
+      const title = svg('title', {}, `${label}: ${count.toLocaleString()} match-ups (${pct1(count / s.n)})`);
+      if (count > 0) {
+        // Rounded data end, square on the baseline; 2 px gap between bars.
+        const w = Math.max(1, bw - 2);
+        const r = Math.min(4, w / 2, hgt);
+        const bx = x + 1;
+        const top = y0 - hgt;
+        out.append(
+          svg('path', {
+            d: `M${bx},${y0}V${top + r}Q${bx},${top} ${bx + r},${top}H${bx + w - r}Q${bx + w},${top} ${bx + w},${top + r}V${y0}Z`,
+            fill,
+          }),
+        );
+      }
+      // Hit target covers the whole column so thin bars are still easy to hover.
+      out.append(svg('rect', { x, y: pad.t, width: bw, height: y0 - pad.t, fill: 'transparent' }, title));
+    });
+    const reach = Math.round(-start);
+    out.append(
+      svg('line', { x1: pad.l, x2: W - pad.r, y1: y0, y2: y0, stroke: 'var(--border)', 'stroke-width': 1 }),
+    );
+    // Axis labels in HTML so they stay readable when the chart scales down on phones.
+    return h(
+      'div',
+      { class: 'mc-histwrap' },
+      out,
+      h(
+        'div',
+        { class: 'mc-axis' },
+        h('span', {}, `Red by ${reach}`),
+        h('span', {}, 'Tie'),
+        h('span', {}, `Blue by ${reach}`),
+      ),
+    );
+  }
+}
+
+const marginText = (d: number) =>
+  Math.abs(d) < 0.05 ? 'tie' : `${d > 0 ? 'Blue' : 'Red'} by ${fmtNum(Math.abs(d))}`;
 
 // ------------------------------------------------------------------ session
 
@@ -818,14 +1229,22 @@ class Session {
     setup: Setup,
     private readonly input: InputManager,
     private readonly renderer: THREE.WebGLRenderer,
+    replaySeed?: number,
   ) {
     const watching = setup.mode === 'watch';
     const playerId = watching ? null : (setup.alliance === 'blue' ? 0 : 3) + setup.station;
-    const lineup = resolveLineup(def, sanitizeLineup(def, setup.lineups[def.id]), playerId);
+    // A replayed Monte Carlo match-up deals its random slots the same way `runMatchup` did.
+    const replay = watching && replaySeed !== undefined;
+    const lineup = resolveLineup(
+      def,
+      sanitizeLineup(def, setup.lineups[def.id]),
+      playerId,
+      replay ? dealRng(replaySeed) : Math.random,
+    );
     const archetypes =
       playerId === null ? lineup.archetypes : { ...lineup.archetypes, [playerId]: setup.archetype };
     this.match = new Match(def, {
-      seed: (Math.random() * 2 ** 31) | 0,
+      seed: replay ? replaySeed : (Math.random() * 2 ** 31) | 0,
       archetypes,
       breakdowns: setup.breakdowns !== 'off',
       ...(setup.breakdowns === 'bots' && playerId !== null ? { breakdownExempt: [playerId] } : {}),

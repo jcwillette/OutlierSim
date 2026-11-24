@@ -558,3 +558,122 @@ label.tune input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* ---------------------------------------------------------------- win probability (Monte Carlo) */
+
+.mc-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+.mc-side {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  color: #cfd6df;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border-left: 4px solid var(--border);
+  background: #1b2027;
+}
+.mc-side.blue {
+  border-left-color: var(--blue);
+}
+.mc-side.red {
+  border-left-color: var(--red);
+}
+.mc-side b {
+  color: var(--text);
+}
+.mc-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: #262d36;
+  overflow: hidden;
+}
+.mc-bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.mc-status {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 6px 0 12px;
+  font-variant-numeric: tabular-nums;
+}
+.mc-status.err {
+  color: #ff8a8a;
+}
+.mc-heads {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mc-head .big {
+  font-size: 34px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.mc-head.red {
+  text-align: right;
+}
+.mc-head .small,
+.mc-tie {
+  font-size: 12px;
+  color: var(--muted);
+}
+.mc-tie {
+  padding-bottom: 2px;
+}
+.mc-winbar {
+  display: flex;
+  gap: 2px;
+  height: 14px;
+  margin: 8px 0 14px;
+}
+.mc-winbar .seg {
+  min-width: 2px;
+}
+.mc-winbar .seg.blue {
+  background: var(--blue);
+  border-radius: 4px 0 0 4px;
+}
+.mc-winbar .seg.tie {
+  background: var(--muted);
+}
+.mc-winbar .seg.red {
+  background: var(--red);
+  border-radius: 0 4px 4px 0;
+}
+.mc-hist {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.mc .row.end {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .mc-sides {
+    grid-template-columns: 1fr;
+  }
+  .mc-head .big {
+    font-size: 26px;
+  }
+}
+.mc-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.mc-count {
+  flex: 0 0 140px;
+}

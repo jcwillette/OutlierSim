@@ -4,6 +4,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   base: process.env.VITE_BASE ?? '/',
   build: { target: 'es2022', chunkSizeWarningLimit: 6000 },
+  // The win-probability worker (src/ui/montecarlo.worker.ts) is an ES module worker.
+  worker: { format: 'es' },
   test: {
     include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
     testTimeout: 60_000,

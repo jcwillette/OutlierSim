@@ -31,6 +31,8 @@ export interface SimSummary {
   difficulty: Difficulty;
   stats: Record<string, { mean: number; sd: number; min: number; max: number }>;
   rpRates: Record<string, number>;
+  /** Share of matches each alliance won, and ties (the app's win-probability screen does this live). */
+  winRates: { blue: number; red: number; tie: number };
   targetMeans: Record<string, { auto: number; teleop: number }>;
   endgameMeans: Record<string, number>;
   /** Share of robots that broke down / had a mechanism failure, recoveries, and power losses per robot. */
@@ -109,6 +111,11 @@ export async function runSims(
     penalty: summarize(sides.map((s) => s.breakdown.penalty)),
     margin: summarize(results.map((r) => Math.abs(r.blue.score - r.red.score))),
   };
+  const winRates = {
+    blue: +(results.filter((r) => r.blue.won).length / results.length).toFixed(3),
+    red: +(results.filter((r) => r.red.won).length / results.length).toFixed(3),
+    tie: +(results.filter((r) => !r.blue.won && !r.red.won).length / results.length).toFixed(3),
+  };
   const rpRates: Record<string, number> = {};
   for (const s of sides)
     for (const k of Object.keys(s.rpBreakdown)) rpRates[k] = (rpRates[k] ?? 0) + 1 / sides.length;
@@ -143,6 +150,7 @@ export async function runSims(
       difficulty,
       stats,
       rpRates,
+      winRates,
       targetMeans,
       endgameMeans,
       reliability,
@@ -172,6 +180,10 @@ async function main() {
   console.table(summary.targetMeans);
   console.log('Endgame actions per alliance per match (mean):', summary.endgameMeans);
   console.log('RP rates per alliance:', summary.rpRates);
+  const w = summary.winRates;
+  console.log(
+    `Wins: blue ${(w.blue * 100).toFixed(1)}%, red ${(w.red * 100).toFixed(1)}%, tie ${(w.tie * 100).toFixed(1)}%`,
+  );
   const rel = summary.reliability;
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   console.log(

@@ -12,6 +12,7 @@ Status of the build plan. Update this file in every PR.
 | M5 Pipeline           | `frc-game-from-manual` skill, ingest + calibrate tools, Playwright smoke                                 | done                          |
 | M6 Stress tests       | blind builds of past seasons from their manuals; real-match comparison only on request                   | 2023 Charged Up built (blind) |
 | M7 Spectator mode     | watch six bots: sideline camera, follow any robot with bot commentary, 0.25x-4x playback                 | done                          |
+| M8 Win probability    | Monte Carlo match-ups of one spectator setup in Web Workers: win chance ± 95 % CI, scores, RPs, replays  | done                          |
 
 ## Known gaps / ideas
 
@@ -24,7 +25,8 @@ Status of the build plan. Update this file in every PR.
 - Defense has no counter-defense (scorers don't route around a defender), and one defender is only worth about 3 points. Pin detection (G202) and protected-zone fouls (G207) are game rules in `2023-chargedup/rules.ts`, not engine features yet.
 - Contact for G207 fouls is approximated by center distance (0.95 m), not real bumper contact.
 
-- Spectator mode has no replay or scrubbing (it only plays forward), and no auto-director that cuts to the most interesting robot.
+- Spectator mode has no scrubbing (it only plays forward), and no auto-director that cuts to the most interesting robot. It can replay a sampled win-probability match-up from its seed.
+- Win probability: 1000 match-ups take minutes, not seconds (each headless match is ~1-2 s of CPU; about 9 min on a 4-core machine with 3 workers). There's no strategy matrix (every strategy pair in one run), no per-robot "what if I swap this robot" comparison, and runs aren't saved across reloads. The worker bundle duplicates the engine and Rapier (+4.4 MB, loaded only when a run starts). The numbers are as good as the bots and archetype estimates, which are blind-build guesses, not measurements.
 
 - 2023 stress test: the sim is optimistic. Strong alliances reach the bonus RPs in most normal matches. Bots drive perfect paths, there's no defense, balancing never fails and tipped cones cost nothing. A balance-failure chance or a loading-zone defense role would bring the rates down (see `src/games/2023-chargedup/SOURCES.md`).
 - The 2023 manual URL now serves the April revision, so a blind January build can't verify that no value changed after January without reading later Team Updates. Archive the kickoff manual at kickoff for future stress tests.
