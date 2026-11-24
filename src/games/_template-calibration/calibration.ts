@@ -8,6 +8,8 @@ import { DEFAULT_METRICS, num, simCount, type CalibrationSpec } from '../../engi
 export const calibration: CalibrationSpec = {
   // early district event, strong district championship / regional, championship division
   events: ['<yyyy><event>', '<yyyy><event>'],
+  // or every official event of the season (its average match): season: <yyyy>, events: [],
+  // 2023-chargedup/calibration.ts is the worked example.
   metrics: [
     ...DEFAULT_METRICS,
     // {

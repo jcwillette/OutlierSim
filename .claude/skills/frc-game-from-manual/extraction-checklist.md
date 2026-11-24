@@ -95,9 +95,11 @@ Rules whose penalty isn't a foul (e.g. 2023 G209: touched robots count as engage
 
 ## Archetypes (proposed)
 
-| Name | Concept | Drivetrain (motor, module / gearbox) and weight | Capacity | Intake | Place/shoot times | Endgame | Reliability | Why it's plausible |
-| ---- | ------- | ----------------------------------------------- | -------- | ------ | ----------------- | ------- | ----------- | ------------------ |
-|      |         |                                                 |          |        |                   |         |             |                    |
+One per seventh of real robots, best to worst, from `robot-baselines.md` (2023-calibrated tiers; not for stress tests of 2023 or earlier).
+
+| Name | Tier (1-7) | Concept | Drivetrain (motor, module / gearbox) and weight | Capacity | Intake | Place/shoot times (mechanism) | Line-up `alignSec` | Auto routine | Endgame (time, success) | Reliability | Why it's plausible |
+| ---- | ---------- | ------- | ----------------------------------------------- | -------- | ------ | ----------------------------- | ------------------ | ------------ | ----------------------- | ----------- | ------------------ |
+|      |            |         |                                                 |          |        |                               |                    |              |                         |             |                    |
 
 ## Lineups (alliance presets for the menu)
 

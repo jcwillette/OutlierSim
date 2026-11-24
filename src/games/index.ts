@@ -1,6 +1,7 @@
 import type { CalibrationSpec } from '../engine/sim/calibration.ts';
 import type { GameDefinition } from '../engine/sim/types.ts';
 import { definition as reference } from './0000-reference/definition.ts';
+import { calibration as chargedUp2023Calibration } from './2023-chargedup/calibration.ts';
 import { definition as chargedUp2023 } from './2023-chargedup/definition.ts';
 
 /**
@@ -14,7 +15,11 @@ export interface GameEntry {
   calibration?: CalibrationSpec;
 }
 
-export const GAMES: GameEntry[] = [{ definition: chargedUp2023 }, { definition: reference, hidden: false }];
+export const GAMES: GameEntry[] = [
+  // The owner asked for a real-match comparison of 2023 (ADR 0004): see its CALIBRATION.md.
+  { definition: chargedUp2023, calibration: chargedUp2023Calibration },
+  { definition: reference, hidden: false },
+];
 
 export function findGame(id: string): GameDefinition | undefined {
   return GAMES.find((g) => g.definition.id === id)?.definition;
