@@ -14,8 +14,15 @@ export const CONTACT_GAP = 0.03;
 const PUSH_CMD = 0.3;
 /** A pinned robot is commanding at least this much drive... */
 const TRYING_CMD = 0.3;
-/** ...and moving slower than this (m/s). */
+/** ...and moving slower than this (m/s)... */
 const STUCK_SPEED = 0.25;
+/**
+ * ...while pressed against something beyond it: a contact whose normal is at most this steep
+ * (|z|, so a wall or a robot's side, not the floor or a ramp under it)...
+ */
+const SIDE_NORMAL_Z = 0.7;
+/** ...and points at least this much away from the pinning robot (cosine). */
+const BEYOND_COS = 0.3;
 const DEFAULT_REPEAT_SEC = 3;
 export const DEFAULT_PIN_SEC = 5;
 /** 6 ft: "PINNED until the ROBOTS have separated by at least 6 ft." */
@@ -118,8 +125,10 @@ export class Referee {
   private readonly gaps: number[] = [];
   private readonly bluePins: boolean[] = [];
   private readonly redPins: boolean[] = [];
-  /** Robots being pinned this tick, by robot id. */
-  private readonly pinned: boolean[];
+  /** Who is pinning each robot this tick: a bit per pinning robot's id, by pinned robot id. */
+  private readonly pinnedBy: number[];
+  /** Rapier handles of the robots' bodies (to tell robots from pieces in contacts). */
+  private readonly robotBodies: Set<number>;
   /** Each robot's heading cosine and sine this tick, by robot id. */
   private readonly cos: number[] = [];
   private readonly sin: number[] = [];
@@ -144,7 +153,8 @@ export class Referee {
     });
     this.pinning = m.def.fouls.pinning;
     this.halfDiag = m.robots.map((r) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2);
-    this.pinned = m.robots.map(() => false);
+    this.pinnedBy = m.robots.map(() => 0);
+    this.robotBodies = new Set(m.robots.map((r) => r.body.handle));
     this.farGap = Math.max(
       CONTACT_GAP,
       this.pinning ? (this.pinning.releaseGap ?? DEFAULT_PIN_RELEASE_GAP) : 0,
@@ -165,8 +175,8 @@ export class Referee {
       this.cos[r.id] = Math.cos(yaw);
       this.sin[r.id] = Math.sin(yaw);
     }
-    const { cos, sin, halfDiag, gaps, bluePins, redPins, pinned } = this;
-    pinned.fill(false);
+    const { cos, sin, halfDiag, gaps, bluePins, redPins, pinnedBy } = this;
+    pinnedBy.fill(0);
     // Contact fouls, and who is pinning whom (a pin ends when the pinning robot gets pinned, so
     // every pair is looked at before any pin count moves).
     let k = 0;
@@ -185,10 +195,10 @@ export class Referee {
         gaps[k] = gap;
         const touching = gap < CONTACT_GAP;
         if (touching) this.contactFouls(a, b);
-        bluePins[k] = !!this.pinning && touching && pinning(a, b);
-        redPins[k] = !!this.pinning && touching && pinning(b, a);
-        if (bluePins[k]) pinned[b.id] = true;
-        if (redPins[k]) pinned[a.id] = true;
+        bluePins[k] = !!this.pinning && touching && this.pinningNow(a, b);
+        redPins[k] = !!this.pinning && touching && this.pinningNow(b, a);
+        if (bluePins[k]) pinnedBy[b.id]! |= 1 << a.id;
+        if (redPins[k]) pinnedBy[a.id]! |= 1 << b.id;
         k++;
       }
     }
@@ -268,6 +278,37 @@ export class Referee {
   }
 
   /**
+   * `attacker` is pinning `victim`: pressing it (`pressing`) against something beyond it, a wall, a
+   * field element or another robot, so it can't get away. Two robots pushing head-on in the open
+   * are a shoving match, not a pin. Reads Rapier's contacts from the last step (it only looks).
+   */
+  private pinningNow(attacker: Robot, victim: Robot): boolean {
+    if (!pressing(attacker, victim)) return false;
+    const world = this.m.world;
+    const own = victim.body.collider(0);
+    // Away from the attacker, in physics axes (contact normals are in Rapier's world).
+    const a = attacker.body.translation();
+    const v = victim.body.translation();
+    const d = Math.hypot(v.x - a.x, v.y - a.y) || 1;
+    const ux = (v.x - a.x) / d;
+    const uy = (v.y - a.y) / d;
+    let blocked = false;
+    world.contactPairsWith(own, (other) => {
+      const body = other.parent();
+      if (blocked || !body || body.handle === attacker.body.handle) return;
+      // Walls, elements and robots block; game pieces get pushed aside.
+      if (!body.isFixed() && !this.robotBodies.has(body.handle)) return;
+      world.contactPair(own, other, (manifold, flipped) => {
+        if (blocked || manifold.numContacts() === 0) return;
+        const n = manifold.normal();
+        const s = flipped ? -1 : 1; // from the victim toward the other collider
+        if (Math.abs(n.z) <= SIDE_NORMAL_Z && s * (n.x * ux + n.y * uy) >= BEYOND_COS) blocked = true;
+      });
+    });
+    return blocked;
+  }
+
+  /**
    * One robot's pin on another this tick. The count runs while `attacker` is pinning `victim` and
    * pauses while it isn't. The pin ends once the robots are `releaseGap` apart, either robot has
    * moved `releaseGap` from where the pin started, or the pinning robot is pinned itself. Pinning
@@ -285,7 +326,8 @@ export class Referee {
     let p = this.pins.get(key);
     const t = this.m.time;
     const release = rule.releaseGap ?? DEFAULT_PIN_RELEASE_GAP;
-    const pinnedItself = this.pinned[attacker.id]!;
+    // Pinned itself by a third robot (its own victim pushing back doesn't count).
+    const pinnedItself = (this.pinnedBy[attacker.id]! & ~(1 << victim.id)) !== 0;
     if (
       p &&
       p.endedAt === null &&
@@ -320,10 +362,10 @@ export class Referee {
 }
 
 /**
- * `attacker` is pressing `victim`, which is trying to move but can't (against a wall, an element or
- * another robot) and isn't locked in an endgame action.
+ * `attacker` is pressing `victim`, which is trying to move but can't and isn't locked in an
+ * endgame action. Which way the victim wants to go doesn't matter (as the manuals say).
  */
-function pinning(attacker: Robot, victim: Robot): boolean {
+function pressing(attacker: Robot, victim: Robot): boolean {
   if (victim.endgameDone || victim.speed >= STUCK_SPEED) return false;
   if (Math.hypot(victim.command.vx, victim.command.vy) <= TRYING_CMD) return false;
   const dx = victim.x - attacker.x;

@@ -392,8 +392,9 @@ export interface ContactFoulRule {
 }
 
 /**
- * Pinning (e.g. 2023 G202): pressing an opponent that is trying to move but can't. The count runs
- * while the pin lasts and pauses while it doesn't; every `countSec` of it draws a foul (the first
+ * Pinning (e.g. 2023 G202): pressing an opponent that is trying to move but can't, against a wall,
+ * a field element or another robot beyond it (two robots shoving head-on in the open aren't
+ * pinning each other). The count runs while the pin lasts and pauses while it doesn't; every `countSec` of it draws a foul (the first
  * `severity`, then `repeatSeverity`). The pin ends once the robots are `releaseGap` apart, either
  * robot has moved `releaseGap` from where it started, or the pinning robot gets pinned itself
  * (the usual FRC wording). Pinning the same robot again within `repinSec` resumes the count.

@@ -376,6 +376,32 @@ describe('pinning', () => {
     expect(slide(1)).toEqual(['foul:G2 pinning']); // still the same pin: 3 + 4.5 s
   });
 
+  it('is only a pin when the pressed robot is up against something (a shoving match is not)', () => {
+    // Head-on in the open: both press, neither can move, nothing behind either.
+    const m = setup(withFouls({}, true));
+    const [blue, red] = [m.robots[1]!, m.robots[4]!]; // two ordinary robots
+    put(blue, 4, 4);
+    put(red, 4 + 0.8 + 0.01, 4);
+    blue.controller = ctl(() => ({ vx: 1 }));
+    red.controller = ctl(() => ({ vx: -1 }));
+    stepFor(m, 6);
+    expect(Math.abs(blue.x - 4)).toBeLessThan(0.3); // a real stalemate
+    expect(fouls(m)).toEqual([]);
+  });
+
+  it('calls only the robot doing the pinning when the pinned one pushes back', () => {
+    const m = setup(withFouls({}, true));
+    const [blue, red] = [m.robots[0]!, m.robots[3]!]; // red is the weak robot
+    put(red, 4, 0.45); // against the y = 0 wall
+    put(blue, 4, 0.45 + 0.8 + 0.01);
+    blue.controller = ctl(() => ({ vy: -1 }));
+    red.controller = ctl(() => ({ vy: 1 })); // trying to push blue away
+    stepFor(m, 5.5);
+    expect(fouls(m)).toEqual(['foul:G2 pinning']);
+    expect(m.fouls.blue.minor).toBe(1);
+    expect(m.fouls.red).toEqual({ minor: 0, major: 0 });
+  });
+
   it("reports the count to both robots while the pin is on (the HUD's hand count)", () => {
     const m = pin(3);
     const [blue, red] = [m.robots[0]!, m.robots[3]!];
