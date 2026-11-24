@@ -18,6 +18,13 @@ set -euo pipefail
 
 pdf="${1:?usage: ingest-manual.sh <manual.pdf> <game-id> [--page N]}"
 game="${2:?usage: ingest-manual.sh <manual.pdf> <game-id> [--page N]}"
+[[ -f "$pdf" ]] || { echo "No such file: $pdf" >&2; exit 2; }
+for tool in pdfinfo pdftotext pdftoppm sha256sum; do
+  command -v "$tool" >/dev/null || {
+    echo "ingest-manual.sh needs $tool (Debian/Ubuntu: apt-get install -y poppler-utils). ImageMagick's montage is optional (contact sheets)." >&2
+    exit 2
+  }
+done
 out="work/${game}/manual"
 mkdir -p "$out/pages" "$out/thumbs" "$out/sheets" "$out/hi"
 

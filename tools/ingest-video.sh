@@ -17,6 +17,16 @@ set -euo pipefail
 src="${1:?usage: ingest-video.sh <video-file-or-URL> <game-id> [interval]}"
 game="${2:?usage: ingest-video.sh <video-file-or-URL> <game-id> [interval]}"
 interval="${3:-3}"
+for tool in ffmpeg ffprobe; do
+  command -v "$tool" >/dev/null || {
+    echo "ingest-video.sh needs $tool (Debian/Ubuntu: apt-get install -y ffmpeg). ImageMagick's montage is optional (contact sheets)." >&2
+    exit 2
+  }
+done
+if [[ ! "$src" =~ ^https?:// && ! -f "$src" ]]; then
+  echo "No such file: $src" >&2
+  exit 2
+fi
 out="work/${game}/video"
 mkdir -p "$out/frames" "$out/scenes" "$out/sheets"
 
