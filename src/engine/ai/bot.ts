@@ -88,8 +88,9 @@ interface MatchAI {
   /** Where each bot is headed to stand (score / load / endgame spot), shared within its alliance. */
   intents: Record<Alliance, Map<number, Vec2>>;
   /**
-   * Each alliance's protected zones (`botHints.protectedZones`), and the same plus its endgame-only
-   * ones (`endgameProtectedZones`): static, so collected once per match.
+   * Each alliance's protected zones (`botHints.protectedZones`, by default the zones of the game's
+   * contact fouls), and the same plus its endgame-only ones (`endgameProtectedZones`, by default the
+   * `endgameOnly` contact fouls' zones): static, so collected once per match.
    */
   protected: Record<Alliance, { always: ZoneCheck[]; endgame: ZoneCheck[] }>;
   /** Path penalty for each alliance's robots: the opponent's protected zones. */
