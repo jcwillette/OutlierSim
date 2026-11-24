@@ -194,8 +194,8 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     for (const z of c.zones)
       if (!sidedZones.has(z)) err(path, `zone '${z}' is not a sided (blue-authored) zone`);
     if (!severities.has(c.severity)) err(path, "severity must be 'minor' or 'major'");
-    if (c.inside !== 'intruder' && c.inside !== 'protected')
-      err(path, "inside must be 'intruder' or 'protected'");
+    if (c.inside !== 'intruder' && c.inside !== 'protected' && c.inside !== 'either')
+      err(path, "inside must be 'intruder', 'protected' or 'either'");
     if (c.repeatSec !== undefined && !(c.repeatSec > 0)) err(path, 'repeatSec must be > 0');
     if (!c.source) warn(path, 'no source citation');
   });

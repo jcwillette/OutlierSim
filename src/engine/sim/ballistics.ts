@@ -32,10 +32,14 @@ export interface ShotSolution {
   speed: number;
 }
 
+/** How a piece must arrive at the aim point: any way, falling (top-entry goals) or still rising. */
+export type ShotArrival = 'any' | 'descending' | 'rising';
+
 /**
  * Choose hood pitch and flywheel speed (<= maxSpeed) to hit a point `d` away horizontally and `h`
  * higher. The pitch stays within the hood range. 'high' prefers steeper shots than the minimum-energy
- * one, 'low' prefers flatter ones. With `descending`, the piece must be falling at the target.
+ * one, 'low' prefers flatter ones. `arrival` 'descending': the piece must be falling at the target;
+ * 'rising': it must not be falling yet (a mouth under a hood), and the fastest such shot is taken.
  */
 export function solveShot(
   maxSpeed: number,
@@ -43,18 +47,23 @@ export function solveShot(
   h: number,
   prefer: 'high' | 'low',
   pitchRangeDeg: readonly [number, number] = [10, 80],
-  descending = false,
+  arrival: ShotArrival = 'any',
 ): ShotSolution | null {
   const deg = Math.PI / 180;
   const minEnergy = Math.PI / 4 + Math.atan2(h, d) / 2;
-  const preferred = minEnergy + (prefer === 'high' ? 12 : -6) * deg;
+  // A rising arrival: the fastest shot the flywheel makes (the lowest hood angle), which arrives
+  // rising most steeply and so meets a downward-facing mouth most squarely.
+  const preferred = arrival === 'rising' ? 0 : minEnergy + (prefer === 'high' ? 12 : -6) * deg;
   let best: ShotSolution | null = null;
   let bestCost = Infinity;
   for (let a = pitchRangeDeg[0]; a <= pitchRangeDeg[1] + 1e-9; a += 0.5) {
     const pitch = a * deg;
     const speed = speedForPitch(pitch, d, h);
     if (speed === null || speed > maxSpeed) continue;
-    if (descending && speed * Math.sin(pitch) - GRAVITY * flightTime(speed, pitch, d) >= 0) continue;
+    if (arrival !== 'any') {
+      const vz = speed * Math.sin(pitch) - GRAVITY * flightTime(speed, pitch, d);
+      if (arrival === 'descending' ? vz >= 0 : vz < 0) continue;
+    }
     const cost = Math.abs(pitch - preferred);
     if (cost < bestCost) {
       bestCost = cost;
@@ -62,4 +71,20 @@ export function solveShot(
     }
   }
   return best;
+}
+
+/**
+ * The shot a shooter takes at a target `d` away and `h` higher: the target's preferred arc ('high'
+ * for top-entry goals, else 'low'; 'rising' is the fastest shot, still rising at the aim point).
+ */
+export function shotAt(
+  sh: { exitSpeed: number; pitchRangeDeg?: [number, number] },
+  t: { arc?: 'high' | 'low' | 'rising'; aperture?: { entry?: 'any' | 'down' } },
+  d: number,
+  h: number,
+): ShotSolution | null {
+  const down = t.aperture?.entry === 'down';
+  const arc = t.arc ?? (down ? 'high' : 'low');
+  const arrival: ShotArrival = down ? 'descending' : arc === 'rising' ? 'rising' : 'any';
+  return solveShot(sh.exitSpeed, d, h, arc === 'rising' ? 'low' : arc, sh.pitchRangeDeg, arrival);
 }

@@ -199,11 +199,23 @@ describe('Match', () => {
 describe('solveShot', () => {
   it('finds a descending shot within the hood range and speed limit', async () => {
     const { solveShot, flightTime } = await import('../src/engine/sim/ballistics.ts');
-    const s = solveShot(9, 3, 1.4, 'high', [10, 80], true)!;
+    const s = solveShot(9, 3, 1.4, 'high', [10, 80], 'descending')!;
     expect(s.speed).toBeLessThanOrEqual(9);
     const t = flightTime(s.speed, s.pitch, 3);
     expect(s.speed * Math.sin(s.pitch) - 9.81 * t).toBeLessThan(0);
     expect(s.speed * Math.sin(s.pitch) * t - 0.5 * 9.81 * t * t).toBeCloseTo(1.4, 5);
     expect(solveShot(5, 10, 2, 'high')).toBeNull();
+  });
+
+  it("finds a flat shot still rising at the target for 'rising' arrival", async () => {
+    const { solveShot, flightTime } = await import('../src/engine/sim/ballistics.ts');
+    const s = solveShot(15, 4, 1.2, 'low', [15, 65], 'rising')!;
+    const t = flightTime(s.speed, s.pitch, 4);
+    expect(s.speed * Math.sin(s.pitch) - 9.81 * t).toBeGreaterThanOrEqual(0);
+    expect(s.speed * Math.sin(s.pitch) * t - 0.5 * 9.81 * t * t).toBeCloseTo(1.2, 5);
+    // The fastest one: half a degree lower would need more than the flywheel's 15 m/s.
+    expect(s.speed).toBeGreaterThan(14);
+    const deg = s.pitch / (Math.PI / 180);
+    expect(solveShot(15, 4, 1.2, 'low', [deg - 0.5, deg - 0.5], 'rising')).toBeNull();
   });
 });

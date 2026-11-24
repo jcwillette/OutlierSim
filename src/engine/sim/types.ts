@@ -190,8 +190,12 @@ export interface ScoringTarget {
   aperture?: ApertureSpec;
   /** Point shooters aim at; defaults to aperture center. */
   aimPoint?: Vec3;
-  /** Preferred trajectory for shooters. Default 'high' for entry 'down', else 'low'. */
-  arc?: 'high' | 'low';
+  /**
+   * Preferred trajectory for shooters. Default 'high' for entry 'down', else 'low'. 'rising': the
+   * fastest shot the shooter makes (lowest hood angle), still rising at the aim point, for a mouth
+   * that opens downward under a hood (2024 SPEAKER), where a falling piece would hit the hood.
+   */
+  arc?: 'high' | 'low' | 'rising';
   afterScore?: AfterScore;
   /**
    * Visual only: where scored pieces are drawn (piece center). Pieces stack upward by their height
@@ -373,8 +377,10 @@ export interface ContactFoulRule {
    *   their opponent's LOADING ZONE or COMMUNITY may not contact an opponent ROBOT").
    * - 'protected': the protected robot is in the zone (contact with a robot that is loading or
    *   climbing in its own zone).
+   * - 'either': either robot is in the zone (2024 G423: "if any part of either ROBOT'S BUMPERS
+   *   are in the opponent's SOURCE ZONE or AMP ZONE"). One contact draws one call.
    */
-  inside: 'intruder' | 'protected';
+  inside: 'intruder' | 'protected' | 'either';
   /** That robot must be entirely in the zone. Default: any part of it counts. */
   fully?: boolean;
   severity: 'minor' | 'major';

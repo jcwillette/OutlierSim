@@ -218,7 +218,8 @@ export class Referee {
   /**
    * The contact rules that would call a foul on `r` if it touched an opponent now: `r` is in an
    * opponent's zone (`inside: 'intruder'`), or an opponent within a couple of meters is in its own
-   * (`inside: 'protected'`). For the HUD, so students learn where contact costs points.
+   * (`inside: 'protected'`), or either (`'either'`). For the HUD, so students learn where contact
+   * costs points.
    */
   contactWarnings(r: Robot): ContactWarning[] {
     const m = this.m;
@@ -227,10 +228,10 @@ export class Referee {
     const opp: Alliance = r.alliance === 'blue' ? 'red' : 'blue';
     for (const { rule, named } of this.contact) {
       if (rule.endgameOnly && !m.isEndgame) continue;
-      if (rule.inside === 'intruder') {
+      if (rule.inside !== 'protected') {
         const z = named[opp].find((x) => robotInZone(r, x.region, rule.fully));
         if (z) out.push({ rule, zone: z.name });
-        continue;
+        if (z || rule.inside === 'intruder') continue;
       }
       for (const o of m.robots) {
         if (o.alliance !== opp || Math.hypot(o.x - r.x, o.y - r.y) > WARN_RANGE) continue;
@@ -266,8 +267,12 @@ export class Referee {
         [a, b],
         [b, a],
       ] as const) {
-        const who = rule.inside === 'intruder' ? offender : owner;
-        if (!zones[owner.alliance].some((z) => robotInZone(who, z, rule.fully))) continue;
+        const inZone = (who: Robot) => zones[owner.alliance].some((z) => robotInZone(who, z, rule.fully));
+        const called =
+          rule.inside === 'either'
+            ? inZone(offender) || inZone(owner)
+            : inZone(rule.inside === 'intruder' ? offender : owner);
+        if (!called) continue;
         if (rule.forgiveForced && forcedBy(owner, offender)) continue;
         const key = `${rule.id}:${offender.id}>${owner.id}`;
         if (m.time - (this.lastCall.get(key) ?? -Infinity) < (rule.repeatSec ?? DEFAULT_REPEAT_SEC)) continue;
