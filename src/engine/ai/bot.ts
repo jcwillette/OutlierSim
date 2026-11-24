@@ -12,7 +12,15 @@ import {
 import { handedness as frameHandedness } from '../sim/frame.ts';
 import { DEFAULT_PIN_RELEASE_GAP } from '../sim/referee.ts';
 import { clamp, distToRegion, pointInRegion, regionCenter, turnTo, wrapAngle } from '../sim/math.ts';
-import type { Alliance, AllianceStrategy, GameDefinition, Region2D, RobotRole, Vec2 } from '../sim/types.ts';
+import type {
+  Alliance,
+  AllianceStrategy,
+  GameDefinition,
+  Region2D,
+  RobotArchetype,
+  RobotRole,
+  Vec2,
+} from '../sim/types.ts';
 import { AllianceNav, type DynamicObstacle } from './navgrid.ts';
 import { PointIndex } from './spatial.ts';
 
@@ -163,36 +171,59 @@ function shotSpots(m: Match, r: Robot, t: XTarget): PointIndex {
   const key = `${r.archetype.id}|${t.id}`;
   const cached = sets.get(key);
   if (cached) return cached;
-  const spots: Vec2[] = [];
-  const sh = r.archetype.shooter;
-  if (sh && t.aperture) {
-    const aim = t.aimPoint ?? t.aperture.center;
-    const grid = gridFor(m, r);
-    const launchZ = Math.max(sh.height, r.archetype.frame.height + 0.12);
-    const down = t.aperture.entry === 'down';
-    for (let d = 1.2; d <= sh.maxRange * 0.9; d += 0.4) {
-      for (let k = 0; k < 32; k++) {
-        const a = (k / 32) * 2 * Math.PI;
-        const p = { x: aim.x + d * Math.cos(a), y: aim.y + d * Math.sin(a) };
-        if (!grid.isFree(p)) continue;
-        if (
-          !solveShot(
-            sh.exitSpeed,
-            d,
-            aim.z - launchZ,
-            t.arc ?? (down ? 'high' : 'low'),
-            sh.pitchRangeDeg,
-            down,
-          )
-        )
-          continue;
-        spots.push(p);
-      }
-    }
-  }
-  const set = new PointIndex(spots);
+  const set = new PointIndex(findShotSpots(gridFor(m, r), r.archetype, t));
   sets.set(key, set);
   return set;
+}
+
+/**
+ * Open floor spots (on `grid`) from which robot type `a` can make a shot into target `t`: rings
+ * around the aim point, 1.2 m out to 90 % of the shooter's range, where `solveShot` finds a hood
+ * angle and speed. Empty if `a` has no shooter or `t` no aperture.
+ */
+export function findShotSpots(grid: AllianceNav, a: RobotArchetype, t: XTarget): Vec2[] {
+  const spots: Vec2[] = [];
+  const sh = a.shooter;
+  if (!sh || !t.aperture) return spots;
+  const aim = t.aimPoint ?? t.aperture.center;
+  const launchZ = Math.max(sh.height, a.frame.height + 0.12);
+  const down = t.aperture.entry === 'down';
+  for (let d = 1.2; d <= sh.maxRange * 0.9; d += 0.4) {
+    for (let k = 0; k < 32; k++) {
+      const ang = (k / 32) * 2 * Math.PI;
+      const p = { x: aim.x + d * Math.cos(ang), y: aim.y + d * Math.sin(ang) };
+      if (!grid.isFree(p)) continue;
+      if (
+        !solveShot(sh.exitSpeed, d, aim.z - launchZ, t.arc ?? (down ? 'high' : 'low'), sh.pitchRangeDeg, down)
+      )
+        continue;
+      spots.push(p);
+    }
+  }
+  return spots;
+}
+
+/**
+ * A heading from which a robot of `length` can drive its intake onto a piece at `pos` (its center
+ * must fit just behind the piece), trying the heading from `from` first, then turning further and
+ * further away from it (left first, times `hand`). Null if the piece can't be reached (e.g. it is
+ * against a wall).
+ */
+export function approachHeading(
+  grid: AllianceNav,
+  length: number,
+  from: Vec2,
+  pos: Vec2,
+  hand: 1 | -1,
+): number | null {
+  const back = length / 2 + 0.25;
+  const direct = Math.atan2(pos.y - from.y, pos.x - from.x);
+  for (const off of [0, 0.5, -0.5, 1, -1, 1.6, -1.6, 2.3, -2.3, Math.PI]) {
+    const yaw = direct + hand * off;
+    const stand = { x: pos.x - Math.cos(yaw) * back, y: pos.y - Math.sin(yaw) * back };
+    if (grid.isFree(stand)) return yaw;
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------ brain
@@ -393,17 +424,8 @@ export class BotBrain implements RobotController {
    * to stand just behind it), preferring the heading straight from the robot. Null if unreachable.
    */
   private approachYaw(m: Match, r: Robot, pos: Vec2): number | null {
-    const grid = gridFor(m, r);
-    const back = r.archetype.frame.length / 2 + 0.25;
-    const direct = Math.atan2(pos.y - r.y, pos.x - r.x);
     // Left turns first, in this alliance's frame (red's mirror image of blue's choice).
-    const hand = handedness(m, r);
-    for (const off of [0, 0.5, -0.5, 1, -1, 1.6, -1.6, 2.3, -2.3, Math.PI]) {
-      const yaw = direct + hand * off;
-      const stand = { x: pos.x - Math.cos(yaw) * back, y: pos.y - Math.sin(yaw) * back };
-      if (grid.isFree(stand)) return yaw;
-    }
-    return null;
+    return approachHeading(gridFor(m, r), r.archetype.frame.length, r, pos, handedness(m, r));
   }
 
   private travelBetween(r: Robot, a: Vec2, b: Vec2): number {
