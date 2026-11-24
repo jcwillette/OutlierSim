@@ -21,3 +21,35 @@ describe('plausibility tool helpers', () => {
     expect(pieceCeiling(ref).available).toBe(Infinity);
   });
 });
+
+describe('plausibility tool, end to end', () => {
+  it('runs validation, the audit and a tiny matrix in worker threads', async () => {
+    const { execFile } = await import('node:child_process');
+    const out = await new Promise<string>((resolve, reject) =>
+      execFile(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          'tools/plausibility.ts',
+          '--game',
+          '2023-chargedup',
+          '--matches',
+          '1',
+          '--difficulties',
+          'normal',
+          '--lineups',
+          'typical',
+          '--workers',
+          '1',
+        ],
+        { timeout: 120_000 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+      ),
+    );
+    expect(out).toContain('validateDefinition: 0 errors');
+    expect(out).toContain('auditDefinition');
+    expect(out).toMatch(/\| Typical qualification alliance \| normal \| \d+/);
+    expect(out).toMatch(/^- (PASS|WARN) Difficulty|^- (PASS|WARN) Pieces/m);
+  }, 120_000);
+});
