@@ -1225,6 +1225,27 @@ const SPEEDS = [0.25, 0.5, 1, 2, 4] as const;
 const robotName = (r: Robot) => `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${r.station + 1}`;
 
 /**
+ * The text or HTML last written to each HUD element. The HUD updates every frame, and rewriting an
+ * unchanged element still costs the browser style and layout work, so writes go through these.
+ */
+const written = new WeakMap<Element, string>();
+
+/** Set an element's text, only when it changed. */
+function setText(el: Element, text: string): void {
+  if (written.get(el) === text) return;
+  written.set(el, text);
+  el.textContent = text;
+}
+
+/** Set an element's HTML (built from trusted strings), only when it changed. */
+function setHtml(el: Element, html: string): void {
+  const key = `\u0000${html}`;
+  if (written.get(el) === key) return;
+  written.set(el, key);
+  el.innerHTML = html;
+}
+
+/**
  * One match on screen. With `setup.mode === 'play'` the student drives one robot; with 'watch' all
  * six robots are bots and the camera follows whichever robot the spectator picks.
  */
@@ -1461,6 +1482,7 @@ class Hud {
   private pauseCard: HTMLElement | null = null;
   private lastIndicatorKey = '';
   private lastToastKey = '';
+  private lastHeldKey = '';
   /** Robot shown in the status panel: the player, or the followed robot when spectating. */
   private robot: Robot;
   private speed = 1;
@@ -1522,7 +1544,7 @@ class Hud {
   }
 
   setCountdown(text: string | null): void {
-    this.countdown.textContent = text ?? '';
+    setText(this.countdown, text ?? '');
   }
 
   setPaused(paused: boolean, toMenu: () => void): void {
@@ -1549,8 +1571,8 @@ class Hud {
 
   update(): void {
     const m = this.match;
-    this.blue.textContent = String(m.ledger.total('blue'));
-    this.red.textContent = String(m.ledger.total('red'));
+    setText(this.blue, String(m.ledger.total('blue')));
+    setText(this.red, String(m.ledger.total('red')));
     const phaseName: Record<string, string> = {
       pre: 'pre-match',
       auto: 'autonomous',
@@ -1558,8 +1580,8 @@ class Hud {
       teleop: m.isEndgame ? 'endgame' : 'teleop',
       post: 'final',
     };
-    this.time.textContent = fmtTime(m.remaining);
-    this.phase.textContent = phaseName[m.phase] ?? m.phase;
+    setText(this.time, fmtTime(m.remaining));
+    setText(this.phase, phaseName[m.phase] ?? m.phase);
     this.clock.classList.toggle('endgame', m.isEndgame);
 
     const ind = [...m.indicators.entries()];
@@ -1587,18 +1609,22 @@ class Hud {
 
     const r = this.robot;
     const cap = r.totalCapacity;
-    const colors = new Map(m.def.pieces.map((p) => [p.id, p.color]));
-    this.held.replaceChildren(
-      ...Array.from({ length: cap }, (_, i) => {
-        const t = r.held[i];
-        return t
-          ? h('span', { style: `background:${colors.get(t)}`, title: t })
-          : h('span', { class: 'empty' });
-      }),
-    );
+    const heldKey = `${r.id}:${cap}:${r.held.join(',')}`;
+    if (heldKey !== this.lastHeldKey) {
+      this.lastHeldKey = heldKey;
+      const colors = new Map(m.def.pieces.map((p) => [p.id, p.color]));
+      this.held.replaceChildren(
+        ...Array.from({ length: cap }, (_, i) => {
+          const t = r.held[i];
+          return t
+            ? h('span', { style: `background:${colors.get(t)}`, title: t })
+            : h('span', { class: 'empty' });
+        }),
+      );
+    }
     if (this.mode.kind === 'watch') {
-      this.hint.textContent = `${describeBot(m, r, this.mode.brains.get(r.id))} · ${m.ledger.byRobot(r.id)} pts`;
-    } else this.hint.innerHTML = this.hintHtml(this.mode.autoPilot, this.mode.controller);
+      setText(this.hint, `${describeBot(m, r, this.mode.brains.get(r.id))} · ${m.ledger.byRobot(r.id)} pts`);
+    } else setHtml(this.hint, this.hintHtml(this.mode.autoPilot, this.mode.controller));
   }
 
   private hintHtml(autoPilot: boolean, controller: PlayerController): string {
