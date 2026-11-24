@@ -130,19 +130,19 @@ The menu offers these compositions (`lineups` in `definition.ts`), plus a strate
 
 Bots board the Charge Station dock-only robots first and the balancer last (`botHints.endgameOrder`), because the station is LEVEL only if a balancer gets on last.
 
-Head-to-head against a _Typical_ alliance (32 matches each, normal, breakdowns on):
+Head-to-head against a _Typical_ alliance (`npm run plausibility -- --game 2023-chargedup --against typical --matches 32 --difficulties normal`, breakdowns on):
 
-| Blue lineup      | Blue score | Red (Typical) score | Blue wins | Blue Sustainability | Blue Activation | Red teleop | G207 fouls on blue / red |
-| ---------------- | ---------- | ------------------- | --------- | ------------------- | --------------- | ---------- | ------------------------ |
-| Powerhouse       | 190        | 162                 | 94%       | 100%                | 84%             | 92         | 1.5 / 1.7                |
-| Typical          | 154        | 161                 | 38%       | 94%                 | 88%             | 91         | 1.3 / 0.7                |
-| Specialists      | 173        | 165                 | 75%       | 100%                | 100%            | 93         | 1.3 / 1.3                |
-| Link race        | 186        | 164                 | 78%       | 100%                | 84%             | 93         | 1.5 / 1.3                |
-| Shutdown defense | 161        | 163                 | 53%       | 94%                 | 72%             | 87         | 2.0 / 2.1                |
-| Activation first | 109        | 159                 | 0%        | 34%                 | 94%             | 90         | 0.5 / 0.9                |
-| Rookie alliance  | 73         | 155                 | 0%        | 0%                  | 47%             | 88         | 0.4 / 0.7                |
+| Blue lineup                    | Difficulty | Blue score | Red score | Blue wins | Blue sustainability RP | Blue activation RP | Red teleop | Fouls on blue / red |
+| ------------------------------ | ---------- | ---------- | --------- | --------- | ---------------------- | ------------------ | ---------- | ------------------- |
+| Powerhouse                     | normal     | 187        | 166       | 88%       | 97%                    | 88%                | 91         | 2.4 / 1.3           |
+| Typical qualification alliance | normal     | 161        | 160       | 53%       | 94%                    | 88%                | 91         | 1.3 / 1.3           |
+| Specialists                    | normal     | 173        | 154       | 81%       | 97%                    | 97%                | 85         | 1.2 / 1.7           |
+| Link race                      | normal     | 187        | 164       | 94%       | 100%                   | 97%                | 92         | 1.2 / 1.3           |
+| Shutdown defense               | normal     | 173        | 158       | 75%       | 97%                    | 84%                | 85         | 2.3 / 4.2           |
+| Activation first               | normal     | 108        | 159       | 0%        | 25%                    | 88%                | 90         | 1.1 / 0.8           |
+| Rookie alliance                | normal     | 74         | 157       | 0%        | 0%                     | 66%                | 91         | 0.4 / 0.5           |
 
-Typical vs Typical isn't 50 % here only because of noise (32 matches). The defender costs the Typical alliance about 5 teleop points (87 against Shutdown vs 90-93 against the others). With G207 called on any part of a robot and real bumper contact, both sides of a Shutdown match draw about 2 G207 fouls: the defender's alliance when it crosses into the opponent's zones, and the defended robots when they get pushed partly into the defender's own zones (G201's blue box: still a foul). Fouls the defended robot clearly forced aren't called (`forgiveForced`).
+Typical vs Typical comes out 53 % here. The defender costs the Typical alliance about 6 teleop points (85 against Shutdown vs 90-92 against most others; Specialists also hold it to 85 by sharing the substations). Against Shutdown the Typical alliance draws 4.2 G207 fouls per match: the defended robots get pushed partly into the defender's own zones, which G201's blue box says is still a foul. Fouls the defended robot clearly forced aren't called (`forgiveForced`).
 
 ## Plausibility (blind, manual-derived)
 
@@ -150,59 +150,59 @@ Typical vs Typical isn't 50 % here only because of noise (32 matches). The defen
 
 | Lineup                         | Difficulty | Total | Auto | Teleop | Endgame | Fouls drawn | Pieces | sustainability RP | activation RP | Broke down | Mech failed |
 | ------------------------------ | ---------- | ----- | ---- | ------ | ------- | ----------- | ------ | ----------------- | ------------- | ---------- | ----------- |
-| Powerhouse                     | easy       | 159   | 40   | 94     | 22      | 4           | 23.4   | 97%               | 78%           | 2%         | 5%          |
-| Powerhouse                     | normal     | 186   | 48   | 108    | 21      | 10          | 27.0   | 100%              | 66%           | 2%         | 5%          |
-| Powerhouse                     | hard       | 200   | 54   | 112    | 22      | 12          | 29.4   | 100%              | 84%           | 1%         | 4%          |
-| Typical qualification alliance | easy       | 133   | 36   | 72     | 23      | 2           | 19.9   | 44%               | 94%           | 5%         | 10%         |
-| Typical qualification alliance | normal     | 161   | 41   | 94     | 23      | 4           | 23.3   | 97%               | 81%           | 1%         | 9%          |
-| Typical qualification alliance | hard       | 174   | 43   | 96     | 24      | 11          | 24.1   | 97%               | 94%           | 4%         | 13%         |
-| Specialists                    | easy       | 147   | 40   | 81     | 24      | 2           | 21.1   | 69%               | 97%           | 3%         | 10%         |
-| Specialists                    | normal     | 173   | 52   | 89     | 24      | 8           | 23.9   | 97%               | 100%          | 2%         | 5%          |
-| Specialists                    | hard       | 179   | 52   | 95     | 25      | 6           | 24.8   | 94%               | 100%          | 3%         | 3%          |
-| Link race                      | easy       | 160   | 43   | 92     | 22      | 4           | 23.0   | 91%               | 94%           | 3%         | 4%          |
-| Link race                      | normal     | 189   | 53   | 107    | 23      | 6           | 27.2   | 100%              | 94%           | 2%         | 8%          |
-| Link race                      | hard       | 204   | 57   | 111    | 23      | 13          | 29.3   | 100%              | 94%           | 3%         | 6%          |
-| Shutdown defense               | easy       | 141   | 38   | 69     | 23      | 12          | 19.1   | 44%               | 75%           | 2%         | 5%          |
-| Shutdown defense               | normal     | 166   | 48   | 82     | 22      | 14          | 22.0   | 97%               | 81%           | 1%         | 6%          |
-| Shutdown defense               | hard       | 169   | 51   | 72     | 23      | 22          | 20.8   | 69%               | 78%           | 7%         | 8%          |
-| Activation first               | easy       | 105   | 32   | 45     | 26      | 2           | 14.7   | 16%               | 84%           | 1%         | 7%          |
-| Activation first               | normal     | 112   | 38   | 44     | 28      | 3           | 15.3   | 50%               | 97%           | 5%         | 10%         |
-| Activation first               | hard       | 114   | 41   | 41     | 27      | 5           | 14.8   | 34%               | 97%           | 5%         | 13%         |
-| Rookie alliance                | easy       | 69    | 28   | 24     | 16      | 1           | 8.9    | 0%                | 50%           | 7%         | 14%         |
-| Rookie alliance                | normal     | 70    | 32   | 22     | 16      | 0           | 9.0    | 0%                | 50%           | 11%        | 17%         |
-| Rookie alliance                | hard       | 73    | 35   | 20     | 17      | 1           | 9.0    | 0%                | 59%           | 8%         | 21%         |
+| Powerhouse                     | easy       | 154   | 39   | 89     | 22      | 3           | 22.7   | 94%               | 81%           | 2%         | 4%          |
+| Powerhouse                     | normal     | 189   | 50   | 108    | 23      | 8           | 27.3   | 100%              | 91%           | 2%         | 6%          |
+| Powerhouse                     | hard       | 199   | 53   | 114    | 22      | 10          | 29.7   | 100%              | 78%           | 1%         | 4%          |
+| Typical qualification alliance | easy       | 129   | 34   | 69     | 23      | 2           | 19.4   | 19%               | 84%           | 5%         | 9%          |
+| Typical qualification alliance | normal     | 163   | 39   | 94     | 23      | 7           | 23.3   | 100%              | 84%           | 1%         | 9%          |
+| Typical qualification alliance | hard       | 169   | 43   | 94     | 25      | 7           | 24.0   | 97%               | 88%           | 4%         | 10%         |
+| Specialists                    | easy       | 154   | 40   | 82     | 25      | 6           | 21.2   | 72%               | 97%           | 3%         | 9%          |
+| Specialists                    | normal     | 176   | 52   | 90     | 26      | 8           | 24.0   | 100%              | 100%          | 2%         | 5%          |
+| Specialists                    | hard       | 177   | 52   | 94     | 24      | 7           | 24.7   | 97%               | 100%          | 3%         | 3%          |
+| Link race                      | easy       | 160   | 42   | 94     | 22      | 3           | 23.1   | 94%               | 84%           | 3%         | 4%          |
+| Link race                      | normal     | 189   | 53   | 107    | 21      | 8           | 27.4   | 100%              | 88%           | 2%         | 8%          |
+| Link race                      | hard       | 196   | 56   | 110    | 21      | 9           | 29.0   | 100%              | 78%           | 3%         | 6%          |
+| Shutdown defense               | easy       | 135   | 36   | 68     | 20      | 11          | 19.0   | 34%               | 56%           | 2%         | 5%          |
+| Shutdown defense               | normal     | 157   | 47   | 77     | 21      | 12          | 21.1   | 72%               | 69%           | 2%         | 6%          |
+| Shutdown defense               | hard       | 167   | 51   | 79     | 23      | 15          | 21.8   | 88%               | 81%           | 7%         | 7%          |
+| Activation first               | easy       | 104   | 33   | 42     | 27      | 2           | 14.3   | 3%                | 91%           | 1%         | 8%          |
+| Activation first               | normal     | 109   | 39   | 41     | 25      | 4           | 14.9   | 25%               | 94%           | 5%         | 11%         |
+| Activation first               | hard       | 112   | 40   | 43     | 27      | 2           | 15.2   | 44%               | 97%           | 5%         | 13%         |
+| Rookie alliance                | easy       | 69    | 27   | 24     | 17      | 1           | 8.8    | 0%                | 66%           | 7%         | 16%         |
+| Rookie alliance                | normal     | 76    | 32   | 22     | 16      | 6           | 9.0    | 0%                | 41%           | 10%        | 16%         |
+| Rookie alliance                | hard       | 74    | 35   | 20     | 17      | 1           | 9.0    | 0%                | 56%           | 7%         | 21%         |
 
 "Fouls drawn" is penalty points awarded to the alliance (the opponents' G207 and G202 fouls). Endgame actions completed per alliance per match (more than one auto action can happen, but only one robot's counts):
 
 | Lineup                         | Difficulty | auto-engage | auto-dock | engage | dock |
 | ------------------------------ | ---------- | ----------- | --------- | ------ | ---- |
-| Powerhouse                     | easy       | 0.75        | 0.13      | 2.03   | 0.00 |
-| Powerhouse                     | normal     | 0.53        | 0.25      | 1.91   | 0.00 |
-| Powerhouse                     | hard       | 0.53        | 0.34      | 2.03   | 0.00 |
-| Typical qualification alliance | easy       | 0.63        | 0.34      | 1.31   | 0.94 |
-| Typical qualification alliance | normal     | 0.59        | 0.28      | 1.28   | 1.00 |
-| Typical qualification alliance | hard       | 0.53        | 0.31      | 1.41   | 0.91 |
-| Specialists                    | easy       | 0.59        | 0.38      | 2.28   | 0.00 |
-| Specialists                    | normal     | 1.00        | 0.03      | 2.28   | 0.00 |
-| Specialists                    | hard       | 0.88        | 0.09      | 2.47   | 0.00 |
-| Link race                      | easy       | 0.63        | 0.34      | 2.06   | 0.00 |
-| Link race                      | normal     | 0.81        | 0.09      | 2.16   | 0.00 |
-| Link race                      | hard       | 0.94        | 0.00      | 2.13   | 0.00 |
-| Shutdown defense               | easy       | 0.53        | 0.41      | 1.38   | 0.94 |
-| Shutdown defense               | normal     | 0.69        | 0.22      | 1.28   | 0.97 |
-| Shutdown defense               | hard       | 0.88        | 0.13      | 1.50   | 0.88 |
-| Activation first               | easy       | 0.59        | 0.34      | 1.72   | 0.84 |
-| Activation first               | normal     | 0.44        | 0.50      | 1.88   | 0.88 |
-| Activation first               | hard       | 0.53        | 0.47      | 1.88   | 0.91 |
-| Rookie alliance                | easy       | 0.00        | 0.84      | 0.00   | 2.66 |
-| Rookie alliance                | normal     | 0.00        | 0.78      | 0.00   | 2.66 |
-| Rookie alliance                | hard       | 0.00        | 0.88      | 0.00   | 2.72 |
+| Powerhouse                     | easy       | 0.66        | 0.16      | 2.13   | 0.00 |
+| Powerhouse                     | normal     | 0.56        | 0.38      | 2.13   | 0.00 |
+| Powerhouse                     | hard       | 0.50        | 0.34      | 2.03   | 0.00 |
+| Typical qualification alliance | easy       | 0.56        | 0.38      | 1.41   | 0.91 |
+| Typical qualification alliance | normal     | 0.47        | 0.38      | 1.16   | 1.00 |
+| Typical qualification alliance | hard       | 0.50        | 0.38      | 1.53   | 0.91 |
+| Specialists                    | easy       | 0.56        | 0.38      | 2.47   | 0.00 |
+| Specialists                    | normal     | 0.94        | 0.06      | 2.53   | 0.00 |
+| Specialists                    | hard       | 0.88        | 0.09      | 2.34   | 0.00 |
+| Link race                      | easy       | 0.63        | 0.34      | 2.00   | 0.00 |
+| Link race                      | normal     | 0.81        | 0.09      | 1.97   | 0.00 |
+| Link race                      | hard       | 0.88        | 0.00      | 1.97   | 0.00 |
+| Shutdown defense               | easy       | 0.56        | 0.28      | 1.34   | 0.91 |
+| Shutdown defense               | normal     | 0.63        | 0.31      | 1.31   | 0.91 |
+| Shutdown defense               | hard       | 0.84        | 0.13      | 1.38   | 0.88 |
+| Activation first               | easy       | 0.69        | 0.28      | 1.75   | 0.97 |
+| Activation first               | normal     | 0.44        | 0.56      | 1.66   | 0.81 |
+| Activation first               | hard       | 0.53        | 0.47      | 1.84   | 0.81 |
+| Rookie alliance                | easy       | 0.00        | 0.88      | 0.00   | 2.75 |
+| Rookie alliance                | normal     | 0.00        | 0.72      | 0.00   | 2.59 |
+| Rookie alliance                | hard       | 0.00        | 0.91      | 0.00   | 2.66 |
 
-- **Ceiling**: 27 nodes plus supercharge per alliance; the most an alliance can score in pieces is the 49 it owns (3 preloaded, 4 staged, 42 from its human players). The best alliance-match scored 33 pieces; an all-elevator alliance fills the grid (27-29 pieces) and starts supercharging on hard.
+- **Ceiling**: 27 nodes plus supercharge per alliance; the most an alliance can score in pieces is the 49 it owns (3 preloaded, 4 staged, 42 from its human players), or 53 if it also takes the opponent's staged pieces. The best alliance-match scored 33 pieces; an all-elevator alliance fills the grid (27-29 pieces) and starts supercharging on hard.
 - **Cycle math**: grid to double substation is about 13.7 m. At 4.27 m/s (14 ft/s) × 0.85 (normal) plus path overhead that's ~4.5 s each way, plus 1.5 s handoff and 1.3–2.8 s placing, so ~11–13 s per cycle and ~9–10 pieces per elevator robot in teleop before the endgame. The bots score 8–11. A kitbot at 3.05 m/s (10 ft/s) with a ~17 s cycle manages 5–7.
-- **Difficulty ordering**: easy < normal < hard for every lineup (the tool checks it).
-- **Blue vs red** with identical setups: 169 : 153 wins of 336 (z 0.9). A separate 2,000-match mirrored Powerhouse run: 998 : 966 (z 0.7), 185.2 ± 13.6 vs 185.1 ± 13.1.
-- **Design intent**: the bonus RPs are meant as stretch goals. Here **Sustainability is reached in nearly every normal match by any alliance with an elevator robot, and Activation in 66-100 % of matches (50 % for three kitbots, which need all three docked plus an auto dock).** So the sim is optimistic. Robots break down and lose power and bots have lapses, but bots still drive near-perfect paths, defense is mostly opportunistic, every balance attempt that isn't interrupted succeeds (unless the menu lowers the success chance), and tipped cones cost nothing. Archetype speeds were not tuned down to hit a target rate, because that target would come from knowledge of the real season. Treat sim scores as an upper bound for well-driven robots.
+- **Difficulty ordering**: easy < normal < hard for every lineup except the rookie alliance (69 / 76 / 74), whose total hardly depends on the driver: three kitbots are limited by the robot, and the order flips within noise.
+- **Blue vs red** with identical setups: 161 : 160 wins of 336 (z 0.1). Two separate 2,000-match mirrored Powerhouse runs during this work: 998 : 966 (z 0.7) and, after the last bot change, 1003 : 943 (z 1.4) with non-foul scores of 180.3 vs 180.3.
+- **Design intent**: the bonus RPs are meant as stretch goals. Here **Sustainability is reached in nearly every normal match by any alliance with an elevator robot, and Activation in 69-100 % of matches (41-66 % for three kitbots, which need all three docked plus an auto dock).** So the sim is optimistic. Robots break down and lose power and bots have lapses, but bots still drive near-perfect paths, defense is mostly opportunistic, every balance attempt that isn't interrupted succeeds (unless the menu lowers the success chance), and tipped cones cost nothing. Archetype speeds were not tuned down to hit a target rate, because that target would come from knowledge of the real season. Treat sim scores as an upper bound for well-driven robots.
 
 ## Open questions
 

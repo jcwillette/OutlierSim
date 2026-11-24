@@ -4,6 +4,7 @@
  *
  *   npm run plausibility -- --game <id> [--matches 12] [--difficulties easy,normal,hard]
  *                          [--lineups all | id,id,...] [--workers N] [--md report.md]
+ *   npm run plausibility -- --game <id> --against typical [...]   (each lineup vs one: head-to-head)
  *
  * 1. `validateDefinition` and the bots' geometry audit (`auditDefinition`).
  * 2. A piece ceiling per alliance from the definition: pieces available (preload, staged, human
@@ -42,7 +43,10 @@ interface Lineup {
 
 interface Job {
   gameId: string;
+  /** Blue's lineup (and red's, unless `against` is set). */
   lineup: Lineup;
+  /** Red's lineup for a head-to-head (`--against`). */
+  against?: Lineup;
   difficulty: Difficulty;
   seeds: number[];
 }
@@ -60,6 +64,8 @@ interface Sample {
     endgame: number;
     /** Foul points this alliance was awarded (the opponents' fouls). */
     fouls: number;
+    /** Fouls called on this alliance. */
+    foulsCalled: number;
     pieces: number;
     bonuses: string[];
     won: boolean;
@@ -128,6 +134,7 @@ function summarizeMatch(job: Job, seed: number, m: Match, r: MatchResult): Sampl
         teleop: s.breakdown.teleop,
         endgame: s.breakdown.endgame,
         fouls: s.breakdown.penalty,
+        foulsCalled: Object.values(s.foulCalls).reduce((t, n) => t + n, 0),
         pieces: r.robots.filter((x) => x.alliance === a).reduce((t, x) => t + x.piecesScored, 0),
         bonuses: Object.keys(s.rpBreakdown).filter((k) => k !== 'win' && k !== 'tie'),
         won: s.won,
@@ -164,19 +171,21 @@ async function runJob(job: Job): Promise<Sample[]> {
   for (const seed of job.seeds) {
     const archetypes: Record<number, string> = {};
     const roles: Record<number, RobotRole> = {};
-    job.lineup.archetypes.forEach((a, k) => {
-      archetypes[k] = a;
-      archetypes[k + 3] = a;
-      const role = job.lineup.roles[k];
-      if (role) roles[k] = roles[k + 3] = role;
-    });
+    const red = job.against ?? job.lineup;
+    [job.lineup, red].forEach((l, side) =>
+      l.archetypes.forEach((a, k) => {
+        archetypes[side * 3 + k] = a;
+        const role = l.roles[k];
+        if (role) roles[side * 3 + k] = role;
+      }),
+    );
     const m = new Match(def, { seed, archetypes, breakdowns: true });
     attachBots(m, {
       partners: job.difficulty,
       opponents: job.difficulty,
       playerId: null,
       roles,
-      strategies: { blue: job.lineup.strategy, red: job.lineup.strategy },
+      strategies: { blue: job.lineup.strategy, red: red.strategy },
     });
     out.push(summarizeMatch(job, seed, m, m.runToEnd()));
   }
@@ -230,6 +239,45 @@ export function pieceCeiling(def: GameDefinition): { available: number; capacity
     ? 'scored pieces recycle, so pieces are unbounded'
     : `${3 * perRobot} preloaded + ${staged} staged on the field (both alliances' and neutral ones) + ${Number.isFinite(supply) ? supply : 'unlimited'} from its human players`;
   return { available, capacity, note };
+}
+
+/** Every lineup (blue) against one reference lineup (red): the head-to-head table for SOURCES.md. */
+function headToHead(def: GameDefinition, lineups: Lineup[], against: Lineup, samples: Sample[]): string {
+  const bonusIds = def.rankingPoints.bonuses.map((b) => b.id);
+  const lines = [
+    `## Head-to-head against ${against.name} (${def.id})`,
+    '',
+    `${samples.length} matches, breakdowns on; blue plays each lineup, red plays ${against.name}. Means per match.`,
+    '',
+    `| Blue lineup | Difficulty | Blue score | Red score | Blue wins | ${bonusIds.map((b) => `Blue ${b} RP`).join(' | ')} | Red teleop | Fouls on blue / red |`,
+    `| --- | --- | --- | --- | --- | ${bonusIds.map(() => '---').join(' | ')} | --- | --- |`,
+  ];
+  const cells = new Map<string, Sample[]>();
+  for (const s of samples) {
+    const k = `${s.lineup}|${s.difficulty}`;
+    if (!cells.has(k)) cells.set(k, []);
+    cells.get(k)!.push(s);
+  }
+  const foulsOn = (x: Sample, side: 0 | 1) => x.sides[side]!.foulsCalled;
+  // Rows in the game's preset order, easy to hard.
+  const order = (k: string) => {
+    const [id, d] = k.split('|');
+    return lineups.findIndex((x) => x.id === id) * 10 + DIFFICULTIES.indexOf(d as Difficulty);
+  };
+  for (const [k, cell] of [...cells].sort((a, b) => order(a[0]) - order(b[0]))) {
+    const [id, d] = k.split('|');
+    const l = lineups.find((x) => x.id === id)!;
+    const blue = cell.map((x) => x.sides[0]!);
+    const red = cell.map((x) => x.sides[1]!);
+    lines.push(
+      `| ${l.name} | ${d} | ${f0(mean(blue.map((x) => x.score)))} | ${f0(mean(red.map((x) => x.score)))} | ${pct(
+        mean(blue.map((x) => (x.won ? 1 : 0))),
+      )} | ${bonusIds.map((b) => pct(mean(blue.map((x) => (x.bonuses.includes(b) ? 1 : 0))))).join(' | ')} | ${f0(
+        mean(red.map((x) => x.teleop)),
+      )} | ${f1(mean(cell.map((x) => foulsOn(x, 0))))} / ${f1(mean(cell.map((x) => foulsOn(x, 1))))} |`,
+    );
+  }
+  return lines.join('\n');
 }
 
 function report(
@@ -412,6 +460,8 @@ async function main() {
   const which = arg('lineups');
   const lineups = lineupsFor(def, which && which !== 'all' ? which.split(',') : undefined);
   const workers = Math.max(1, Number(arg('workers') ?? Math.min(16, availableParallelism())));
+  const againstId = arg('against');
+  const against = againstId ? lineupsFor(def, [againstId])[0] : undefined;
 
   const text: string[] = [];
   const issues = validateDefinition(def);
@@ -446,6 +496,7 @@ async function main() {
         jobs.push({
           gameId,
           lineup,
+          ...(against ? { against } : {}),
           difficulty,
           seeds: Array.from({ length: Math.min(chunk, matches - s) }, (_, k) => first + s + k),
         });
@@ -476,7 +527,9 @@ async function main() {
   samples.sort(
     (a, b) => a.lineup.localeCompare(b.lineup) || a.difficulty.localeCompare(b.difficulty) || a.seed - b.seed,
   );
-  const md = report(def, lineups, difficulties, samples);
+  const md = against
+    ? headToHead(def, lineups, against, samples)
+    : report(def, lineups, difficulties, samples);
   console.log(md);
   const file = arg('md');
   if (file) writeFileSync(file, `${text.join('\n')}\n${md}\n`);

@@ -22,8 +22,9 @@ npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archety
                                      # headless bot-vs-bot matches (~0.6-0.9 s each) -> score/RP/piece stats, win rates
 npm run bench [-- --game <id>] [--matches 6] [--json before.json | --compare before.json]
                                      # ms per match + a fingerprint of every match; --compare fails if any match changed (ADR 0006)
-npm run plausibility -- --game <id> [--matches 12] [--difficulties easy,normal,hard] [--lineups all|a,b] [--md out.md]
+npm run plausibility -- --game <id> [--matches 12] [--difficulties easy,normal,hard] [--lineups all|a,b] [--against <lineup>] [--md out.md]
                                      # validation + bots' geometry audit + piece ceiling + every lineup vs itself in workers -> SOURCES.md table + checks
+                                     # (--against: every lineup vs one lineup -> head-to-head table)
 npm run test:e2e                     # build + Playwright: every game loads, plays, spectates, runs win-probability workers; screenshots in test-results/
 npm run calibrate -- --game <id> [--events 2024casj,...] [--matches 30] [--difficulty hard] [--write | --dump]
                                      # ONLY when the owner asks: compare sim vs real TBA matches
