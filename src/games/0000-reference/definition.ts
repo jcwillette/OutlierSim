@@ -215,10 +215,12 @@ export const definition: GameDefinition = {
   stations: [
     {
       id: 'feeder',
-      name: 'Block feeder',
+      name: 'Feeder',
       side: 'blue',
       zone: rect(15.2, 0, L, 1.0),
-      pieceTypes: ['block'],
+      // Blocks or orbs, whichever the robot asks for.
+      pieceTypes: ['block', 'orb'],
+      choice: true,
       mode: 'direct',
       feedIntervalSec: 1.5,
       supply: 10,

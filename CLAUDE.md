@@ -50,11 +50,11 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m (`FieldElement.nav` overrides: `'wall'`, `'ramp'`, `'none'`). Bots use it through `AllianceNav`: each alliance plans on a grid laid out from its own wall, so red's half is never a slightly different maze (cell alignment, tie-breaks). Fixed turn or side preferences go through `handedness()`. Both are ADR 0007. Nav grids and shot spots (`PointIndex`, exact nearest-spot queries) are cached per `GameDefinition` object and shared by every match of it, so never mutate a definition: `applyTuning` returns a copy.
   - `BotBrain` is a utility planner. Each option is scored as points per second over the whole cycle (fetch, travel to score, action time), with hysteresis.
   - It picks shot spots precomputed with `solveShot`, uses approach headings so intakes can reach pieces, makes time-boxed endgame decisions, and plays defense when `botHints.defenseShare` > 0.
-  - Teammates coordinate like an alliance on a radio:
+  - Teammates coordinate like an alliance on a radio (`MatchAI` blackboard):
     - soft claims on targets, pieces and stations
     - shared intents, so two bots don't head for overlapping spots
     - paths that avoid parked robots (`NavGrid.findPath` dynamic obstacles)
-    - yielding in lane conflicts (`yieldPriority`)
+    - yielding in lane conflicts (`yieldPriority`), and making room when standing on a higher-priority teammate's announced spot (`makeRoom`)
   - Opponents defend opportunistically (`harassOption`, `botHints.defenseOpportunism`).
   - Protected zones come from the declared contact fouls unless `botHints.protectedZones` / `endgameProtectedZones` override them. Bots keep their whole body out of the opponent's (path penalty inflated by the robot size), skip loose pieces there, and steer wider around opponents while partly inside one.
   - Defense is clean (`worthDefending`, `watchPin`):
@@ -96,9 +96,10 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - Intake is a sensor volume at the front of the robot.
   - Placing and climbing are timed actions inside a target or zone.
     - An endgame action finished in auto (an auto dock) releases the robot when teleop starts.
+    - An attempt counts with probability `RobotArchetype.endgameSuccess` (default 1, no roll); a failure earns the action's `fallback`, if any.
     - `oneAtATime` actions make teammates board a shared platform one by one.
   - Shooting spawns a real ballistic projectile.
-  - Human player shelves: `handoffHeight` needs a tall enough intake, and `handoffSec` is the time to line up and grab.
+  - Human player shelves: `handoffHeight` needs a tall enough intake, and `handoffSec` is the time to line up and grab. A station with `choice` hands out the piece the robot asks for (`RobotCommand.pieceType`; players switch with F / gamepad X, `Match.choiceTypes`); otherwise the first type the robot can hold.
   - A target's `display` point draws scored pieces in place. Without one, scored pieces are hidden.
   - When a new game needs something the schema can't express, put it in that game's `rules.ts` first. Promote it into the engine only when a second game needs it.
 - **Rapier**: call `await RAPIER.init()` before creating a world (browser and Node).

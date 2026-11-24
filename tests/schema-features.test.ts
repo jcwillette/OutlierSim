@@ -175,6 +175,78 @@ describe('endgame attempts that can fail', () => {
   });
 });
 
+describe('human player stations that offer a choice', () => {
+  /** Mini game with cubes too, and a feeder at (1, 7) that hands out either piece. */
+  const game = (choice: boolean): GameDefinition => {
+    const base = miniGame();
+    return {
+      ...base,
+      pieces: [...base.pieces, { ...base.pieces[0]!, id: 'cube', name: 'Cube' }],
+      preload: {},
+      staging: [],
+      stations: [
+        {
+          id: 'feeder',
+          name: 'Feeder',
+          side: 'blue',
+          zone: { kind: 'rect', min: { x: 0.5, y: 6.5 }, max: { x: 1.5, y: 7.5 } },
+          pieceTypes: ['ball', 'cube'],
+          ...(choice ? { choice: true } : {}),
+          mode: 'direct',
+          feedIntervalSec: 1,
+          source: 'test',
+        },
+      ],
+      archetypes: [
+        {
+          ...base.archetypes[0]!,
+          capacity: { ball: 1, cube: 1 },
+          totalCapacity: 1,
+          intake: { pieceTypes: ['ball', 'cube'], timeSec: 0.2 },
+        },
+      ],
+    };
+  };
+  const load = (def: GameDefinition, pieceType?: string) => {
+    const m = new Match(def);
+    const r = m.robots[0]!;
+    m.start();
+    while (m.phase !== 'teleop') m.step();
+    r.setPosition({ x: 1, y: 7, z: r.archetype.frame.height / 2 + 0.01 });
+    r.controller = ctl(() => ({ intake: true, ...(pieceType ? { pieceType } : {}) }));
+    for (let i = 0; i < 30; i++) m.step();
+    return { m, r };
+  };
+  it('hands out the piece the robot asks for', () => {
+    expect(load(game(true), 'cube').r.held).toEqual(['cube']);
+    expect(load(game(true), 'ball').r.held).toEqual(['ball']);
+    expect(load(game(true)).r.held).toEqual(['ball']); // no request: the first type
+  });
+  it('without a choice, hands out the first type the robot can hold', () => {
+    expect(load(game(false), 'cube').r.held).toEqual(['ball']);
+  });
+  it('lists what a robot can ask for', () => {
+    const m = new Match(game(true));
+    expect(m.choiceTypes(m.robots[0]!)).toEqual(['ball', 'cube']);
+    expect(new Match(game(false)).choiceTypes(m.robots[0]!)).toEqual([]);
+  });
+  it('bots ask for the piece they plan to score', () => {
+    // Only cubes score: a bot at the feeder should ask for a cube.
+    const def = game(true);
+    def.targets = def.targets.map((t) => ({ ...t, accepts: ['cube'] }));
+    const m = new Match(def, { seed: 3 });
+    attachBots(m, { partners: 'normal', opponents: 'normal', playerId: null });
+    m.start();
+    while (m.phase !== 'teleop') m.step();
+    for (let i = 0; i < 60 * 20; i++) m.step();
+    const intaken = m.pieces
+      .filter((p) => p.lastTouch !== null && p.status !== 'field')
+      .map((p) => p.type.id);
+    expect(intaken.length).toBeGreaterThan(0);
+    expect(intaken.every((t) => t === 'cube')).toBe(true);
+  });
+});
+
 describe('ramps in physics', () => {
   it("continue a 'ramp' hull's floor edges just below the floor, along the slope", () => {
     // A 1 m wide ramp: floor edge at x = 0, top edge 0.2 m up at x = 0.4.

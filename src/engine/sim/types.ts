@@ -211,6 +211,11 @@ export interface HumanPlayerStation {
   zone: Region2D;
   pieceTypes: string[];
   /**
+   * The robot (its driver signalling the human player) picks which of `pieceTypes` it gets, with
+   * `RobotCommand.pieceType`. Default: the station hands out the first type the robot can hold.
+   */
+  choice?: boolean;
+  /**
    * 'direct': piece goes straight into a robot in the zone that is intaking.
    * 'drop': a physical piece is spawned at `dropPoint` with `dropVelocity`.
    */

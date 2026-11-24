@@ -57,7 +57,8 @@ export const SKILL: Record<Difficulty, Skill> = {
 
 type Plan =
   | { kind: 'acquire'; pieceId: number; point: Vec2; approachYaw: number }
-  | { kind: 'station'; stationId: string; point: Vec2 }
+  /** `pieceType`: what to ask for at a station that offers a `choice`. */
+  | { kind: 'station'; stationId: string; point: Vec2; pieceType?: string }
   | { kind: 'place'; targetId: string; point: Vec2; face?: Vec2 }
   | { kind: 'shoot'; targetId: string; point: Vec2; aim: Vec2 }
   | { kind: 'endgame'; actionId: string; zoneIndex: number; point: Vec2 }
@@ -378,7 +379,7 @@ export class BotBrain implements RobotController {
         return !!piece && piece.status === 'field' && r.canHold(piece.type.id);
       }
       case 'station':
-        return r.held.length < r.totalCapacity;
+        return r.held.length < r.totalCapacity && (p.pieceType === undefined || r.canHold(p.pieceType));
       case 'place':
       case 'shoot': {
         const ts = m.targets.get(p.targetId);
@@ -619,8 +620,8 @@ export class BotBrain implements RobotController {
       if (st.alliance && st.alliance !== r.alliance) continue;
       if (!canReachHandoff(r, st)) continue;
       if ((this.spotBlacklist.get(st.id) ?? 0) > m.time) continue;
-      const type = st.pieceTypes.find((t) => r.canHold(t) && intake.pieceTypes.includes(t));
-      if (!type) continue;
+      const types = st.pieceTypes.filter((t) => r.canHold(t) && intake.pieceTypes.includes(t));
+      if (!types.length) continue;
       const used = m.stationUsed.get(`${st.id}:${r.alliance}`) ?? 0;
       if (st.supply !== undefined && used >= st.supply) continue;
       const point = grid.nearestFree(regionCenter(st.zone));
@@ -629,13 +630,22 @@ export class BotBrain implements RobotController {
       const wait =
         (this.claimedByOther(m, r, claim) ? st.feedIntervalSec * 2 : 0) +
         (this.teammateHeadedTo(m, r, point) ? 3 : 0);
-      out.push({
-        plan: { kind: 'station', stationId: st.id, point },
-        utility:
-          this.fetchUtility(m, r, point, type, st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + 0.8 + wait) *
-          this.noise(m),
-        claim,
-      });
+      // A station that lets the robot choose: weigh each piece it could ask for. Otherwise it hands
+      // out the first type the robot can hold.
+      for (const type of st.choice ? types : types.slice(0, 1)) {
+        out.push({
+          plan: { kind: 'station', stationId: st.id, point, ...(st.choice ? { pieceType: type } : {}) },
+          utility:
+            this.fetchUtility(
+              m,
+              r,
+              point,
+              type,
+              st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + 0.8 + wait,
+            ) * this.noise(m),
+          claim,
+        });
+      }
     }
     return out;
   }
@@ -1046,7 +1056,13 @@ export class BotBrain implements RobotController {
         const s = this.steer(m, r, p.point, false);
         const st = m.game.stations.find((x) => x.id === p.stationId)!;
         const inside = pointInRegion(r, st.zone);
-        return { ...cmd, vx: inside ? 0 : s.vx, vy: inside ? 0 : s.vy, intake: true };
+        return {
+          ...cmd,
+          vx: inside ? 0 : s.vx,
+          vy: inside ? 0 : s.vy,
+          intake: true,
+          ...(p.pieceType ? { pieceType: p.pieceType } : {}),
+        };
       }
       case 'place': {
         const s = this.steer(m, r, p.point, false);
@@ -1118,7 +1134,7 @@ function samePlan(a: Plan, b: Plan): boolean {
     case 'acquire':
       return b.kind === 'acquire' && a.pieceId === b.pieceId;
     case 'station':
-      return b.kind === 'station' && a.stationId === b.stationId;
+      return b.kind === 'station' && a.stationId === b.stationId && a.pieceType === b.pieceType;
     case 'place':
       return b.kind === 'place' && a.targetId === b.targetId;
     case 'shoot':

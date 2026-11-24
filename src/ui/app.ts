@@ -1268,6 +1268,7 @@ class Session {
     });
     if (this.player) {
       const controller = new PlayerController(input, () => this.rig.driveYaw);
+      controller.pieceType = this.match.choiceTypes(this.player)[0];
       this.controller = controller;
       const autoBrain = new BotBrain({ difficulty: 'hard' });
       // During auto the player's robot optionally runs the bot AI as its "auto routine".
@@ -1302,6 +1303,12 @@ class Session {
     if (e === 'pause' && (this.state === 'running' || this.state === 'paused')) {
       this.state = this.state === 'running' ? 'paused' : 'running';
       this.hud.setPaused(this.state === 'paused', () => this.app.showMenu());
+    }
+    if (e === 'piece' && this.player && this.controller) {
+      // Next piece to ask the human player for, at stations that offer a choice.
+      const types = this.match.choiceTypes(this.player);
+      const i = types.indexOf(this.controller.pieceType ?? '');
+      if (types.length) this.controller.pieceType = types[(i + 1) % types.length];
     }
     if (this.player) return; // the rest are spectator controls
     const n = this.match.robots.length;
@@ -1603,7 +1610,12 @@ class Hud {
       const shot = m.shotOptions(r)[0];
       if (shot) lines.push(`<b>Space</b>: shoot at ${shot.target.name} (${shot.distance.toFixed(1)} m)`);
     }
-    if (m.stationsFor(r).length) lines.push('At human player station: intake to receive');
+    const stations = m.stationsFor(r);
+    const want = r.command.pieceType;
+    if (stations.some((st) => st.choice) && want) {
+      const name = m.def.pieces.find((p) => p.id === want)?.name ?? want;
+      lines.push(`At human player station: intake to receive a <b>${name}</b> (<b>F</b> to switch)`);
+    } else if (stations.length) lines.push('At human player station: intake to receive');
     if (!lines.length) lines.push(r.held.length ? 'Drive to a scoring location' : 'Collect a game piece');
     return lines.join('<br>');
   }

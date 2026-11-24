@@ -125,6 +125,7 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     for (const a of s.pieceTypes) if (!pieceIds.has(a)) err(path, `unknown piece type '${a}'`);
     if (s.mode === 'drop' && !s.dropPoint) err(path, "mode 'drop' needs dropPoint");
     if (s.feedIntervalSec <= 0) err(path, 'feedIntervalSec must be > 0');
+    if (s.choice && s.pieceTypes.length < 2) warn(path, 'choice only matters with two or more piece types');
     checkRegion(`${path}.zone`, s.zone);
   });
 

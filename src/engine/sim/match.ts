@@ -46,6 +46,8 @@ export interface RobotCommand {
   eject: boolean;
   /** Restrict `score` to this expanded target id / `endgame` to this action id. */
   targetId?: string;
+  /** The piece to ask for at a human player station that offers a `choice`. */
+  pieceType?: string;
 }
 
 export const IDLE: RobotCommand = Object.freeze({
@@ -1097,6 +1099,25 @@ export class Match {
     }
   }
 
+  /**
+   * Piece types this robot could ask for at its alliance's stations that offer a `choice` (it can
+   * intake and hold them), in station order.
+   */
+  choiceTypes(r: Robot): string[] {
+    const out: string[] = [];
+    for (const st of this.game.stations) {
+      if (!st.choice || (st.alliance && st.alliance !== r.alliance)) continue;
+      for (const t of st.pieceTypes)
+        if (
+          !out.includes(t) &&
+          (r.archetype.capacity[t] ?? 0) > 0 &&
+          r.archetype.intake?.pieceTypes.includes(t)
+        )
+          out.push(t);
+    }
+    return out;
+  }
+
   /** Stations whose zone the robot is in and that could feed it a piece. */
   stationsFor(r: Robot): XStation[] {
     if (r.mechDown) return [];
@@ -1117,7 +1138,11 @@ export class Match {
       if ((this.stationCooldown.get(key) ?? 0) > 0) continue;
       const used = this.stationUsed.get(key) ?? 0;
       if (st.supply !== undefined && used >= st.supply) continue;
-      const type = st.pieceTypes.find((t) => r.canHold(t))!;
+      const want = r.command.pieceType;
+      const type =
+        st.choice && want !== undefined && st.pieceTypes.includes(want) && r.canHold(want)
+          ? want
+          : st.pieceTypes.find((t) => r.canHold(t))!;
       if (st.mode === 'direct') {
         if (r.intakeCooldown > 0 || !r.archetype.intake) continue;
         if (st.handoffSec) {
