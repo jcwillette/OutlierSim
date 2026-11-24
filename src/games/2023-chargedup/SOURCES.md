@@ -70,25 +70,51 @@ This is an unofficial simulation for team practice. **Confidence**: high (stated
 
 All numbers are engineering estimates from the manual's constraints and typical 2020s FRC mechanisms. None comes from match results.
 
-- **Elevator all-rounder** (default): swerve, 4.3 m/s, 9 m/s² (a tall robot can't accelerate as hard). An angled elevator and claw reach the top pole, which is 1.01 m behind the grid face and 1.17 m up; the 48 in extension limit (G107) allows it. Place times: hybrid 0.8 s, mid cube 1.3 s, mid cone 2.0 s, top cube 1.6 s, top cone 2.8 s. Cones are slower because the driver must line the cone up over a 4 cm pole. Floor and shelf intake 0.35 s. Engages in 4 s.
-- **Mid-level arm**: swerve, 4.0 m/s. A single-jointed arm reaches the mid pole (0.58 m deep) but not the top one. Shelf and floor intake. Engages in 5.5 s.
-- **Cube specialist**: fast swerve (4.6 m/s), cubes only. A low intake can't reach the 0.95 m shelf, so it uses the single substation and the floor. Cube nodes are walled shelves and the cube weighs 71 g, so placing (or launching in the community, G404) is quick: hybrid 0.6 s, mid 1.0 s, top 1.3 s. Engages in 3.5 s.
-- **Kitbot**: tank drive 3.2 m/s, 6 m/s², roller intake (floor only), bottom row only (1.2 s). It can drive up the ramp and dock but not balance. This is what a rookie builds.
+**Drive and weight** come from each robot's assumed 2023-era COTS drivetrain through `src/engine/sim/drivetrain.ts`:
+
+- **Speed**: free speed from the vendor motor spec and gearing (motor rpm ÷ ratio × wheel circumference). Practical top speed is 85 % of that for swerve and 77 % for tank. The tank figure is the share AndyMark uses for its Kit of Parts chassis: a CIM at 4100 rpm, which gives 12.7 ft/s at 8.45:1.
+- **Acceleration**: the motor curve with typical drive current limits (Falcon 70 A, NEO 50 A, CIM 60 A), 90 % gearbox efficiency, traction (μ 1.1 swerve tread, 1.0 Kit of Parts wheels, 1.35 high-grip tread), and for tall robots a tipping limit (g × wheelbase ÷ CG height). It is fitted to the engine's constant-acceleration model by matching the time for a 5 m sprint.
+- **Weight**: weighed robot (R103: 125 lb max, excluding bumpers and battery), plus about 13 lb of battery and 14 lb of bumpers (15 lb for the Defender's).
+
+Motor specs at 12 V:
+
+| Motor      | Free speed (rpm) | Stall torque (N·m) | Stall current (A) |
+| ---------- | ---------------- | ------------------ | ----------------- |
+| Falcon 500 | 6380             | 4.69               | 257               |
+| NEO        | 5676             | 2.6                | 105               |
+| CIM        | 5310             | 2.42               | 133               |
+
+| Robot                     | Drivetrain                                                 | Weighed / on field | Top speed (free) | Acceleration                         | 5 m from rest |
+| ------------------------- | ---------------------------------------------------------- | ------------------ | ---------------- | ------------------------------------ | ------------- |
+| Elevator all-rounder      | MK4i L2 (6.75:1, 4 in), 4 Falcon 500                       | 125 / 152 lb       | 14.0 ft/s (16.5) | 23 ft/s², tipping-limited (CG 0.4 m) | 1.47 s        |
+| Mid-level arm             | MK4i L2, 4 NEO                                             | 118 / 145 lb       | 12.5 ft/s (14.7) | 28 ft/s²                             | 1.54 s        |
+| Cube specialist           | MK4i L3 (6.12:1), 4 Falcon 500                             | 105 / 132 lb       | 15.5 ft/s (18.2) | 30 ft/s²                             | 1.32 s        |
+| Kitbot                    | Kit of Parts tank, 4 CIM, 10.71:1, 6 in                    | 90 / 117 lb        | 10.0 ft/s (13.0) | 32 ft/s², traction-limited           | 1.80 s        |
+| Cone specialist           | MK4i L2, 4 Falcon 500                                      | 122 / 149 lb       | 14.0 ft/s (16.5) | 23 ft/s², tipping-limited            | 1.47 s        |
+| Charge Station specialist | MAXSwerve 14T (4.71:1, 3 in), 4 NEO                        | 100 / 127 lb       | 13.4 ft/s (15.8) | 30 ft/s²                             | 1.45 s        |
+| Defender                  | 6-wheel tank, 6 Falcon 500, 10.71:1, 6 in, high-grip tread | 125 / 155 lb       | 12.0 ft/s (15.6) | 44 ft/s², traction-limited           | 1.50 s        |
+
+Low-geared tank drives launch hardest off the line, but they top out early. Swerve robots win any sprint longer than a couple of meters. Turn rates (`maxOmega`, 5-9 rad/s) are driver comfort, not hardware.
+
+- **Elevator all-rounder** (default): swerve (see the drive table; a tall robot can't accelerate as hard). An angled elevator and claw reach the top pole, which is 1.01 m behind the grid face and 1.17 m up; the 48 in extension limit (G107) allows it. Place times: hybrid 0.8 s, mid cube 1.3 s, mid cone 2.0 s, top cube 1.6 s, top cone 2.8 s. Cones are slower because the driver must line the cone up over a 4 cm pole. Floor and shelf intake 0.35 s. Engages in 4 s.
+- **Mid-level arm**: NEO swerve, a bit slower. A single-jointed arm reaches the mid pole (0.58 m deep) but not the top one. Shelf and floor intake. Engages in 5.5 s.
+- **Cube specialist**: fast L3 swerve, cubes only. A low intake can't reach the 0.95 m shelf, so it uses the single substation and the floor. Cube nodes are walled shelves and the cube weighs 71 g, so placing (or launching in the community, G404) is quick: hybrid 0.6 s, mid 1.0 s, top 1.3 s. Engages in 3.5 s.
+- **Kitbot**: Kit of Parts tank drive (10 ft/s), roller intake (floor only), bottom row only (1.2 s). It can drive up the ramp and dock but not balance. This is what a rookie builds.
 - **Cone specialist**: an elevator with a cone-only claw and a funnel that self-centers on the 1.66 in pole, so top cones take 2.0 s instead of the all-rounder's 2.8 s. Loads upright cones off the shelf. No cubes, no auto balance.
 - **Charge Station specialist**: light (about 100 lb) low swerve with a gyro auto-balance. It engages in 2.5 s (3 s in auto), because a light, low robot settles the ±15° station fastest. It scores only low: hybrid nodes, plus mid cubes with a simple flipper.
 - **Defender**: max-weight, max-frame six-wheel tank with high-grip treads (traction 1.35). It defends by default (`defaultRole: 'defense'`) and stays out of the opponent's protected zones. It can push a piece into the bottom row and dock.
 
 ### Reliability (breakdowns)
 
-With breakdowns on (the app's default for bots, and `npm run sim` unless `--perfect`), a robot with reliability R has about a 0.6 × (1 − R) chance to break down for the rest of the match. It also loses power or comms about 5 × (1 − R) times per match, for 2–6 s each. As a bot, it has tunnel-vision lapses, where it ignores teammates' calls and right of way, for a share of the match of about 1.5 × (1 − R) plus a difficulty term (easy 20%, normal 8%, hard 2%). These are engineering estimates of how often FRC robots die or brown out, not data.
+With breakdowns on (the app's default for bots, and `npm run sim` unless `--perfect`), a robot with reliability R has about a 0.6 × (1 − R) chance to break down (dead), which clears 10–35 s later with chance 0.7 − 3 × (1 − R). It has about a 1.5 × (1 − R) chance of a mechanism failure, where it still drives and can do the endgame but can't handle pieces; that clears 5–25 s later with chance 0.85 − 3 × (1 − R). It also loses power or comms about 5 × (1 − R) times per match, for 2–6 s each. The menu's tuning section can override any of these per robot type. As a bot, it has tunnel-vision lapses, where it ignores teammates' calls and right of way, for a share of the match of about 1.5 × (1 − R) plus a difficulty term (easy 20%, normal 8%, hard 2%). These are engineering estimates of how often FRC robots die or brown out, not data.
 
-| Robot                                   | Reliability | Breaks down (per match) | Power losses (per match) | Why                                 |
-| --------------------------------------- | ----------- | ----------------------- | ------------------------ | ----------------------------------- |
-| Elevator all-rounder                    | 0.97        | ~2%                     | ~0.15                    | top-tier team, practiced and robust |
-| Cone / Cube / Charge Station specialist | 0.95        | ~3%                     | ~0.25                    | simpler single-purpose mechanisms   |
-| Defender                                | 0.93        | ~4%                     | ~0.35                    | simple, but takes and gives hits    |
-| Mid-level arm                           | 0.92        | ~5%                     | ~0.4                     | mid-tier team                       |
-| Kitbot                                  | 0.85        | ~9%                     | ~0.75                    | rookie wiring and brownouts         |
+| Robot                                   | Reliability | Breaks down (comes back) | Mechanism failure (fixed) | Power losses (per match) | Why                                 |
+| --------------------------------------- | ----------- | ------------------------ | ------------------------- | ------------------------ | ----------------------------------- |
+| Elevator all-rounder                    | 0.97        | ~2% (61%)                | ~5% (76%)                 | ~0.15                    | top-tier team, practiced and robust |
+| Cone / Cube / Charge Station specialist | 0.95        | ~3% (55%)                | ~8% (70%)                 | ~0.25                    | simpler single-purpose mechanisms   |
+| Defender                                | 0.93        | ~4% (49%)                | ~11% (64%)                | ~0.35                    | simple, but takes and gives hits    |
+| Mid-level arm                           | 0.92        | ~5% (46%)                | ~12% (61%)                | ~0.4                     | mid-tier team                       |
+| Kitbot                                  | 0.85        | ~9% (25%)                | ~23% (40%)                | ~0.75                    | rookie wiring and brownouts         |
 
 ### Alliance presets and strategies
 
@@ -122,24 +148,24 @@ One defender is worth about 3 teleop points against a typical alliance. That's m
 
 `npm run sim -- --game 2023-chargedup --matches 20 [--difficulty d] [--archetypes a,b,c]`, means per alliance:
 
-| Lineup                         | Difficulty | Total | Auto | Teleop | Endgame | Fouls drawn | Pieces | Sustainability RP | Activation RP | Robots broke down |
-| ------------------------------ | ---------- | ----- | ---- | ------ | ------- | ----------- | ------ | ----------------- | ------------- | ----------------- |
-| elevator / elevator / elevator | easy       | 154   | 40   | 93     | 20      | 1           | 23.3   | 93%               | 70%           | 2%                |
-| elevator / elevator / elevator | normal     | 179   | 50   | 107    | 20      | 2           | 27.5   | 98%               | 68%           | 2%                |
-| elevator / elevator / elevator | hard       | 193   | 57   | 113    | 19      | 4           | 30.1   | 100%              | 68%           | 2%                |
-| elevator / arm / kitbot        | easy       | 128   | 34   | 73     | 20      | 1           | 19.9   | 43%               | 75%           | 8%                |
-| elevator / arm / kitbot        | normal     | 153   | 39   | 92     | 20      | 3           | 22.9   | 95%               | 60%           | 8%                |
-| elevator / arm / kitbot        | hard       | 156   | 42   | 90     | 20      | 3           | 23.1   | 88%               | 68%           | 7%                |
-| cube specialist / arm / kitbot | easy       | 110   | 34   | 53     | 22      | 2           | 17.2   | 20%               | 60%           | 7%                |
-| cube specialist / arm / kitbot | normal     | 127   | 43   | 63     | 21      | 1           | 19.4   | 73%               | 83%           | 7%                |
-| cube specialist / arm / kitbot | hard       | 125   | 43   | 59     | 21      | 2           | 18.9   | 58%               | 75%           | 8%                |
+| Lineup                         | Difficulty | Total | Auto | Teleop | Endgame | Fouls drawn | Pieces | Sustainability RP | Activation RP | Robots broke down | Mechanism failures |
+| ------------------------------ | ---------- | ----- | ---- | ------ | ------- | ----------- | ------ | ----------------- | ------------- | ----------------- | ------------------ |
+| elevator / elevator / elevator | easy       | 150   | 37   | 93     | 19      | 0           | 23.3   | 93%               | 53%           | 1%                | 3%                 |
+| elevator / elevator / elevator | normal     | 179   | 47   | 110    | 20      | 2           | 27.5   | 98%               | 63%           | 1%                | 3%                 |
+| elevator / elevator / elevator | hard       | 187   | 53   | 111    | 20      | 3           | 29.4   | 98%               | 53%           | 2%                | 4%                 |
+| elevator / arm / kitbot        | easy       | 123   | 33   | 72     | 18      | 1           | 19.7   | 40%               | 55%           | 1%                | 16%                |
+| elevator / arm / kitbot        | normal     | 150   | 39   | 91     | 20      | 0           | 22.9   | 90%               | 65%           | 1%                | 16%                |
+| elevator / arm / kitbot        | hard       | 157   | 41   | 93     | 20      | 3           | 23.7   | 93%               | 63%           | 2%                | 15%                |
+| cube specialist / arm / kitbot | easy       | 113   | 36   | 55     | 22      | 0           | 17.4   | 10%               | 83%           | 3%                | 19%                |
+| cube specialist / arm / kitbot | normal     | 119   | 41   | 57     | 21      | 1           | 18.5   | 43%               | 63%           | 4%                | 19%                |
+| cube specialist / arm / kitbot | hard       | 130   | 43   | 61     | 23      | 4           | 19.4   | 68%               | 75%           | 3%                | 19%                |
 
-Breakdowns are on (`npm run sim` default). "Fouls drawn" is penalty points awarded to the alliance (the opponents' G207 fouls).
+Breakdowns are on (`npm run sim` default), including mechanism failures and recoveries. Drive limits come from `drivetrain.ts` (see Archetype rationale). "Fouls drawn" is penalty points awarded to the alliance (the opponents' G207 fouls).
 
 - **Ceiling**: 27 nodes plus supercharge per alliance; the most an alliance can score in pieces is the 49 it owns. An all-elevator alliance nearly fills the grid (26–28 pieces) and starts supercharging on hard.
-- **Cycle math**: grid to double substation is about 13.7 m. At 4.3 m/s × 0.85 (normal) plus path overhead that's ~4.5 s each way, plus 1.5 s handoff and 1.3–2.8 s placing, so ~11–13 s per cycle and ~9–10 pieces per elevator robot in teleop before the endgame. The bots score 8–11. A kitbot at 3.2 m/s with a ~17 s cycle manages 5–7.
-- **Difficulty ordering**: easy < normal < hard, except cube specialist / arm / kitbot, where hard and normal are within noise (125 vs 127; σ of the mean ≈ 3).
-- **Design intent**: the bonus RPs are meant as stretch goals. Here **Sustainability is reached in most normal matches by any alliance with an elevator robot (95-100%), and Activation in 50-85% of matches.** So the sim is optimistic. Robots break down and lose power and bots have lapses, but bots still drive near-perfect paths, defense is mostly opportunistic, every balance attempt that isn't interrupted succeeds, and tipped cones cost nothing. Archetype speeds were not tuned down to hit a target rate, because that target would come from knowledge of the real season. Treat sim scores as an upper bound for well-driven robots.
+- **Cycle math**: grid to double substation is about 13.7 m. At 4.27 m/s (14 ft/s) × 0.85 (normal) plus path overhead that's ~4.5 s each way, plus 1.5 s handoff and 1.3–2.8 s placing, so ~11–13 s per cycle and ~9–10 pieces per elevator robot in teleop before the endgame. The bots score 8–11. A kitbot at 3.05 m/s (10 ft/s) with a ~17 s cycle manages 5–7.
+- **Difficulty ordering**: easy < normal < hard for every lineup.
+- **Design intent**: the bonus RPs are meant as stretch goals. Here **Sustainability is reached in most normal matches by any alliance with an elevator robot (90-98%), and Activation in 53-83% of matches.** So the sim is optimistic. Robots break down and lose power and bots have lapses, but bots still drive near-perfect paths, defense is mostly opportunistic, every balance attempt that isn't interrupted succeeds, and tipped cones cost nothing. Archetype speeds were not tuned down to hit a target rate, because that target would come from knowledge of the real season. Treat sim scores as an upper bound for well-driven robots.
 
 ## Open questions
 

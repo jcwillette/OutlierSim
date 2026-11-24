@@ -67,6 +67,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`. The bot AI uses the same helpers.
 - `src/games/<year>-<slug>/`: one folder per season.
   - `definition.ts`: the `GameDefinition` data (field, elements, pieces, scoring targets, zones, timing, endgame, RPs, robot archetypes).
+    - Archetype drive limits and mass come from `src/engine/sim/drivetrain.ts`: `drive: driveFor(swerve(MOTORS.x, GEARINGS.y, robotLb, { tipping }), maxOmega)` and `mass: onFieldMass(robotLb)`. Don't hand-type m/s numbers.
   - Optional `rules.ts` hooks, for mechanics the schema can't express.
   - `botHints` in the definition: optional AI strategy hints (target weights, endgame preference, defense share).
   - `SOURCES.md`: cites the manual for every number.

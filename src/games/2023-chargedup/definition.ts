@@ -5,6 +5,7 @@ import type {
   Region2D,
   ScoringTarget,
 } from '../../engine/sim/types.ts';
+import { GEARINGS, MOTORS, driveFor, onFieldMass, swerve, tank } from '../../engine/sim/drivetrain.ts';
 import {
   CHARGE_SOURCES,
   COMMUNITY,
@@ -39,6 +40,13 @@ const IN = 0.0254;
 const LB = 0.4536;
 const L = 651.25 * IN; // 54 ft 3 1/4 in = 16.54 m
 const W = 315.5 * IN; // 26 ft 3 1/2 in = 8.01 m
+/**
+ * Robot drivetrains are 2023-era COTS hardware (Falcon 500 / NEO / CIM, SDS MK4i, REV MAXSwerve,
+ * Kit of Parts tank). Weights are the weighed robot in lb (R103: 125 lb max, excluding bumpers and
+ * battery); `onFieldMass` adds a ~13 lb battery and ~14 lb bumpers.
+ *
+ * A tall elevator robot: CG ~0.4 m up with the elevator stowed, wheels ~0.29 m from center. */
+const TALL = { cgHeight: 0.4, halfWheelbase: 0.29 };
 const rect = (x0: number, y0: number, x1: number, y1: number): Region2D => ({
   kind: 'rect',
   min: { x: x0, y: y0 },
@@ -541,15 +549,17 @@ export const definition: GameDefinition = {
       description:
         'Swerve with an angled elevator and claw. Floor and shelf pickup, scores cones and cubes on all three rows, balances the Charge Station.',
       frame: { length: 0.84, width: 0.84, height: 0.7 },
-      mass: 125 * LB + 8,
-      drive: { maxSpeed: 4.3, maxAccel: 9, maxOmega: 8 },
+      mass: onFieldMass(125),
+      // 14.0 ft/s, 23 ft/s² (tipping-limited)
+      drive: driveFor(swerve(MOTORS.falcon500, GEARINGS.mk4L2, 125, { tipping: TALL }), 8),
       capacity: { cone: 1, cube: 1 },
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.35, reach: 0.2, maxHeight: 1.3 },
       place: { hybrid: 0.8, 'mid-cone': 2.0, 'mid-cube': 1.3, 'high-cone': 2.8, 'high-cube': 1.6 },
       endgame: { 'auto-engage': 4, 'auto-dock': 2, engage: 4, dock: 2 },
       reliability: 0.97,
-      source: 'engineering estimate: R104 frame + bumpers, G107 48 in reach covers the 1.01 m-deep top pole',
+      source:
+        'engineering estimate: R104 frame + bumpers, G107 48 in reach covers the 1.01 m-deep top pole; MK4i L2 + Falcon 500 swerve, 125 lb (R103)',
     },
     {
       id: 'arm',
@@ -557,8 +567,9 @@ export const definition: GameDefinition = {
       description:
         'Swerve with a single-jointed arm. Shelf and floor pickup, scores hybrid and middle rows only. Docks and engages, a bit slower.',
       frame: { length: 0.84, width: 0.84, height: 0.6 },
-      mass: 120 * LB + 8,
-      drive: { maxSpeed: 4.0, maxAccel: 8, maxOmega: 7 },
+      mass: onFieldMass(118),
+      // 12.5 ft/s, 28 ft/s²
+      drive: driveFor(swerve(MOTORS.neo, GEARINGS.mk4L2, 118), 7),
       capacity: { cone: 1, cube: 1 },
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.4, reach: 0.2, maxHeight: 1.2 },
@@ -566,7 +577,7 @@ export const definition: GameDefinition = {
       endgame: { 'auto-engage': 5.5, 'auto-dock': 3, engage: 5.5, dock: 2.5 },
       reliability: 0.92,
       source:
-        'engineering estimate: a simpler arm reaches the 0.58 m-deep mid pole but not the 1.01 m top pole',
+        'engineering estimate: a simpler arm reaches the 0.58 m-deep mid pole but not the 1.01 m top pole; MK4i L2 + NEO swerve, 118 lb',
     },
     {
       id: 'cubebot',
@@ -574,15 +585,16 @@ export const definition: GameDefinition = {
       description:
         'Fast swerve with a low cube intake that flings cubes onto any row. Cubes only, floor pickup only (single substation chute or field).',
       frame: { length: 0.82, width: 0.82, height: 0.5 },
-      mass: 110 * LB + 8,
-      drive: { maxSpeed: 4.6, maxAccel: 10, maxOmega: 9 },
+      mass: onFieldMass(105),
+      // 15.5 ft/s, 30 ft/s²
+      drive: driveFor(swerve(MOTORS.falcon500, GEARINGS.mk4L3, 105), 9),
       capacity: { cube: 1 },
       intake: { pieceTypes: ['cube'], timeSec: 0.25, reach: 0.2, maxHeight: 0.3 },
       place: { hybrid: 0.6, 'mid-cube': 1.0, 'high-cube': 1.3 },
       endgame: { 'auto-engage': 3.5, 'auto-dock': 2, engage: 3.5, dock: 2 },
       reliability: 0.95,
       source:
-        'engineering estimate: 71 g cube, walled cube shelves, launching allowed in the community (G404)',
+        'engineering estimate: 71 g cube, walled cube shelves, launching allowed in the community (G404); MK4i L3 + Falcon 500 swerve, 105 lb',
     },
     {
       id: 'kitbot',
@@ -590,15 +602,17 @@ export const definition: GameDefinition = {
       description:
         'Tank drive with a simple roller intake. Pushes cones and cubes into the bottom row and drives up onto the Charge Station, but cannot balance it.',
       frame: { length: 0.86, width: 0.76, height: 0.45 },
-      mass: 100 * LB + 8,
-      drive: { maxSpeed: 3.2, maxAccel: 6, maxOmega: 5 },
+      mass: onFieldMass(90),
+      // 10.0 ft/s, 32 ft/s² (low gearing, traction-limited)
+      drive: driveFor(tank(MOTORS.cim, 4, GEARINGS.tank1071, 90, { traction: 1.0 }), 5),
       capacity: { cone: 1, cube: 1 },
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.6, maxHeight: 0.3 },
       place: { hybrid: 1.2 },
       endgame: { 'auto-dock': 4, dock: 3 },
       reliability: 0.85,
-      source: 'engineering estimate: rookie tank drive (3-3.5 m/s), floor-only roller intake',
+      source:
+        'engineering estimate: Kit of Parts tank, 4 CIM, 10.71:1 Toughbox Mini, 6 in wheels, 90 lb; floor-only roller intake',
     },
     {
       id: 'cone',
@@ -606,15 +620,16 @@ export const definition: GameDefinition = {
       description:
         'Elevator with a cone-only claw and a funnel that self-centers on the pole. Loads upright cones off the shelf, fastest on the top cone row. No cubes.',
       frame: { length: 0.84, width: 0.84, height: 0.7 },
-      mass: 125 * LB + 8,
-      drive: { maxSpeed: 4.2, maxAccel: 8.5, maxOmega: 7 },
+      mass: onFieldMass(122),
+      // 14.0 ft/s, 23 ft/s² (tipping-limited)
+      drive: driveFor(swerve(MOTORS.falcon500, GEARINGS.mk4L2, 122, { tipping: TALL }), 7),
       capacity: { cone: 1 },
       intake: { pieceTypes: ['cone'], timeSec: 0.35, reach: 0.2, maxHeight: 1.3 },
       place: { hybrid: 0.8, 'mid-cone': 1.5, 'high-cone': 2.0 },
       endgame: { 'auto-dock': 3, engage: 5, dock: 2 },
       reliability: 0.95,
       source:
-        'engineering estimate: specializing in one piece lets the claw self-align over the 1.66 in pole (Manual 5.5)',
+        'engineering estimate: specializing in one piece lets the claw self-align over the 1.66 in pole (Manual 5.5); MK4i L2 + Falcon 500 swerve, 122 lb',
     },
     {
       id: 'balancer',
@@ -622,8 +637,9 @@ export const definition: GameDefinition = {
       description:
         'Light, quick swerve with a gyro auto-balance. Engages fast in auto and endgame. Scores only low: hybrid nodes and mid cube shelves.',
       frame: { length: 0.8, width: 0.8, height: 0.45 },
-      mass: 100 * LB + 8,
-      drive: { maxSpeed: 4.5, maxAccel: 10, maxOmega: 9 },
+      mass: onFieldMass(100),
+      // 13.4 ft/s, 30 ft/s²
+      drive: driveFor(swerve(MOTORS.neo, GEARINGS.maxSwerveHigh, 100), 9),
       capacity: { cone: 1, cube: 1 },
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.4, reach: 0.2, maxHeight: 0.3 },
@@ -631,7 +647,7 @@ export const definition: GameDefinition = {
       endgame: { 'auto-engage': 3, 'auto-dock': 1.5, engage: 2.5, dock: 1.5 },
       reliability: 0.95,
       source:
-        'engineering estimate: a light, low robot settles the +/-15 deg station quickly (Manual 5.4); simple flipper for mid cubes',
+        'engineering estimate: a light, low robot settles the +/-15 deg station quickly (Manual 5.4); simple flipper for mid cubes; MAXSwerve 14T + NEO, 100 lb',
     },
     {
       id: 'defender',
@@ -639,8 +655,12 @@ export const definition: GameDefinition = {
       description:
         'Heavy six-wheel tank with high-grip treads and a wide bumper. Plays defense in the middle of the field by default; can push a piece into the bottom row and dock.',
       frame: { length: 0.94, width: 0.94, height: 0.4 },
-      mass: 125 * LB + 10,
-      drive: { maxSpeed: 4.0, maxAccel: 10, maxOmega: 6, traction: 1.35 },
+      mass: onFieldMass(125, { bumpersLb: 15 }),
+      // 12.0 ft/s, 44 ft/s² (six motors, traction-limited)
+      drive: driveFor(
+        tank(MOTORS.falcon500, 6, GEARINGS.tank1071, 125, { bumpersLb: 15, traction: 1.35 }),
+        6,
+      ),
       capacity: { cone: 1, cube: 1 },
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.5, maxHeight: 0.3 },
@@ -649,7 +669,7 @@ export const definition: GameDefinition = {
       reliability: 0.93,
       defaultRole: 'defense',
       source:
-        'engineering estimate: max-weight (R103), max frame (R104), high-traction wheels; G207 keeps it out of the opponent loading zone and community',
+        'engineering estimate: max-weight (R103), max frame (R104), six Falcon 500s at 10.71:1 on high-traction tread; G207 keeps it out of the opponent loading zone and community',
     },
   ],
   defaultArchetype: 'elevator',

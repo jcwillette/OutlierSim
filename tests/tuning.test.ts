@@ -22,7 +22,7 @@ describe('menu tuning', () => {
     expect(keys).not.toContain('place:high-cone');
     expect(keys).not.toContain('reloadSec'); // no shooter
     const speed = fields.find((f) => f.key === 'maxSpeed')!;
-    expect(speed.get(kit)).toBeCloseTo(3.2 / FT, 5); // ft/s
+    expect(speed.get(kit)).toBeCloseTo(kit.drive.maxSpeed / FT, 5); // ft/s
     const fail = fields.find((f) => f.key === 'mechFailChance')!;
     expect(fail.get(kit)).toBeCloseTo(faultRates(kit).mechFailChance * 100, 5);
   });
@@ -43,7 +43,7 @@ describe('menu tuning', () => {
     const st = tuned.stations.find((s) => s.id === 'double-cone')!;
     expect(st).toMatchObject({ handoffSec: 4, feedIntervalSec: 6, supply: 5 });
     // Original definition unchanged.
-    expect(arch(cu, 'kitbot').drive.maxSpeed).toBe(3.2);
+    expect(arch(cu, 'kitbot').drive.maxSpeed).toBeLessThan(15 * FT);
     expect(arch(cu, 'kitbot').faults).toBeUndefined();
     expect(cu.stations.find((s) => s.id === 'double-cone')!.handoffSec).toBe(1.5);
     // Untouched robots are shared, not copied.
