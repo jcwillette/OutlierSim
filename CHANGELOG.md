@@ -17,6 +17,7 @@ Format: newest first. One entry per merged PR.
   - **Authoring helpers** (`src/engine/sim/authoring.ts`): `IN`, `FT`, `LB`, `DEG`, `feet()`, `rect()`, `poly()`, `circle()`, `cite()`.
   - **Bots' geometry audit** (`auditDefinition`, `tests/audit.test.ts` for every game): every place target, shot, station, endgame zone, park zone and staged piece must be usable by a robot type that has the mechanism, from the start poses. It names what the bots can't use and why.
   - **`npm run plausibility -- --game <id>`**: validation, the audit, a piece ceiling, and every lineup preset against itself at easy / normal / hard in worker threads, printed as the SOURCES.md table with PASS/WARN checks (difficulty ordering, bonus-RP rates, unused targets and endgame actions, robot types that never score, blue vs red). 2023: 336 matches in about 2 minutes on 4 cores.
+  - **Manual ingest** writes `rules.md` (every G/H/R/S/E/T rule with its page and first line) and `meta.txt` (the PDF's SHA-256 and dates) next to the text, the topic index and the figures.
   - **Validation** covers the new fields plus RP sources, tags and target ids, and `botHints` zone ids.
   - **Skill**: the extraction checklist asks for the manual's revision and SHA-256, the quoted G-rules, nav hints, RP kinds, reliability and lineups; the cookbook maps declared fouls, non-foul penalties, ramps, auto limits and rules state; SKILL.md has the audit and plausibility tool in Step 4, a step-by-step kickoff fast path and the pitfalls the 2023 build hit. The template uses the helpers and shows the new declarations.
   - Symmetry re-checked after the bot changes: 2,000 mirrored Powerhouse matches, wins 998 : 966 (z 0.7), score 185.2 ± 13.6 vs 185.1 ± 13.1.
@@ -25,6 +26,7 @@ Format: newest first. One entry per merged PR.
   - Nav grids build about 9× faster (2023: 44 → 5 ms per grid, six per match start), which also removes a hitch when a match starts in the browser.
   - Bots look up their nav grid once per robot, collect protected zones and path penalties once per match, and cache endgame spot data; touch tracking skips far pairs exactly; aperture checks skip place-only games; the per-tick shot check tests one target.
   - About 4 % (2023) to 9 % (reference) per match; physics is now ~45-58 % of a match.
+  - The protected-zone checks the bots run every tick use a bounding-box shortcut and cached zone outlines, and the referee works out each robot's heading trig once per tick: another 7-8 % per match.
 
 - Blue and red now play the same game (ADR 0007):
   - Identical 2023 alliances used to give red a wider score spread and fewer bonus RPs than blue. In 2,500 matches: score SD 13.8 vs 12.3, Sustainability 98.4 % vs 99.4 %. Auto showed it most: red's node count varied more, and blue missed Mobility 3× as often.

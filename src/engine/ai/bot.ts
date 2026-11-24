@@ -11,7 +11,15 @@ import {
 } from '../sim/match.ts';
 import { handedness as frameHandedness } from '../sim/frame.ts';
 import { DEFAULT_PIN_RELEASE_GAP } from '../sim/referee.ts';
-import { clamp, distToRegion, pointInRegion, regionCenter, turnTo, wrapAngle } from '../sim/math.ts';
+import {
+  clamp,
+  distToRegion,
+  pointInRegion,
+  regionCenter,
+  regionOutline,
+  turnTo,
+  wrapAngle,
+} from '../sim/math.ts';
 import type {
   Alliance,
   AllianceStrategy,
@@ -83,7 +91,7 @@ interface MatchAI {
    * Each alliance's protected zones (`botHints.protectedZones`), and the same plus its endgame-only
    * ones (`endgameProtectedZones`): static, so collected once per match.
    */
-  protected: Record<Alliance, { always: Region2D[]; endgame: Region2D[] }>;
+  protected: Record<Alliance, { always: ZoneCheck[]; endgame: ZoneCheck[] }>;
   /** Path penalty for each alliance's robots: the opponent's protected zones. */
   penalty: Record<Alliance, { key: string; regions: Region2D[] } | undefined>;
 }
@@ -103,7 +111,7 @@ function aiFor(m: Match): MatchAI {
     const regions = (a: Alliance, ids: readonly string[]) =>
       m.game.zones
         .filter((z) => (z.alliance === a || z.alliance === null) && ids.includes(z.baseId))
-        .map((z) => z.region);
+        .map((z) => zoneCheck(z.region));
     const penalty = (a: Alliance) => {
       if (!always.length) return undefined;
       const opp = other(a);
@@ -1261,9 +1269,42 @@ function blockPoint(m: Match, o: Robot): Vec2 {
  */
 function nearProtectedZone(m: Match, p: Vec2, alliance: Alliance, margin: number, endgame: boolean): boolean {
   const zones = aiFor(m).protected[alliance];
-  for (const region of endgame ? zones.endgame : zones.always)
-    if (pointInRegion(p, region) || (margin > 0 && distToRegion(p, region) < margin)) return true;
+  for (const z of endgame ? zones.endgame : zones.always) if (nearZone(p, z, margin)) return true;
   return false;
+}
+
+/**
+ * `p` is inside the zone or within `margin` of it: `pointInRegion(p) || distToRegion(p) < margin`,
+ * skipping both when `p` is clearly (1e-9 m) farther than `margin` outside the bounding box.
+ */
+export function nearZone(p: Vec2, z: ZoneCheck, margin: number): boolean {
+  const k = margin + 1e-9;
+  if (p.x < z.minX - k || p.x > z.maxX + k || p.y < z.minY - k || p.y > z.maxY + k) return false;
+  return pointInRegion(p, z.region) || (margin > 0 && distToRegion(p, z.region) < margin);
+}
+
+/** A zone with its bounding box (from its outline; a circle's 24-gon is inside its true circle). */
+export interface ZoneCheck {
+  region: Region2D;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+export function zoneCheck(region: Region2D): ZoneCheck {
+  if (region.kind === 'circle') {
+    const { center: c, radius: r } = region;
+    return { region, minX: c.x - r, minY: c.y - r, maxX: c.x + r, maxY: c.y + r };
+  }
+  const pts = regionOutline(region);
+  return {
+    region,
+    minX: Math.min(...pts.map((q) => q.x)),
+    minY: Math.min(...pts.map((q) => q.y)),
+    maxX: Math.max(...pts.map((q) => q.x)),
+    maxY: Math.max(...pts.map((q) => q.y)),
+  };
 }
 
 /** A bot that is defending (role or current plan): not worth defending against. */

@@ -1,11 +1,11 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { attachBots } from '../src/engine/ai/bot.ts';
+import { attachBots, nearZone, zoneCheck } from '../src/engine/ai/bot.ts';
 import { NavGrid, obstacleFootprints, type DynamicObstacle } from '../src/engine/ai/navgrid.ts';
 import { PointIndex } from '../src/engine/ai/spatial.ts';
 import { stepWorld } from '../src/engine/sim/bodyState.ts';
 import { Match, initPhysics } from '../src/engine/sim/index.ts';
-import { makeRng, pointInRegion, yawFromQuat } from '../src/engine/sim/math.ts';
+import { distToRegion, makeRng, pointInRegion, yawFromQuat } from '../src/engine/sim/math.ts';
 import { findGame } from '../src/games/index.ts';
 import type { Region2D, Vec2 } from '../src/engine/sim/types.ts';
 
@@ -282,6 +282,36 @@ describe('NavGrid.findPath', () => {
         compared++;
       }
       expect(compared).toBe(150);
+    }
+  });
+});
+
+describe('protected-zone checks', () => {
+  it('the bounding-box shortcut gives the plain answer for rects, polygons and circles', () => {
+    const rand = makeRng(9);
+    const regions: Region2D[] = [
+      { kind: 'rect', min: { x: 2, y: 1 }, max: { x: 4.5, y: 3 } },
+      {
+        kind: 'poly',
+        points: [
+          { x: 10, y: 1 },
+          { x: 13, y: 1.5 },
+          { x: 12, y: 4 },
+          { x: 11, y: 3 },
+          { x: 9.5, y: 3.5 },
+        ],
+      },
+      { kind: 'circle', center: { x: 6, y: 6 }, radius: 1.3 },
+    ];
+    for (const region of regions) {
+      const z = zoneCheck(region);
+      for (let i = 0; i < 4000; i++) {
+        const p = { x: rand() * 16, y: rand() * 8 };
+        for (const margin of [0, 0.3, 0.6, 1.5]) {
+          const plain = pointInRegion(p, region) || (margin > 0 && distToRegion(p, region) < margin);
+          expect(nearZone(p, z, margin)).toBe(plain);
+        }
+      }
     }
   });
 });

@@ -27,12 +27,13 @@ export const DEFAULT_PIN_RELEASE_GAP = 1.83;
  * under the true gap corner to corner (so it errs toward contact).
  */
 export function robotGap(a: Robot, b: Robot): number {
+  return gapWith(a, b, Math.cos(a.yaw), Math.sin(a.yaw), Math.cos(b.yaw), Math.sin(b.yaw));
+}
+
+/** `robotGap` with each robot's heading cosine and sine already worked out. */
+function gapWith(a: Robot, b: Robot, ca: number, sa: number, cb: number, sb: number): number {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const ca = Math.cos(a.yaw);
-  const sa = Math.sin(a.yaw);
-  const cb = Math.cos(b.yaw);
-  const sb = Math.sin(b.yaw);
   const al = a.archetype.frame.length / 2;
   const aw = a.archetype.frame.width / 2;
   const bl = b.archetype.frame.length / 2;
@@ -72,6 +73,9 @@ export class Referee {
   private readonly lastCall = new Map<string, number>();
   /** Pins in progress per (pinning robot, pinned robot). */
   private readonly pins = new Map<string, { t: number; called: number }>();
+  /** Each robot's heading cosine and sine this tick, by robot id. */
+  private readonly cos: number[] = [];
+  private readonly sin: number[] = [];
 
   constructor(private readonly m: Match) {
     this.contact = (m.def.fouls.contact ?? []).map((rule) => {
@@ -91,11 +95,17 @@ export class Referee {
   tick(dt: number): void {
     const m = this.m;
     if (m.phase !== 'auto' && m.phase !== 'teleop') return;
+    for (const r of m.robots) {
+      const yaw = r.yaw;
+      this.cos[r.id] = Math.cos(yaw);
+      this.sin[r.id] = Math.sin(yaw);
+    }
+    const { cos, sin } = this;
     for (const a of m.robots) {
       if (a.alliance !== 'blue') continue;
       for (const b of m.robots) {
         if (b.alliance !== 'red') continue;
-        const gap = robotGap(a, b);
+        const gap = gapWith(a, b, cos[a.id]!, sin[a.id]!, cos[b.id]!, sin[b.id]!);
         if (gap < CONTACT_GAP) this.contactFouls(a, b);
         if (this.pinning) {
           this.pin(this.pinning, a, b, gap, dt);

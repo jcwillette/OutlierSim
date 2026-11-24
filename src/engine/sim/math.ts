@@ -97,9 +97,16 @@ export function regionOutline(r: Region2D): Vec2[] {
   }
 }
 
-/** Distance from `p` to a region's outline (circles via their 24-gon outline); 0 on the outline. */
+const outlines = new WeakMap<Region2D, Vec2[]>();
+
+/**
+ * Distance from `p` to a region's outline (circles via their 24-gon outline); 0 on the outline. The
+ * outline is computed once per region object: regions, like the definitions they come from, are
+ * never mutated.
+ */
 export function distToRegion(p: Vec2, region: Region2D): number {
-  const pts = regionOutline(region);
+  let pts = outlines.get(region);
+  if (!pts) outlines.set(region, (pts = regionOutline(region)));
   let best = Infinity;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
     const a = pts[j]!;
