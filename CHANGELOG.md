@@ -17,6 +17,7 @@ Format: newest first. One entry per merged PR.
   - **Validation** covers the new fields plus RP sources, tags and target ids, and `botHints` zone ids.
   - **Skill**: the extraction checklist asks for the manual's revision and SHA-256, the quoted G-rules, nav hints, RP kinds, reliability and lineups; the cookbook maps declared fouls, non-foul penalties, ramps, auto limits and rules state; SKILL.md has the audit and plausibility tool in Step 4, a step-by-step kickoff fast path and the pitfalls the 2023 build hit. The template uses the helpers and shows the new declarations.
   - Symmetry re-checked after the bot changes: 2,000 mirrored Powerhouse matches, wins 998 : 966 (z 0.7), score 185.2 ± 13.6 vs 185.1 ± 13.1.
+- `npm run sim -- --lineups a,b` with two different lineups prints each alliance's stats and RP rates separately (the pooled table mixed the two setups); the JSON has `bySide`.
 - Faster, same results (ADR 0006; every bench fingerprint unchanged):
   - Nav grids build about 9× faster (2023: 44 → 5 ms per grid, six per match start), which also removes a hitch when a match starts in the browser.
   - Bots look up their nav grid once per robot, collect protected zones and path penalties once per match, and cache endgame spot data; touch tracking skips far pairs exactly; aperture checks skip place-only games; the per-tick shot check tests one target.

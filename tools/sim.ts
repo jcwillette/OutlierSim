@@ -13,6 +13,7 @@ import { attachBots, type Difficulty } from '../src/engine/ai/bot.ts';
 import {
   Match,
   initPhysics,
+  type AllianceResult,
   type AllianceStrategy,
   type MatchResult,
   type RobotRole,
@@ -29,7 +30,10 @@ export interface SimSummary {
   game: string;
   matches: number;
   difficulty: Difficulty;
+  /** Per alliance-match, both alliances pooled (meaningful when both play the same setup). */
   stats: Record<string, { mean: number; sd: number; min: number; max: number }>;
+  /** The same per alliance: for a head-to-head (`--lineups a,b`) read these, not the pooled ones. */
+  bySide: Record<'blue' | 'red', { stats: SimSummary['stats']; rpRates: Record<string, number> }>;
   rpRates: Record<string, number>;
   /** Share of matches each alliance won, and ties (the app's win-probability screen does this live). */
   winRates: { blue: number; red: number; tie: number };
@@ -103,13 +107,26 @@ export async function runSims(
   }
   // Each alliance-match is one sample (both alliances play the same game).
   const sides = results.flatMap((r) => [r.blue, r.red]);
+  const scoreStats = (ss: AllianceResult[]): SimSummary['stats'] => ({
+    total: summarize(ss.map((s) => s.score)),
+    auto: summarize(ss.map((s) => s.breakdown.auto)),
+    teleop: summarize(ss.map((s) => s.breakdown.teleop)),
+    endgame: summarize(ss.map((s) => s.breakdown.endgame)),
+    penalty: summarize(ss.map((s) => s.breakdown.penalty)),
+  });
   const stats: SimSummary['stats'] = {
-    total: summarize(sides.map((s) => s.score)),
-    auto: summarize(sides.map((s) => s.breakdown.auto)),
-    teleop: summarize(sides.map((s) => s.breakdown.teleop)),
-    endgame: summarize(sides.map((s) => s.breakdown.endgame)),
-    penalty: summarize(sides.map((s) => s.breakdown.penalty)),
+    ...scoreStats(sides),
     margin: summarize(results.map((r) => Math.abs(r.blue.score - r.red.score))),
+  };
+  const bonusRates = (ss: AllianceResult[]) => {
+    const out: Record<string, number> = {};
+    for (const s of ss)
+      for (const k of Object.keys(s.rpBreakdown)) out[k] = +((out[k] ?? 0) + 1 / ss.length).toFixed(4);
+    return out;
+  };
+  const bySide = {
+    blue: { stats: scoreStats(results.map((r) => r.blue)), rpRates: bonusRates(results.map((r) => r.blue)) },
+    red: { stats: scoreStats(results.map((r) => r.red)), rpRates: bonusRates(results.map((r) => r.red)) },
   };
   const winRates = {
     blue: +(results.filter((r) => r.blue.won).length / results.length).toFixed(3),
@@ -149,6 +166,7 @@ export async function runSims(
       matches,
       difficulty,
       stats,
+      bySide,
       rpRates,
       winRates,
       targetMeans,
@@ -175,7 +193,15 @@ async function main() {
   const json = arg('json');
   if (json) writeFileSync(json, JSON.stringify(summary, null, 2));
   console.log(`${summary.game}: ${summary.matches} matches (${summary.difficulty}) in ${summary.wallMs} ms`);
-  console.table(summary.stats);
+  const lineups = arg('lineups')?.split(',');
+  if (lineups && lineups[0] !== lineups[1]) {
+    // A head-to-head: pooling the two alliances would mix two different setups.
+    for (const side of ['blue', 'red'] as const) {
+      console.log(`${side} (${lineups[side === 'blue' ? 0 : 1]}):`);
+      console.table(summary.bySide[side].stats);
+      console.log('  RP rates:', summary.bySide[side].rpRates);
+    }
+  } else console.table(summary.stats);
   console.log('Pieces scored per alliance per match (mean):');
   console.table(summary.targetMeans);
   console.log('Endgame actions per alliance per match (mean):', summary.endgameMeans);
