@@ -300,9 +300,12 @@ export class FieldView {
     return m;
   }
 
-  /** Show a broken-down robot (gray, "DISABLED") or one in a short outage (blinking "NO POWER"). */
+  /**
+   * Show a broken-down robot (gray, "DISABLED"), one in a short outage (blinking "NO POWER") or one
+   * whose mechanisms failed ("NO MECH": it still drives).
+   */
   private syncStatus(v: RobotVisual, r: Robot, time: number): void {
-    const key = r.brokenDown ? 'dead' : r.isOut(time) ? 'stall' : '';
+    const key = r.brokenDown ? 'dead' : r.isOut(time) ? 'stall' : r.mechDown && !r.endgameDone ? 'mech' : '';
     if (key !== v.statusKey) {
       v.statusKey = key;
       if (v.status) {
@@ -313,12 +316,14 @@ export class FieldView {
       }
       (v.chassis.material as THREE.MeshStandardMaterial).color.set(key === 'dead' ? 0x1b1d21 : 0x3a3f47);
       if (key) {
-        v.status = textSprite(
-          key === 'dead' ? 'DISABLED' : 'NO POWER',
-          '#fff',
-          key === 'dead' ? '#c62828' : '#b26a00',
-          0.45,
-        );
+        const [text, bg] = (
+          {
+            dead: ['DISABLED', '#c62828'],
+            stall: ['NO POWER', '#b26a00'],
+            mech: ['NO MECH', '#6a4c93'],
+          } as const
+        )[key];
+        v.status = textSprite(text, '#fff', bg, 0.45);
         v.status.position.z = r.archetype.frame.height / 2 + 0.95;
         v.group.add(v.status);
       }

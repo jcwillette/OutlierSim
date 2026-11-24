@@ -4,6 +4,19 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- Drive speed, acceleration and weight from real hardware:
+  - New `src/engine/sim/drivetrain.ts`. It holds vendor motor specs (CIM, NEO, NEO Vortex, Falcon 500, Kraken X60 with and without FOC) and common gearings (SDS MK4i L1-L3, REV MAXSwerve 12-14T, Kit of Parts tank ratios). `driveFor(swerve(...) | tank(...), maxOmega)` turns them into `maxSpeed` and `maxAccel`: practical top speed is 85 % of free speed for swerve and 77 % for tank, and acceleration comes from the motor curve with typical drive current limits, traction and an optional tipping limit, fitted to a 5 m sprint. `onFieldMass(lb)` adds ~13 lb of battery and ~14 lb of bumpers.
+  - 2023 robots now state their hardware. Top speeds are 10-15.5 ft/s, accelerations 23-44 ft/s², and on-field weights 117-155 lb (previously 143 lb or less). The full table is in `2023-chargedup/SOURCES.md`. Bot scoring barely moves (normal, random lineups, 40 matches: 182 → 178 points per alliance).
+  - The reference game and the template use the helper too. The skill and the extraction checklist now ask for each robot's drivetrain and weight instead of bare m/s numbers.
+- Robot & field tuning in the menu (collapsible, saved per game):
+  - Per robot type: max speed (ft/s), acceleration (ft/s²), turn rate (°/s), wheel grip, weight (lb), pickup time, place time per target, shooter reload / spread / range (ft), each endgame action's time, and failure chances (breakdown, mechanism failure, each one's recovery chance, power losses per match). Blank = the game's default, shown as the placeholder. Applies to every robot of that type, yours and the bots'.
+  - Per human player station: hand-off time, time between pieces, pieces per alliance.
+  - `src/ui/tuning.ts` (DOM-free, tested) holds the fields and `applyTuning`, which returns a tuned copy of the definition. `npm run sim` takes the same overrides with `--tuning file.json`.
+  - New `RobotArchetype.faults` overrides the fault rates derived from `reliability` (`faultRates()` in `src/engine/sim/faults.ts`).
+- Partial failures and recovery:
+  - New mechanism failure: the robot still drives (and can still do endgame actions) but can't intake, place, shoot or use a human player station. Chance about 1.5 × (1 − R) per match, 2.5× a breakdown. Tagged NO MECH; bots with a broken mechanism play defense, then go to the endgame.
+  - Breakdowns are no longer always permanent. A broken-down robot comes back after 10-35 s with chance 0.7 − 3 × (1 − R); a failed mechanism comes back after 5-25 s with chance 0.85 − 3 × (1 − R) (both clamped to 5-95%). Better robots come back more often.
+  - Results show when a robot came back or its mechanism was fixed. `npm run sim` reports mechanism-failure and recovery rates.
 - Clean defense:
   - Defenders never mark an opposing defender. Defender-vs-defender time when both alliances bring one: ~136 s → ~0 s per match. A Defender with no worthwhile target scores instead.
   - They drop an opponent within 0.6 m of its protected zones and never wait inside them.

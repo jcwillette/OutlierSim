@@ -55,15 +55,17 @@ Confidence: **high** (stated explicitly), **med** (derived from a drawing or sev
 | ----------------------------------------------------------------- | ----- | ------ | ---- |
 | Max frame perimeter / starting size, bumpers included (m)         |       |        |      |
 | Max height (m) and extension limits                               |       |        |      |
-| Max robot weight (kg)                                             |       |        |      |
+| Max robot weight (lb), and whether bumpers / battery are excluded |       |        |      |
+| Bumper weight limit (lb), if any                                  |       |        |      |
+| Legal drive motors (and any motor-count limit)                    |       |        |      |
 | Piece-holding limits (e.g. "1 at a time")                         |       |        |      |
 | Zones robots can't enter / contact restrictions that change paths |       |        |      |
 
 ## Archetypes (proposed)
 
-| Name | Concept | Speed | Capacity | Intake | Place/shoot times | Endgame | Why it's plausible |
-| ---- | ------- | ----- | -------- | ------ | ----------------- | ------- | ------------------ |
-|      |         |       |          |        |                   |         |                    |
+| Name | Concept | Drivetrain (motor, module / gearbox) and weight | Capacity | Intake | Place/shoot times | Endgame | Why it's plausible |
+| ---- | ------- | ----------------------------------------------- | -------- | ------ | ----------------- | ------- | ------------------ |
+|      |         |                                                 |          |        |                   |         |                    |
 
 ## Simplifications
 

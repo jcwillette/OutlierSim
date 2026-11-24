@@ -175,6 +175,7 @@ export class BotBrain implements RobotController {
   private lapseUntil = 0;
   private now = 0;
   private wasOut = false;
+  private wasMechDown = false;
 
   constructor(opts: BotOptions = {}) {
     this.skill = SKILL[opts.difficulty ?? 'normal'];
@@ -215,6 +216,11 @@ export class BotBrain implements RobotController {
       return IDLE;
     }
     this.wasOut = false;
+    if (r.mechDown !== this.wasMechDown) {
+      // Mechanism failed (piece plans are now invalid) or works again: re-plan right away.
+      this.wasMechDown = r.mechDown;
+      this.thinkTimer = 0;
+    }
     this.updateLapse(m, r, dt);
     this.thinkTimer -= dt;
     this.pathAge += dt;
@@ -268,6 +274,11 @@ export class BotBrain implements RobotController {
 
   private planValid(m: Match, r: Robot): boolean {
     const p = this.plan;
+    if (
+      r.mechDown &&
+      (p.kind === 'acquire' || p.kind === 'station' || p.kind === 'place' || p.kind === 'shoot')
+    )
+      return false;
     switch (p.kind) {
       case 'idle':
         return false;
@@ -656,8 +667,9 @@ export class BotBrain implements RobotController {
     return null;
   }
 
-  private defenseOption(m: Match, r: Robot): Option | null {
-    if (this.role !== 'defense' || m.phase !== 'teleop') return null;
+  /** `force`: defend even without the defense role (a robot that can't score). */
+  private defenseOption(m: Match, r: Robot, force = false): Option | null {
+    if ((this.role !== 'defense' && !force) || m.phase !== 'teleop') return null;
     const opps = m.robots.filter((o) => this.worthDefending(m, r, o));
     if (!opps.length) return null; // nobody worth marking (all defending, broken, protected): score instead
     // Mark the opponent carrying the most pieces, nearest first.
@@ -670,6 +682,18 @@ export class BotBrain implements RobotController {
   }
 
   private decide(m: Match, r: Robot): void {
+    if (r.mechDown) {
+      // Can drive but not score: endgame if it's time, else play defense, else wait in endgame position.
+      this.adopt(
+        m,
+        r,
+        this.endgameOption(m, r) ??
+          (r.archetype.endgame ? null : this.parkOption(m, r)) ??
+          this.defenseOption(m, r, true) ??
+          this.endgameOption(m, r, true),
+      );
+      return;
+    }
     const priority =
       this.endgameOption(m, r) ??
       (r.archetype.endgame ? null : this.parkOption(m, r)) ??
@@ -684,6 +708,10 @@ export class BotBrain implements RobotController {
       // Nothing to score or fetch (e.g. every reachable target is full): get into endgame position.
       if (!choice) choice = this.endgameOption(m, r, true);
     }
+    this.adopt(m, r, choice);
+  }
+
+  private adopt(m: Match, r: Robot, choice: Option | null): void {
     const plan = choice?.plan ?? { kind: 'idle' };
     if (choice && samePlan(this.plan, plan)) return;
     this.plan = plan;
@@ -743,7 +771,7 @@ export class BotBrain implements RobotController {
    * (G209-style). Our own spot must be clear of those zones too.
    */
   private worthDefending(m: Match, r: Robot, o: Robot): boolean {
-    if (o.alliance === r.alliance || o.endgameDone || o.brokenDown) return false;
+    if (o.alliance === r.alliance || o.endgameDone || o.brokenDown || o.mechDown) return false;
     if (isDefending(o)) return false;
     if ((this.harassCooldown.get(o.id) ?? 0) > m.time) return false;
     const point = blockPoint(m, o);

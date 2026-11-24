@@ -314,6 +314,20 @@ export type RankingPointRule =
 
 // ---------------------------------------------------------------- robots
 
+/** Per-match fault rates for a robot with breakdowns on. Chances are 0..1. */
+export interface FaultRates {
+  /** Chance to break down (no driving, no mechanisms) at a random time in the match. */
+  breakdownChance: number;
+  /** Chance a breakdown clears 10-35 s later. */
+  breakdownRecoverChance: number;
+  /** Chance the game-piece mechanisms fail (the robot still drives and can do endgame actions). */
+  mechFailChance: number;
+  /** Chance a mechanism failure clears 5-25 s later. */
+  mechRecoverChance: number;
+  /** Expected short (2-6 s) power / comms losses per match. */
+  stallsPerMatch: number;
+}
+
 export interface RobotArchetype {
   id: string;
   name: string;
@@ -366,11 +380,15 @@ export interface RobotArchetype {
   endgame?: Record<string, number>;
   /**
    * How dependable the robot (and, for bots, its drive team) is, 0..1. Default 0.95. When a match
-   * runs with breakdowns on, lower values mean a higher chance to break down for the rest of the
-   * match (about 0.6 x (1 - reliability)), more short power / comms losses (about 5 x (1 -
-   * reliability) per match, 2-6 s each), and, for bots, more lapses where they ignore teammates.
+   * runs with breakdowns on, lower values mean a higher chance to break down (about 0.6 x (1 -
+   * reliability)), a higher chance of a mechanism failure that stops scoring but not driving (about
+   * 1.5 x (1 - reliability)), a lower chance of either clearing later in the match, more short
+   * power / comms losses (about 5 x (1 - reliability) per match, 2-6 s each), and, for bots, more
+   * lapses where they ignore teammates.
    */
   reliability?: number;
+  /** Explicit per-match fault rates, overriding the ones derived from `reliability` (menu tuning). */
+  faults?: Partial<FaultRates>;
   /** What a bot driving this robot does by default: score, or play defense all teleop. */
   defaultRole?: RobotRole;
   source?: Citation;

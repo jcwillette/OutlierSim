@@ -478,3 +478,83 @@ label.field {
   color: #ffb347;
   font-size: 12px;
 }
+
+/* Robot & field tuning (menu) */
+details.tuning {
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+details.tuning > summary {
+  cursor: pointer;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+details.tuning[open] > summary {
+  margin-bottom: 8px;
+}
+details.tuning .tuned {
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 6px;
+}
+details.tuning h3 {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+details.tuning .row button {
+  align-self: flex-end;
+}
+fieldset.tune-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 10px 0 0;
+  padding: 6px 10px 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px 12px;
+  min-width: 0;
+}
+fieldset.tune-group legend {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 4px;
+}
+label.tune {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+}
+label.tune em {
+  font-style: normal;
+  opacity: 0.75;
+}
+label.tune input {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: #222831;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  width: 100%;
+}
+label.tune input::placeholder {
+  color: #6b7480;
+}
+label.tune input.set {
+  border-color: var(--accent);
+}
+label.tune input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

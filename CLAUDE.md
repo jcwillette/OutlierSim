@@ -18,7 +18,7 @@ npm test                             # all Vitest tests (unit + headless matches
 npx vitest run tests/smoke.test.ts   # single file
 npx vitest run -t "loads Rapier"     # single test by name
 npm run build                        # typecheck + production build to dist/
-npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archetypes a,b,c] [--json out.json]
+npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archetypes a,b,c] [--tuning t.json] [--json out.json]
                                      # headless bot-vs-bot matches (~2.5 s each) -> score/RP/piece stats
 npm run test:e2e                     # build + Playwright: every game loads, plays, no errors; screenshots in test-results/
 npm run calibrate -- --game <id> [--events 2024casj,...] [--matches 30] [--difficulty hard] [--write | --dump]
@@ -52,7 +52,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
     - it breaks off pins after 3 s and waits 4 s before re-engaging.
   - Bots have tunnel-vision lapses (`SKILL.lapse` plus robot unreliability), where they ignore teammates.
   - `attachBots` takes per-robot `roles` and per-alliance `strategies` (`AllianceStrategy`).
-- Imperfect robots: `MatchOptions.breakdowns` rolls each robot's breakdown and power losses from `RobotArchetype.reliability` (seeded). `Robot.isOut(t)` blocks driving and mechanisms. It's off by default in the engine (so tests stay deterministic), on in the app (except the player's robot, by default) and in `npm run sim` (`--perfect` turns it off).
+- Imperfect robots: `MatchOptions.breakdowns` rolls each robot's breakdown, mechanism failure and power losses from `RobotArchetype.reliability` (seeded). Breakdowns and mechanism failures can clear (more often for reliable robots). `Robot.isOut(t)` blocks driving and mechanisms; `Robot.mechDown` blocks only game-piece handling (endgame still works), and bots with one play defense. It's off by default in the engine (so tests stay deterministic), on in the app (except the player's robot, by default) and in `npm run sim` (`--perfect` turns it off).
   - Ramps (drivable elements 0.05-0.2 m tall) are slow ground, both in A* cost and in bot speed.
   - `attachBots()` wires up a match. Difficulty (`SKILL`) only changes speed, think rate, utility noise and dwell.
   - If bots can't score in a new game, the definition is usually wrong (unreachable zones, impossible shots). `tests/games.test.ts` checks for this.
@@ -63,9 +63,11 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `Session` calls `attachBots()` for the non-player robots. The player's robot can run a `BotBrain` during auto (the "auto routine" option).
   - Spectator mode (`Setup.mode === 'watch'`, `?watch=1`): `Session.player` is null and all six robots are bots. `CameraRig` uses `SPECTATOR_CAMERA_MODES`, starting on the sideline view. The followed robot gets the ring (`FieldView.highlight`), and `describeBot()` turns its `BotBrain.currentPlan` into HUD commentary. Playback speed scales `match.advance`.
   - The menu's alliance composition (preset, strategy, robot and role per slot) lives in `ui/lineup.ts` (DOM-free, unit-tested). Games offer presets via `GameDefinition.lineups`.
+  - The menu's "Robot & field tuning" lives in `ui/tuning.ts` (DOM-free, unit-tested): per robot type and per human player station overrides in display units (ft, lb, s, %). `applyTuning(def, tuning)` returns a tuned copy of the definition, which `App.start` (and `npm run sim --tuning`) pass to `Match`. Explicit fault rates go in `RobotArchetype.faults` and override `faultRates()` (`sim/faults.ts`).
   - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`. The bot AI uses the same helpers.
 - `src/games/<year>-<slug>/`: one folder per season.
   - `definition.ts`: the `GameDefinition` data (field, elements, pieces, scoring targets, zones, timing, endgame, RPs, robot archetypes).
+    - Archetype drive limits and mass come from `src/engine/sim/drivetrain.ts`: `drive: driveFor(swerve(MOTORS.x, GEARINGS.y, robotLb, { tipping }), maxOmega)` and `mass: onFieldMass(robotLb)`. Don't hand-type m/s numbers.
   - Optional `rules.ts` hooks, for mechanics the schema can't express.
   - `botHints` in the definition: optional AI strategy hints (target weights, endgame preference, defense share).
   - `SOURCES.md`: cites the manual for every number.

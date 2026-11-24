@@ -1,3 +1,4 @@
+import { GEARINGS, MOTORS, driveFor, onFieldMass, swerve, tank } from '../../engine/sim/drivetrain.ts';
 import type { GameDefinition, Region2D } from '../../engine/sim/types.ts';
 import { rules } from './rules.ts';
 
@@ -282,8 +283,8 @@ export const definition: GameDefinition = {
       name: 'All-rounder',
       description: 'Shoots orbs (auto-aligns), places blocks on both rack levels, climbs.',
       frame: { length: 0.85, width: 0.85, height: 0.4 },
-      mass: 60,
-      drive: { maxSpeed: 4.5, maxAccel: 10, maxOmega: 9 },
+      mass: onFieldMass(118),
+      drive: driveFor(swerve(MOTORS.krakenX60, GEARINGS.mk4L2, 118), 9),
       capacity: { orb: 2, block: 1 },
       totalCapacity: 2,
       intake: { pieceTypes: ['orb', 'block'], timeSec: 0.25 },
@@ -303,8 +304,8 @@ export const definition: GameDefinition = {
       name: 'Turret shooter',
       description: 'Holds 3 orbs and shoots from anywhere in range without turning. No blocks.',
       frame: { length: 0.8, width: 0.8, height: 0.45 },
-      mass: 58,
-      drive: { maxSpeed: 4.8, maxAccel: 11, maxOmega: 10 },
+      mass: onFieldMass(112),
+      drive: driveFor(swerve(MOTORS.krakenX60, GEARINGS.mk4L3, 112), 10),
       capacity: { orb: 3 },
       intake: { pieceTypes: ['orb'], timeSec: 0.2 },
       shooter: {
@@ -324,8 +325,8 @@ export const definition: GameDefinition = {
       name: 'Stacker',
       description: 'Blocks only. Fast placement on both rack levels and a quick climb.',
       frame: { length: 0.85, width: 0.75, height: 0.4 },
-      mass: 62,
-      drive: { maxSpeed: 4.2, maxAccel: 9, maxOmega: 8 },
+      mass: onFieldMass(122),
+      drive: driveFor(swerve(MOTORS.neo, GEARINGS.mk4L2, 122), 8),
       capacity: { block: 1 },
       intake: { pieceTypes: ['block'], timeSec: 0.3 },
       place: { low: 0.5, high: 0.9 },
@@ -337,8 +338,8 @@ export const definition: GameDefinition = {
       description: 'Heavy, high-traction and fast. Built to slow the other alliance down.',
       defaultRole: 'defense',
       frame: { length: 0.9, width: 0.9, height: 0.35 },
-      mass: 70,
-      drive: { maxSpeed: 5, maxAccel: 12, maxOmega: 9, traction: 1.35 },
+      mass: onFieldMass(125, { bumpersLb: 15 }),
+      drive: driveFor(tank(MOTORS.krakenX60, 6, GEARINGS.tank845, 125, { bumpersLb: 15, traction: 1.35 }), 9),
       capacity: { orb: 1 },
       intake: { pieceTypes: ['orb'], timeSec: 0.3 },
       shooter: { pieceTypes: ['orb'], exitSpeed: 9, spreadDeg: 4, reloadSec: 0.6, maxRange: 4, height: 0.5 },

@@ -6,8 +6,9 @@
  *   [--lineups blueId,redId]               (the game's `lineups` presets; overrides --archetypes)
  *   [--strategy balanced|max-cycles|early-endgame|aggressive]  (both alliances, unless a preset sets one)
  *   [--perfect]                              (no breakdowns or power losses)
+ *   [--tuning tuning.json]                   (robot / station overrides, the menu's GameTuning format)
  */
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { attachBots, type Difficulty } from '../src/engine/ai/bot.ts';
 import {
   Match,
@@ -17,6 +18,7 @@ import {
   type RobotRole,
 } from '../src/engine/sim/index.ts';
 import { GAMES, findGame } from '../src/games/index.ts';
+import { applyTuning } from '../src/ui/tuning.ts';
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -31,8 +33,16 @@ export interface SimSummary {
   rpRates: Record<string, number>;
   targetMeans: Record<string, { auto: number; teleop: number }>;
   endgameMeans: Record<string, number>;
-  /** Share of robots that broke down for good, and mean power losses per robot per match. */
-  reliability: { breakdownRate: number; stallsPerRobot: number };
+  /** Share of robots that broke down / had a mechanism failure, recoveries, and power losses per robot. */
+  reliability: {
+    breakdownRate: number;
+    /** Of the robots that broke down, the share that came back online. */
+    breakdownRecoveryRate: number;
+    mechFailRate: number;
+    /** Of the robots whose mechanisms failed, the share that got them working again. */
+    mechRecoveryRate: number;
+    stallsPerRobot: number;
+  };
   wallMs: number;
 }
 
@@ -54,12 +64,15 @@ export async function runSims(
     strategy?: AllianceStrategy;
     /** Robots can break down / lose power (default true). */
     breakdowns?: boolean;
+    /** Robot-type / station overrides (`GameTuning`, display units). */
+    tuning?: unknown;
   } = {},
 ): Promise<{ summary: SimSummary; results: MatchResult[] }> {
   await initPhysics();
-  const def = findGame(gameId);
-  if (!def)
+  const found = findGame(gameId);
+  if (!found)
     throw new Error(`Unknown game '${gameId}'. Known: ${GAMES.map((g) => g.definition.id).join(', ')}`);
+  const def = opts.tuning ? applyTuning(found, opts.tuning) : found;
   const difficulty = opts.difficulty ?? 'normal';
   const results: MatchResult[] = [];
   const t0 = performance.now();
@@ -113,8 +126,14 @@ export async function runSims(
     for (const [k, n] of Object.entries(s.endgame))
       endgameMeans[k] = (endgameMeans[k] ?? 0) + n / sides.length;
   const robots = results.flatMap((r) => r.robots);
+  const share = (n: number, d: number) => +(d ? n / d : 0).toFixed(3);
+  const broke = robots.filter((r) => r.brokeDownAt !== null);
+  const mech = robots.filter((r) => r.mechFailedAt !== null);
   const reliability = {
-    breakdownRate: +(robots.filter((r) => r.brokeDownAt !== null).length / robots.length).toFixed(3),
+    breakdownRate: share(broke.length, robots.length),
+    breakdownRecoveryRate: share(broke.filter((r) => r.recoveredAt !== null).length, broke.length),
+    mechFailRate: share(mech.length, robots.length),
+    mechRecoveryRate: share(mech.filter((r) => r.mechFixedAt !== null).length, mech.length),
     stallsPerRobot: +(robots.reduce((a, r) => a + r.stalls, 0) / robots.length).toFixed(3),
   };
   return {
@@ -143,6 +162,7 @@ async function main() {
     ...(arg('lineups') ? { lineups: arg('lineups')!.split(',') as [string, string] } : {}),
     ...(arg('strategy') ? { strategy: arg('strategy') as AllianceStrategy } : {}),
     breakdowns: !process.argv.includes('--perfect'),
+    ...(arg('tuning') ? { tuning: JSON.parse(readFileSync(arg('tuning')!, 'utf8')) as unknown } : {}),
   });
   const json = arg('json');
   if (json) writeFileSync(json, JSON.stringify(summary, null, 2));
@@ -152,9 +172,12 @@ async function main() {
   console.table(summary.targetMeans);
   console.log('Endgame actions per alliance per match (mean):', summary.endgameMeans);
   console.log('RP rates per alliance:', summary.rpRates);
+  const rel = summary.reliability;
+  const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   console.log(
-    `Reliability: ${(summary.reliability.breakdownRate * 100).toFixed(1)}% of robots broke down, ` +
-      `${summary.reliability.stallsPerRobot.toFixed(2)} power losses per robot`,
+    `Reliability: ${pct(rel.breakdownRate)} of robots broke down (${pct(rel.breakdownRecoveryRate)} came back), ` +
+      `${pct(rel.mechFailRate)} had a mechanism failure (${pct(rel.mechRecoveryRate)} fixed), ` +
+      `${rel.stallsPerRobot.toFixed(2)} power losses per robot`,
   );
 }
 

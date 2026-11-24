@@ -1,4 +1,5 @@
 import type { GameDefinition, Region2D } from '../../engine/sim/types.ts';
+// import { GEARINGS, MOTORS, driveFor, onFieldMass, swerve, tank } from '../../engine/sim/drivetrain.ts';
 // import { rules } from './rules.ts';   // only if the game needs a custom mechanic
 
 /**
@@ -60,8 +61,10 @@ export const definition: GameDefinition = {
   archetypes: [
     // {
     //   id: 'allround', name: 'All-rounder', description: 'What students should picture.',
-    //   frame: { length: 0.9, width: 0.9, height: 0.5 }, mass: 60,
-    //   drive: { maxSpeed: 4.5, maxAccel: 10, maxOmega: 9 },
+    //   frame: { length: 0.9, width: 0.9, height: 0.5 },
+    //   // Weighed robot in lb (manual's weight rule); drive limits from COTS hardware, see drivetrain.ts.
+    //   mass: onFieldMass(120),
+    //   drive: driveFor(swerve(MOTORS.krakenX60, GEARINGS.mk4L2, 120), 9),
     //   capacity: { piece: 1 }, intake: { pieceTypes: ['piece'], timeSec: 0.3 },
     //   place: { L1: 0.6 }, endgame: { climb: 5 },
     // },

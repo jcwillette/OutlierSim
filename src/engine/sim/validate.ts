@@ -170,6 +170,11 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     if (!a.intake && !a.place && !a.shooter) warn(path, 'robot cannot interact with pieces');
     if (a.reliability !== undefined && (a.reliability < 0 || a.reliability > 1))
       err(path, 'reliability must be between 0 and 1');
+    for (const [k, v] of Object.entries(a.faults ?? {})) {
+      const max = k === 'stallsPerMatch' ? 20 : 1;
+      if (typeof v !== 'number' || !(v >= 0 && v <= max))
+        err(path, `faults.${k} must be between 0 and ${max}`);
+    }
   });
   const archIds = new Set(def.archetypes.map((a) => a.id));
   unique(
