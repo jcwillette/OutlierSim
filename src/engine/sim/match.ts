@@ -5,7 +5,7 @@ import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from '
 import { ScoreLedger } from './ledger.ts';
 import { bodyEpoch, stepWorld } from './bodyState.ts';
 import { PhysicsFrame, handedness } from './frame.ts';
-import { Referee, type ContactWarning } from './referee.ts';
+import { Referee, type ContactWarning, type PinCount } from './referee.ts';
 import {
   clamp,
   eulerToQuat,
@@ -1121,6 +1121,11 @@ export class Match {
    */
   contactWarnings(r: Robot): ContactWarning[] {
     return this.referee?.contactWarnings(r) ?? [];
+  }
+
+  /** Pins in progress this robot is part of (pinning or pinned), with the referee's count. */
+  pinCounts(r: Robot): PinCount[] {
+    return this.referee?.pinCounts(r) ?? [];
   }
 
   /** Stations whose zone the robot is in and that could feed it a piece. */

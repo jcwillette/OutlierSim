@@ -1637,6 +1637,19 @@ class Hud {
             : `In ${opp}'s ${w.zone}: touching ${opp} robots is a foul (${w.rule.id})`
         }</span>`,
       );
+    // The referee's pin count, like a referee's hand count (shown from 1 s).
+    for (const p of m.pinCounts(r)) {
+      if (p.seconds < 1) continue;
+      const s = Math.floor(p.seconds);
+      const ft = Math.round(p.releaseGap / 0.3048);
+      lines.push(
+        `<span class="warn">${
+          p.attacker === r
+            ? `Pinning ${robotName(p.victim)}: ${s} s (a foul every ${p.countSec} s). Back off ${ft} ft to end it.`
+            : `${robotName(p.attacker)} is pinning you: ${s} s`
+        }</span>`,
+      );
+    }
     const eg = m.availableEndgame(r)[0];
     if (eg) lines.push(`<b>G</b>: ${eg.action.name} (+${eg.action.points})`);
     const place = controller.placeChoice(m, r);

@@ -62,6 +62,8 @@ export function robotInZone(r: Robot, zone: Region2D, fully = false): boolean {
 
 /** One robot pinning another (`Referee.pins`). */
 interface Pin {
+  attacker: Robot;
+  victim: Robot;
   /** Seconds of pinning counted so far. */
   count: number;
   /** Fouls called for it so far (one per `countSec`). */
@@ -88,6 +90,18 @@ export interface ContactWarning {
   zone: string;
   /** For `inside: 'protected'` rules: the opponent that is protected (in its own zone). */
   opponent?: Robot;
+}
+
+/** A pin in progress (`Match.pinCounts`): the referee's count so far. */
+export interface PinCount {
+  attacker: Robot;
+  victim: Robot;
+  /** Seconds counted. */
+  seconds: number;
+  /** The rule's count (a foul every this many seconds). */
+  countSec: number;
+  /** Distance (m) that ends the pin. */
+  releaseGap: number;
 }
 
 /** Opponents this close (m, center to center) count for `contactWarnings`. */
@@ -217,6 +231,23 @@ export class Referee {
     return out;
   }
 
+  /** Pins in progress (not yet ended) that `r` is part of, pinning or pinned, with their counts. */
+  pinCounts(r: Robot): PinCount[] {
+    const rule = this.pinning;
+    const out: PinCount[] = [];
+    if (!rule) return out;
+    for (const p of this.pins.values())
+      if (p.endedAt === null && (p.attacker === r || p.victim === r))
+        out.push({
+          attacker: p.attacker,
+          victim: p.victim,
+          seconds: p.count,
+          countSec: rule.countSec ?? DEFAULT_PIN_SEC,
+          releaseGap: rule.releaseGap ?? DEFAULT_PIN_RELEASE_GAP,
+        });
+    return out;
+  }
+
   private contactFouls(a: Robot, b: Robot): void {
     const m = this.m;
     for (const { rule, zones } of this.contact) {
@@ -275,7 +306,7 @@ export class Referee {
       victimFrom: { x: victim.x, y: victim.y },
     });
     if (!p || (p.endedAt !== null && t - p.endedAt >= repin))
-      this.pins.set(key, (p = { count: 0, called: 0, ...from(), endedAt: null }));
+      this.pins.set(key, (p = { attacker, victim, count: 0, called: 0, ...from(), endedAt: null }));
     else if (p.endedAt !== null) Object.assign(p, from(), { endedAt: null });
     p.count += dt;
     const count = rule.countSec ?? DEFAULT_PIN_SEC;

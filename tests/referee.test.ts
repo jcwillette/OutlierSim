@@ -376,6 +376,23 @@ describe('pinning', () => {
     expect(slide(1)).toEqual(['foul:G2 pinning']); // still the same pin: 3 + 4.5 s
   });
 
+  it("reports the count to both robots while the pin is on (the HUD's hand count)", () => {
+    const m = pin(3);
+    const [blue, red] = [m.robots[0]!, m.robots[3]!];
+    const counts = m.pinCounts(blue);
+    expect(counts.map((c) => [c.attacker.id, c.victim.id, c.countSec, c.releaseGap])).toEqual([
+      [blue.id, red.id, 5, 1.83],
+    ]);
+    expect(counts[0]!.seconds).toBeGreaterThan(2.8);
+    expect(counts[0]!.seconds).toBeLessThanOrEqual(3);
+    expect(m.pinCounts(red)).toEqual(counts);
+    expect(m.pinCounts(m.robots[1]!)).toEqual([]);
+    put(blue, 4, 0.45 + 0.8 + 1.9); // 6 ft apart: over
+    blue.controller = ctl(() => ({}));
+    stepFor(m, 0.1);
+    expect(m.pinCounts(blue)).toEqual([]);
+  });
+
   it('ends when the pinning robot gets pinned itself', () => {
     const m = pin(3);
     const [blue, red2] = [m.robots[0]!, m.robots[4]!];
