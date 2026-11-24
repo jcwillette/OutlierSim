@@ -10,6 +10,8 @@ Once Pages is enabled (Settings → Pages → Source: GitHub Actions), the site 
 
 To watch a match between six bots instead of driving, pick **Watch 6 bots** in the menu or add `&watch=1` to the link. In spectator mode, `1`-`6` or `Tab` follow a robot (a panel says what it's doing), `C` cycles the sideline, overhead, chase and driver-station cameras, and `[` / `]` change the speed from 0.25x to 4x.
 
+To see how likely each alliance is to win with a given setup, pick the robots, roles and strategy for each alliance in the watch menu, then press **Simulate match-ups** under **Win probability**. It plays up to 2,500 bot-vs-bot match-ups in the background (on all but one CPU core) and shows each alliance's win chance with a 95% range, scores, ranking points and a histogram of winning margins as it goes. You can then watch a typical match or an upset from the run.
+
 Before a match you can set up each alliance in the menu: a robot type and role (score or defend) for every driver station, a strategy (balanced, max cycles, early endgame, aggressive), or one of the game's presets (for example _Specialists_ or _Shutdown defense_). Robots aren't perfect: with **Breakdowns** on, they can lose power for a few seconds or break down for the rest of the match, and bots sometimes get in each other's way. Rookie-level robots fail more often than elite ones.
 
 Controls: WASD to drive (field-oriented from your driver station), ←/→ or Q/E to rotate, Space to score (auto-aims), G for the endgame action, C to change camera, Esc to pause. A standard gamepad works too.

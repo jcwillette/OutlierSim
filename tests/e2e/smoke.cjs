@@ -1,7 +1,8 @@
 /**
  * Browser smoke test: every registered game loads, a match starts and runs with bots, the HUD
  * updates, and there are no page errors. Each game is also watched in spectator mode (six bots,
- * fast-forward, follow a robot). Screenshots go to test-results/<game>.png and <game>-watch.png.
+ * fast-forward, follow a robot) and gets a short win-probability run in Web Workers. Screenshots go to
+ * test-results/<game>.png, <game>-watch.png and <game>-winprob.png.
  *
  *   npm run test:e2e      (builds first; needs Playwright + Chromium)
  *
@@ -127,6 +128,36 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
         for (const e of werrors) console.log(`  error: ${e}`);
       }
       await w.close();
+
+      // Win probability (Monte Carlo): workers start, match-ups come back, Stop keeps the results.
+      const mc = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+      const mcErrors = [];
+      mc.on('pageerror', (e) => mcErrors.push(String(e)));
+      mc.on('console', (m) => m.type() === 'error' && mcErrors.push(m.text()));
+      await mc.goto(`${BASE}/?dev=1&watch=1&game=${encodeURIComponent(id)}`);
+      await mc.waitForSelector('button.mc-run');
+      await mc.selectOption('select[aria-label="Match-ups"]', '100');
+      await mc.click('button.mc-run');
+      await mc.waitForFunction(() => globalThis.outlierSim.mc?.samples.length >= 2, null, {
+        timeout: 120_000,
+      });
+      await mc.click('.mc button.primary'); // Stop
+      await mc.waitForSelector('.mc .mc-heads');
+      const mcState = await mc.evaluate(() => {
+        const r = globalThis.outlierSim.mc;
+        return { state: r.state, n: r.samples.length, inline: r.inline };
+      });
+      await mc.screenshot({ path: path.join(OUT, `${id}-winprob.png`) });
+      const mcOk = mcErrors.length === 0 && mcState.state === 'stopped' && mcState.n >= 2 && !mcState.inline;
+      console.log(
+        `${mcOk ? 'PASS' : 'FAIL'} ${id} (win probability): ${mcState.n} match-ups, ${mcState.state}` +
+          `${mcState.inline ? ', no workers' : ''}`,
+      );
+      if (!mcOk) {
+        failed++;
+        for (const e of mcErrors) console.log(`  error: ${e}`);
+      }
+      await mc.close();
     }
   } finally {
     await browser.close();
