@@ -4,11 +4,11 @@
  * the middle GRID (columns 4-6) is the Coopertition (CO-OP) GRID.
  */
 
-import type { Alliance, Region2D, Vec2 } from '../../engine/sim/types.ts';
+import type { Region2D } from '../../engine/sim/types.ts';
 
 const IN = 0.0254;
 /** Field length, 54 ft 3 1/4 in (Manual 5.1). */
-export const FIELD_LENGTH = 651.25 * IN;
+const FIELD_LENGTH = 651.25 * IN;
 const FIELD_WIDTH = 315.5 * IN;
 const COMMUNITY_SHALLOW = (11 * 12 + 0.375) * IN; // 3.36
 const COMMUNITY_DEEP = (16 * 12 + 1.25) * IN; // 4.91
@@ -44,12 +44,6 @@ export const LOADING_ZONE: Region2D = {
     { x: FIELD_LENGTH, y: FIELD_WIDTH },
   ],
 };
-
-/** A blue-authored region's copy for `alliance` (the field is mirrored across the center line). */
-export function forAlliance(region: Region2D, alliance: Alliance): Region2D {
-  if (alliance === 'blue' || region.kind !== 'poly') return region;
-  return { kind: 'poly', points: region.points.map((p: Vec2) => ({ x: FIELD_LENGTH - p.x, y: p.y })) };
-}
 
 export const COLUMNS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 export const CUBE_COLUMNS = new Set([2, 5, 8]);
@@ -115,8 +109,11 @@ export function coopPieces(filled: boolean[][]): number {
 
 export const isComplete = (filled: boolean[][]): boolean => filled.every((row) => row.every(Boolean));
 
-/** Charge Station sources whose points count toward the ACTIVATION BONUS (auto + endgame). */
-export const CHARGE_SOURCES = new Set([
+/**
+ * Charge Station point sources, for the ACTIVATION BONUS (auto + endgame): the dock / engage
+ * actions plus the rules.ts adjustments (engaged partners, a tipped station, the 1-robot auto limit).
+ */
+export const CHARGE_SOURCES = [
   'auto-dock',
   'auto-engage',
   'dock',
@@ -124,4 +121,4 @@ export const CHARGE_SOURCES = new Set([
   'engaged-partner',
   'station-tipped',
   'auto-charge-limit',
-]);
+];

@@ -70,6 +70,15 @@ export interface FieldElement {
   rotation?: Euler;
   /** Collides with robots and pieces. Non-solid elements are visual only. Default true. */
   solid?: boolean;
+  /**
+   * How the bots' navigation treats a solid element:
+   * - 'auto' (default): by height. Robot-height parts at least 0.2 m tall are walls; anything
+   *   0.05-0.2 m tall is a ramp; lower is flat floor.
+   * - 'wall': always drive around it (a guard rail or low curb robots can't cross).
+   * - 'ramp': drivable but slow (a ramp or platform robots climb, whatever its height).
+   * - 'none': ignore it (bumps, or a structure robots fit under).
+   */
+  nav?: 'auto' | 'wall' | 'ramp' | 'none';
   /** CSS color, or 'alliance' to use the owning alliance color (blue/red), 'neutral' for gray. */
   color?: string;
   opacity?: number;
@@ -307,10 +316,96 @@ export type RankingPointRule =
       id: string;
       name: string;
       rp: number;
+      /** Points from some sources at least `points` (e.g. "26 Charge Station points", auto included). */
+      kind: 'pointsAtLeast';
+      points: number;
+      /**
+       * Ledger sources to count: target, endgame action and award base ids, and the source names a
+       * game's `rules.ts` passes to `addPoints`. Omit to count every source.
+       */
+      sources?: string[];
+      /** Categories to count. Default auto, teleop and endgame (no foul points). */
+      categories?: ScoreCategory[];
+      source?: Citation;
+    }
+  | {
+      id: string;
+      name: string;
+      rp: number;
       kind: 'custom';
       check: (own: AllianceSummary, opp: AllianceSummary) => boolean;
       source?: Citation;
     };
+
+// ---------------------------------------------------------------- fouls
+
+/**
+ * A protected-zone contact rule the engine enforces (e.g. 2023 G207). While the right robot is in
+ * one of an alliance's `zones`, an opponent touching (bumper to bumper) one of that alliance's
+ * robots draws a foul on the opponent. Bots treat these zones as off limits for defense unless
+ * `botHints` says otherwise.
+ */
+export interface ContactFoulRule {
+  /** Rule number, shown in the foul reason (e.g. 'G207'). */
+  id: string;
+  /** What the foul is for, e.g. "contact in the opponent's loading zone". */
+  name: string;
+  /** Zone base ids of sided zones. Each alliance's copy protects that alliance's robots. */
+  zones: string[];
+  /**
+   * Whose position decides:
+   * - 'intruder': the opponent is in the zone (2023 G207: "a ROBOT with any part of itself in
+   *   their opponent's LOADING ZONE or COMMUNITY may not contact an opponent ROBOT").
+   * - 'protected': the protected robot is in the zone (contact with a robot that is loading or
+   *   climbing in its own zone).
+   */
+  inside: 'intruder' | 'protected';
+  /** That robot must be entirely in the zone. Default: any part of it counts. */
+  fully?: boolean;
+  severity: 'minor' | 'major';
+  /** Only during the endgame (e.g. a climbing area that is protected then). */
+  endgameOnly?: boolean;
+  /** Seconds before the same pair of robots can draw this foul again ("per instance"). Default 3. */
+  repeatSec?: number;
+  /**
+   * Don't call it when the protected robot drove into the opponent harder than the opponent drove
+   * into it (a G201-style violation forced by the other alliance). Manuals usually call these
+   * fouls "regardless of who initiates contact" and excuse only deliberate forcing, so this is a
+   * lenient approximation. Default false.
+   */
+  forgiveForced?: boolean;
+  source?: Citation;
+}
+
+/**
+ * Pinning (e.g. 2023 G202): pressing an opponent that is trying to move but can't. Pinning time
+ * counts while the contact lasts and resumes if it starts again; every `countSec` of it draws a
+ * foul (the first `severity`, then `repeatSeverity`). The count ends once the robots are
+ * `releaseGap` apart.
+ */
+export interface PinningRule {
+  id: string;
+  /** Default 5. */
+  countSec?: number;
+  /** The first call. Default 'minor'. */
+  severity?: 'minor' | 'major';
+  /** Each further call. Default 'major'. */
+  repeatSeverity?: 'minor' | 'major';
+  /** Bumper-to-bumper gap (m) that ends a pin. Default 1.83 (6 ft, the usual FRC wording). */
+  releaseGap?: number;
+  source?: Citation;
+}
+
+export interface FoulRules {
+  /** Points the other alliance gets per foul. */
+  minor: number;
+  major: number;
+  /** Protected-zone contact rules the engine enforces. */
+  contact?: ContactFoulRule[];
+  /** Pinning rule the engine enforces. */
+  pinning?: PinningRule;
+  source?: Citation;
+}
 
 // ---------------------------------------------------------------- robots
 
@@ -515,12 +610,14 @@ export interface BotHints {
   /**
    * Zone base ids where an alliance's own robots are protected from contact (e.g. a loading zone).
    * Defending bots never chase an opponent into, or wait inside, that opponent's protected zones,
-   * and bots don't go after loose pieces lying in the opponent's protected zones.
+   * and bots don't go after loose pieces lying in the opponent's protected zones. Default: the
+   * zones of `fouls.contact` rules that aren't `endgameOnly`.
    */
   protectedZones?: string[];
   /**
    * Zone base ids where an alliance's robots are protected only during the endgame (e.g. a
-   * charge station or climbing area): defenders leave opponents near them alone then.
+   * charge station or climbing area): defenders leave opponents near them alone then. Default:
+   * the zones of `endgameOnly` `fouls.contact` rules.
    */
   endgameProtectedZones?: string[];
 }
@@ -550,7 +647,7 @@ export interface GameDefinition {
   endgame: EndgameAction[];
   awards: PositionAward[];
   rankingPoints: { win: number; tie: number; bonuses: RankingPointRule[] };
-  fouls: { minor: number; major: number; source?: Citation };
+  fouls: FoulRules;
   archetypes: RobotArchetype[];
   defaultArchetype: string;
   /** Suggested alliance compositions (specialist mixes and strategies) offered in the menu. */

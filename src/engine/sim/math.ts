@@ -97,6 +97,21 @@ export function regionOutline(r: Region2D): Vec2[] {
   }
 }
 
+/** Distance from `p` to a region's outline (circles via their 24-gon outline); 0 on the outline. */
+export function distToRegion(p: Vec2, region: Region2D): number {
+  const pts = regionOutline(region);
+  let best = Infinity;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j]!;
+    const b = pts[i]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1e-9)));
+    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+  }
+  return best;
+}
+
 /** Corners of a robot footprint. */
 export function footprint(x: number, y: number, yaw: number, length: number, width: number): Vec2[] {
   const c = Math.cos(yaw);

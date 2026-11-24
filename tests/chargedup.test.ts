@@ -187,71 +187,24 @@ describe('2023 Charged Up: rules', () => {
     expect(added).toEqual([['blue', 'endgame', -4, 'station-tipped']]);
   });
 
-  const g207 = (rammed: boolean) => {
-    const fouls: string[] = [];
-    const ctx = {
-      vars: {} as Record<string, unknown>,
-      time: 50,
-      phase: 'teleop',
-      robots: () =>
-        [
-          // blue robot inside red's LOADING ZONE (at the blue end, high y), touching a red robot
-          { id: 0, alliance: 'blue', x: 2.0, y: 7.0, endgameAction: null, vx: rammed ? 0 : 1, vy: 0 },
-          { id: 3, alliance: 'red', x: 2.7, y: 7.0, endgameAction: null, vx: rammed ? -2 : 0, vy: 0 },
-        ] as RobotInfo[],
-      targetCount: () => 0,
-      setTargetEnabled: () => {},
-      setIndicator: () => {},
-      announce: () => {},
-      foul: (against: string) => fouls.push(against),
-    } as unknown as RulesContext;
-    rules.onTick!(ctx, 1 / 60);
-    rules.onTick!(ctx, 1 / 60); // same contact moments later: not another foul
-    return fouls;
-  };
-  it('G207: contact inside the opponent loading zone is a foul on the intruder', () => {
-    expect(g207(false)).toEqual(['blue']);
-  });
-  it('G201: no G207 foul when the zone owner drove into the intruder', () => {
-    expect(g207(true)).toEqual([]);
-  });
-
-  it('G202: pinning a robot that is trying to move is a FOUL at 5 s, then a TECH FOUL every 5 s', () => {
-    const pin = (victimTrying: boolean, seconds: number) => {
-      const fouls: string[] = [];
-      const ctx = {
-        vars: {} as Record<string, unknown>,
-        time: 50,
-        phase: 'teleop',
-        robots: () =>
-          [
-            // blue pushes (+x) into red, which is stuck mid-field (no protected zone involved)
-            { id: 0, alliance: 'blue', x: 8.0, y: 2.0, endgameAction: null, vx: 0, vy: 0, cmdX: 1, cmdY: 0 },
-            {
-              id: 3,
-              alliance: 'red',
-              x: 8.85,
-              y: 2.0,
-              endgameAction: null,
-              vx: 0,
-              vy: 0,
-              cmdX: 0,
-              cmdY: victimTrying ? 1 : 0,
-            },
-          ] as RobotInfo[],
-        targetCount: () => 0,
-        setTargetEnabled: () => {},
-        setIndicator: () => {},
-        announce: () => {},
-        foul: (against: string, severity: string) => fouls.push(`${against}:${severity}`),
-      } as unknown as RulesContext;
-      for (let t = 0; t < seconds; t += 1 / 60) rules.onTick!(ctx, 1 / 60);
-      return fouls;
-    };
-    expect(pin(true, 4.5)).toEqual([]);
-    expect(pin(true, 5.5)).toEqual(['blue:minor']);
-    expect(pin(true, 10.5)).toEqual(['blue:minor', 'blue:major']);
-    expect(pin(false, 10.5)).toEqual([]); // red wasn't trying to move: not a pin
+  it('declares G207 and G202 for the engine to call: contact by a robot partly in the opponent zone', () => {
+    expect(definition.fouls.contact?.map((c) => c.id)).toEqual(['G207']);
+    expect(definition.fouls.pinning?.id).toBe('G202');
+    const m = new Match({ ...definition, staging: [], preload: {} }, { seed: 1 });
+    m.start();
+    m.step();
+    const [blue, red] = [m.robots[0]!, m.robots[3]!];
+    // Red's LOADING ZONE is at the blue end along the far guardrail (y > 6.75 at x 3.36-6.71).
+    // A blue robot reaching 5 cm into it touches a red robot inside it: FOUL on blue (any part counts).
+    const half = blue.archetype.frame.width / 2;
+    teleport(blue, 5.0, 6.75 - half + 0.05);
+    teleport(red, 5.0, 6.75 + 0.05 + half + 0.005);
+    for (const r of m.robots) if (r !== blue && r !== red) teleport(r, 8, 1 + r.id * 1.2);
+    stepFor(m, 0.1);
+    expect(m.fouls.blue.minor).toBe(1);
+    expect(m.ledger.entries.at(-1)!.source).toBe(
+      "foul:G207 contact in the opponent's loading zone or community",
+    );
   });
 
   it('only one auto Charge Station robot counts per alliance', () => {

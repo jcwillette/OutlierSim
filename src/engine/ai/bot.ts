@@ -10,7 +10,8 @@ import {
   type RobotController,
 } from '../sim/match.ts';
 import { handedness as frameHandedness } from '../sim/frame.ts';
-import { clamp, pointInRegion, regionCenter, regionOutline, turnTo, wrapAngle } from '../sim/math.ts';
+import { DEFAULT_PIN_RELEASE_GAP } from '../sim/referee.ts';
+import { clamp, distToRegion, pointInRegion, regionCenter, turnTo, wrapAngle } from '../sim/math.ts';
 import type { Alliance, AllianceStrategy, GameDefinition, Region2D, RobotRole, Vec2 } from '../sim/types.ts';
 import { AllianceNav, type DynamicObstacle } from './navgrid.ts';
 import { PointIndex } from './spatial.ts';
@@ -83,8 +84,13 @@ function aiFor(m: Match): MatchAI {
   let s = matchAI.get(m);
   if (!s) {
     const hints = m.def.botHints;
-    const always = hints?.protectedZones ?? [];
-    const endgame = [...always, ...(hints?.endgameProtectedZones ?? [])];
+    // By default, the zones the game's contact fouls protect (`fouls.contact`).
+    const rules = m.def.fouls.contact ?? [];
+    const always = hints?.protectedZones ?? rules.filter((c) => !c.endgameOnly).flatMap((c) => c.zones);
+    const endgame = [
+      ...always,
+      ...(hints?.endgameProtectedZones ?? rules.filter((c) => c.endgameOnly).flatMap((c) => c.zones)),
+    ];
     const regions = (a: Alliance, ids: readonly string[]) =>
       m.game.zones
         .filter((z) => (z.alliance === a || z.alliance === null) && ids.includes(z.baseId))
@@ -568,8 +574,9 @@ export class BotBrain implements RobotController {
       if (pos.z > (intake.maxHeight ?? 0.3) + 0.2) continue; // in flight
       const claim = `piece:${p.id}`;
       if (this.claimedByOther(m, r, claim)) continue;
-      // Loose pieces in the opponent's protected zones aren't worth the contact fouls.
-      if (inProtectedZone(m, pos, other(r.alliance))) continue;
+      // Loose pieces in (or so close to) the opponent's protected zones that the robot would be in
+      // them to pick the piece up aren't worth the contact fouls.
+      if (nearProtectedZone(m, pos, other(r.alliance), halfSize(r), false)) continue;
       if (this.blacklist.has(p.id) && (this.blacklist.get(p.id) ?? 0) > m.time) continue;
       const approachYaw = this.approachYaw(m, r, pos);
       if (approachYaw === null) continue; // no way to get an intake on it (e.g. against a wall)
@@ -813,7 +820,8 @@ export class BotBrain implements RobotController {
     return (
       !nearProtectedZone(m, o, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
       !nearProtectedZone(m, point, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
-      !nearProtectedZone(m, r, o.alliance, 0, endgame)
+      // ...and no part of us is in them (contact rules usually count any part of the robot).
+      !nearProtectedZone(m, r, o.alliance, halfSize(r), endgame)
     );
   }
 
@@ -898,13 +906,17 @@ export class BotBrain implements RobotController {
     let yieldTo = false;
     let sideX = 0;
     let sideY = 0;
+    // Partly inside an opponent's protected zone, touching an opponent is a foul: give them room.
+    const exposed = nearProtectedZone(m, r, other(r.alliance), halfSize(r), m.isEndgame);
     for (const o of m.robots) {
       if (o === r || o.id === ignore) continue;
       const ox = r.x - o.x;
       const oy = r.y - o.y;
       const od = Math.hypot(ox, oy);
-      if (od < 1.4 && od > 1e-3) {
-        const push = ((1.4 - od) / 1.4) * 0.6;
+      const wary = exposed && o.alliance !== r.alliance;
+      const range = wary ? WARY_RANGE : 1.4;
+      if (od < range && od > 1e-3) {
+        const push = ((range - od) / range) * (wary ? WARY_PUSH : 0.6);
         dx += (ox / od) * push;
         dy += (oy / od) * push;
       }
@@ -1021,11 +1033,12 @@ export class BotBrain implements RobotController {
       case 'defend': {
         const o = m.robots[p.opponentId]!;
         if (this.watchPin(m, r, o, dt)) {
-          // Release the pin: back straight away from them, then re-plan.
+          // Release the pin: back straight away from them (far enough to end it), then re-plan.
           const d = Math.hypot(r.x - o.x, r.y - o.y) || 1;
+          const back = pinBackOff(m);
           this.detour = gridFor(m, r).nearestFree({
-            x: r.x + ((r.x - o.x) / d) * 1.5,
-            y: r.y + ((r.y - o.y) / d) * 1.5,
+            x: r.x + ((r.x - o.x) / d) * back,
+            y: r.y + ((r.y - o.y) / d) * back,
           });
           this.plan = { kind: 'idle' };
           this.setIntent(m, r, this.plan);
@@ -1072,6 +1085,20 @@ const DEFENSE_ZONE_MARGIN = 0.6;
 const PIN_BREAK_SEC = 3;
 /** ...and leave that robot alone this long (manuals require 3 s before re-pinning). */
 const PIN_COOLDOWN_SEC = 4;
+
+/**
+ * How far (m) a defender backs off to break a pin: past the game's pin release gap (`fouls.pinning`,
+ * usually 6 ft) so the referee's count ends, else 1.5 m.
+ */
+function pinBackOff(m: Match): number {
+  const pin = m.def.fouls.pinning;
+  return pin ? Math.max(1.5, (pin.releaseGap ?? DEFAULT_PIN_RELEASE_GAP) + 0.3) : 1.5;
+}
+
+/** Within an opponent's protected zone, bots steer away from opponents this close (m)... */
+const WARY_RANGE = 1.8;
+/** ...this hard (vs 0.6 for ordinary traffic). */
+const WARY_PUSH = 1.5;
 
 /** Bots drive no faster than this (m/s) on ramps and platforms. */
 const RAMP_SPEED = 1.5;
@@ -1141,11 +1168,6 @@ function blockPoint(m: Match, o: Robot): Vec2 {
   return { x: o.x + dir * 0.9, y: o.y };
 }
 
-/** `p` is inside one of `alliance`'s protected zones (`botHints.protectedZones`). */
-function inProtectedZone(m: Match, p: Vec2, alliance: Alliance): boolean {
-  return nearProtectedZone(m, p, alliance, 0, false);
-}
-
 /**
  * `p` is inside, or within `margin` m of, one of `alliance`'s protected zones (plus its
  * endgame-only protected zones when `endgame`).
@@ -1155,20 +1177,6 @@ function nearProtectedZone(m: Match, p: Vec2, alliance: Alliance, margin: number
   for (const region of endgame ? zones.endgame : zones.always)
     if (pointInRegion(p, region) || (margin > 0 && distToRegion(p, region) < margin)) return true;
   return false;
-}
-
-function distToRegion(p: Vec2, region: Region2D): number {
-  const pts = regionOutline(region);
-  let best = Infinity;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const a = pts[j]!;
-    const b = pts[i]!;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1e-9)));
-    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
-  }
-  return best;
 }
 
 /** A bot that is defending (role or current plan): not worth defending against. */

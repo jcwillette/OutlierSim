@@ -188,6 +188,7 @@ const elements: FieldElement[] = [
     position: { x: CS_X, y: CS_Y, z: 0 },
     color: '#aab0b8',
     friction: 0.9,
+    nav: 'ramp',
     source: SRC_CS,
   },
   // Guards on the short edges (5.4): robots can only drive on over the ramps on the long edges. Modeled
@@ -199,6 +200,7 @@ const elements: FieldElement[] = [
     // Just outside the top, so three robots can overhang the short edges as real ones do.
     position: { x: CS_X, y: CS_Y + k * (CS_TOP_WIDTH / 2 + 0.09), z: 0.1 },
     color: '#7d838c',
+    nav: 'wall',
     source: M(23, 'short edges have guards restricting access'),
   })),
   {
@@ -531,17 +533,43 @@ export const definition: GameDefinition = {
         id: 'activation',
         name: 'Activation (26 Charge Station pts)',
         rp: 1,
-        kind: 'custom',
-        check: (own) =>
-          Object.entries(own.sources).reduce(
-            (s, [src, p]) => s + (CHARGE_SOURCES.has(src.split('.')[0]!) ? p : 0),
-            0,
-          ) >= 26,
+        kind: 'pointsAtLeast',
+        points: 26,
+        sources: CHARGE_SOURCES,
         source: `${SRC_PTS} ACTIVATION BONUS`,
       },
     ],
   },
-  fouls: { minor: 5, major: 12, source: M(48, 'Table 6-3 FOUL 5, TECH FOUL 12') },
+  fouls: {
+    minor: 5,
+    major: 12,
+    contact: [
+      {
+        id: 'G207',
+        name: "contact in the opponent's loading zone or community",
+        zones: ['community', 'loading-zone'],
+        inside: 'intruder',
+        severity: 'minor',
+        repeatSec: 3,
+        // G207 applies "regardless of who initiates contact"; G201 only excuses deliberately forced
+        // violations. Not calling contact the zone's owner clearly drove into is a lenient stand-in.
+        forgiveForced: true,
+        source: M(
+          58,
+          'G207 right of way: any part in the opponent LOADING ZONE or COMMUNITY; FOUL per instance',
+        ),
+      },
+    ],
+    pinning: {
+      id: 'G202',
+      countSec: 5,
+      severity: 'minor',
+      repeatSeverity: 'major',
+      releaseGap: 6 * 12 * IN,
+      source: M(56, 'G202 5-count on PINS, pinned until 6 ft apart; FOUL plus a TECH FOUL every 5 s'),
+    },
+    source: M(48, 'Table 6-3 FOUL 5, TECH FOUL 12'),
+  },
   archetypes: [
     {
       id: 'elevator',
@@ -731,8 +759,7 @@ export const definition: GameDefinition = {
   botHints: {
     endgameLeadSec: 2,
     defenseShare: 0,
-    // G207: a robot touching an opponent inside that opponent's LOADING ZONE or COMMUNITY draws a FOUL.
-    protectedZones: ['community', 'loading-zone'],
+    // Bots keep defense out of the G207 zones (the default `protectedZones`, from `fouls.contact`).
     // The station is LEVEL only if the last robot on is a balancer (rules.ts): dock-only robots first.
     endgameOrder: ['dock', 'engage'],
     // G209: in the endgame, opponents may not touch robots on their Charge Station.

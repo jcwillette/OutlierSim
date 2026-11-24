@@ -5,6 +5,7 @@ import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from '
 import { ScoreLedger } from './ledger.ts';
 import { bodyEpoch, stepWorld } from './bodyState.ts';
 import { PhysicsFrame, handedness } from './frame.ts';
+import { Referee } from './referee.ts';
 import {
   clamp,
   eulerToQuat,
@@ -392,6 +393,16 @@ const ROBOT_IDS: Array<{ alliance: Alliance; station: number }> = [
 
 const other = (a: Alliance): Alliance => (a === 'blue' ? 'red' : 'blue');
 
+/** Every category but fouls. */
+const SCORING_CATEGORIES: readonly ScoreCategory[] = ['auto', 'teleop', 'endgame'];
+
+/** A ledger source without its alliance suffix: 'dock.blue' -> 'dock'; rules sources stay as they are. */
+export function sourceBase(source: string): string {
+  return source.endsWith('.blue') || source.endsWith('.red')
+    ? source.slice(0, source.lastIndexOf('.'))
+    : source;
+}
+
 /**
  * One FRC match: Rapier world, 6 robots, pieces, scoring, clock. Headless: no rendering or DOM.
  * Drive it with `step()` (fixed 60 Hz) or `advance(realDt)`; attach controllers to robots.
@@ -432,6 +443,8 @@ export class Match {
   private touchReach: number[] | null = null;
   private readonly vars: Record<string, unknown> = {};
   private readonly rulesCtx: RulesContext;
+  /** Calls the fouls the game declares (`fouls.contact`, `fouls.pinning`), if any. */
+  private readonly referee: Referee | null;
   private accumulator = 0;
   private result: MatchResult | null = null;
   private nextPieceId = 0;
@@ -475,6 +488,8 @@ export class Match {
       }
     }
     if (opts.breakdowns) this.scheduleBreakdowns(opts.breakdownExempt ?? []);
+    const referee = new Referee(this);
+    this.referee = referee.active ? referee : null;
     this.rulesCtx = this.makeRulesContext();
     def.rules?.onInit?.(this.rulesCtx);
   }
@@ -816,6 +831,7 @@ export class Match {
     this.trackTouches();
     this.checkApertures();
     this.processRecycle();
+    this.referee?.tick(dt);
     this.def.rules?.onTick?.(this.rulesCtx, dt);
   }
 
@@ -1441,6 +1457,22 @@ export class Match {
     return n;
   }
 
+  /** Points an alliance got from these ledger sources (base ids) and categories (no fouls by default). */
+  private pointsFor(
+    alliance: Alliance,
+    sources?: readonly string[],
+    categories?: readonly ScoreCategory[],
+  ): number {
+    const cats = categories ?? SCORING_CATEGORIES;
+    let n = 0;
+    for (const e of this.ledger.entries) {
+      if (e.alliance !== alliance || !cats.includes(e.category)) continue;
+      if (sources && !sources.includes(sourceBase(e.source))) continue;
+      n += e.points;
+    }
+    return n;
+  }
+
   getResult(): MatchResult {
     if (this.result) return this.result;
     const blue = this.summary('blue');
@@ -1463,6 +1495,9 @@ export class Match {
             break;
           case 'endgamePointsAtLeast':
             ok = own.breakdown.endgame >= b.points;
+            break;
+          case 'pointsAtLeast':
+            ok = this.pointsFor(own.alliance, b.sources, b.categories) >= b.points;
             break;
           case 'custom':
             ok = b.check(own, opp);
