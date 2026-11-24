@@ -212,6 +212,11 @@ export class Robot {
     if (this.velAt !== bodyEpoch) this.readVel();
     return Math.hypot(this.pvx, this.pvy);
   }
+  private bodyMass: number | undefined;
+  /** Rapier's mass for the chassis (constant: it comes from the one collider's density). */
+  get mass(): number {
+    return (this.bodyMass ??= this.body.mass());
+  }
   private totalCap: number | undefined;
   get totalCapacity(): number {
     return (this.totalCap ??=
@@ -236,6 +241,16 @@ export class Robot {
 }
 
 export type PieceStatus = 'field' | 'held' | 'scored' | 'queued';
+
+type Shooter = NonNullable<RobotArchetype['shooter']>;
+
+/** An aperture target a robot could shoot at from where it is (`Match.shotOptions`). */
+export interface ShotOption {
+  target: XTarget;
+  pieceType: string;
+  /** Horizontal distance to the aim point, m. */
+  distance: number;
+}
 
 /** Whether a robot's intake reaches a station's handoff height (shelf). */
 export function canReachHandoff(r: Robot, st: { handoffHeight?: number }): boolean {
@@ -411,6 +426,10 @@ export class Match {
   private readonly recycleQueue: Array<{ piece: Piece; target: XTarget }> = [];
   /** cos / sin of each aperture's -yaw (constant), for the per-step scoring check. */
   private readonly apertureTrig = new Map<object, [number, number]>();
+  /** Targets with an aperture, in `targets` order (static, collected on first use). */
+  private apertureTargets: TargetState[] | null = null;
+  /** Per robot id: center-to-piece distance (plus the piece's radius) that counts as a touch. */
+  private touchReach: number[] | null = null;
   private readonly vars: Record<string, unknown> = {};
   private readonly rulesCtx: RulesContext;
   private accumulator = 0;
@@ -824,7 +843,7 @@ export class Match {
       dvx *= maxDv / dv;
       dvy *= maxDv / dv;
     }
-    const m = r.body.mass();
+    const m = r.mass;
     r.body.applyImpulse(this.physics.vector({ x: m * dvx, y: m * dvy, z: 0 }), true);
 
     let targetOmega = locked ? 0 : clamp(cmd.omega, -1, 1) * a.drive.maxOmega;
@@ -1097,24 +1116,36 @@ export class Match {
   }
 
   /** Aperture targets this robot could shoot at from here, best first (ignores heading). */
-  shotOptions(r: Robot): Array<{ target: XTarget; pieceType: string; distance: number }> {
+  shotOptions(r: Robot): ShotOption[] {
     const sh = r.archetype.shooter;
     if (!sh || r.mechDown) return [];
-    const out: Array<{ target: XTarget; pieceType: string; distance: number }> = [];
+    const out: ShotOption[] = [];
     for (const ts of this.targets.values()) {
-      const t = ts.target;
-      if (!t.aperture || !this.canUseTarget(r, ts)) continue;
-      if (sh.tags && !sh.tags.some((tag) => t.tags?.includes(tag) || t.baseId === tag)) continue;
-      const pieceType = r.held.find((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h));
-      if (!pieceType) continue;
-      const aim = t.aimPoint ?? t.aperture.center;
-      const d = Math.hypot(aim.x - r.x, aim.y - r.y);
-      if (d > sh.maxRange) continue;
-      if (this.shotPitch(r, t, d, aim.z - sh.height) === null) continue;
-      out.push({ target: t, pieceType, distance: d });
+      const o = this.shotOption(r, sh, ts);
+      if (o) out.push(o);
     }
     const per = this.scoringPeriod;
     return out.sort((a, b) => b.target.points[per] - a.target.points[per] || a.distance - b.distance);
+  }
+
+  /** Whether this robot could shoot at one target from here (`shotOptions`, for one target). */
+  canShootAt(r: Robot, targetId: string): boolean {
+    const sh = r.archetype.shooter;
+    const ts = this.targets.get(targetId);
+    return !!sh && !r.mechDown && !!ts && this.shotOption(r, sh, ts) !== null;
+  }
+
+  private shotOption(r: Robot, sh: Shooter, ts: TargetState): ShotOption | null {
+    const t = ts.target;
+    if (!t.aperture || !this.canUseTarget(r, ts)) return null;
+    if (sh.tags && !sh.tags.some((tag) => t.tags?.includes(tag) || t.baseId === tag)) return null;
+    const pieceType = r.held.find((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h));
+    if (!pieceType) return null;
+    const aim = t.aimPoint ?? t.aperture.center;
+    const d = Math.hypot(aim.x - r.x, aim.y - r.y);
+    if (d > sh.maxRange) return null;
+    if (this.shotPitch(r, t, d, aim.z - sh.height) === null) return null;
+    return { target: t, pieceType, distance: d };
   }
 
   private shotPitch(r: Robot, t: XTarget, d: number, h: number): ShotSolution | null {
@@ -1203,17 +1234,19 @@ export class Match {
   private trackTouches(): void {
     // Piece by piece (each position read once); robots in id order, so the last robot touching a
     // piece still gets the touch, as when the loops were the other way around.
-    const reach = this.robots.map(
+    const reach = (this.touchReach ??= this.robots.map(
       (r) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.05,
-    );
+    ));
     for (const p of this.pieces) {
       if (p.status !== 'field') continue;
       const pos = p.position;
       for (const r of this.robots) {
-        if (
-          Math.hypot(pos.x - r.x, pos.y - r.y) < reach[r.id]! + p.radius &&
-          pos.z < r.archetype.frame.height + 0.3
-        ) {
+        const lim = reach[r.id]! + p.radius;
+        const dx = pos.x - r.x;
+        const dy = pos.y - r.y;
+        // Math.hypot is never below the larger leg, so this only skips pairs the test below rejects.
+        if (Math.abs(dx) >= lim || Math.abs(dy) >= lim) continue;
+        if (Math.hypot(dx, dy) < lim && pos.z < r.archetype.frame.height + 0.3) {
           p.lastTouch = r.id;
           p.lastTouchAlliance = r.alliance;
         }
@@ -1222,12 +1255,15 @@ export class Match {
   }
 
   private checkApertures(): void {
+    // Only targets with an aperture, in the same order as `targets` (none in a place-only game).
+    const targets = (this.apertureTargets ??= [...this.targets.values()].filter((ts) => ts.target.aperture));
+    if (!targets.length) return;
     for (const p of this.pieces) {
       if (p.status !== 'field') continue;
       const pos = p.position;
-      for (const ts of this.targets.values()) {
-        const ap = ts.target.aperture;
-        if (!ap || !ts.enabled || !ts.target.accepts.includes(p.type.id)) continue;
+      for (const ts of targets) {
+        const ap = ts.target.aperture!;
+        if (!ts.enabled || !ts.target.accepts.includes(p.type.id)) continue;
         const dx = pos.x - ap.center.x;
         const dy = pos.y - ap.center.y;
         let trig = this.apertureTrig.get(ap);

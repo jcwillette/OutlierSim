@@ -136,15 +136,15 @@ export class NavGrid {
     this.came = new Int32Array(this.cols * this.rows);
     this.stamp = new Uint32Array(this.cols * this.rows);
     this.closedAt = new Uint32Array(this.cols * this.rows);
-    const obstacles = obstacleFootprints(game);
-    const ramps = obstacleFootprints(game, 0.5, true);
+    const obstacles = obstacleFootprints(game).map((o) => withBounds(o, inflate));
+    const ramps = obstacleFootprints(game, 0.5, true).map((o) => withBounds(o, inflate * 0.5));
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
         const p = this.center(c, r);
         let b = p.x < inflate || p.y < inflate || p.x > L - inflate || p.y > W - inflate;
         if (!b) {
           for (const o of obstacles) {
-            if (pointInRegion(p, o) || distToPoly(p, o) < inflate) {
+            if (o.near(p) && (pointInRegion(p, o.region) || distToPoly(p, o.region) < inflate)) {
               b = true;
               break;
             }
@@ -152,7 +152,11 @@ export class NavGrid {
         }
         this.blocked[r * this.cols + c] = b ? 1 : 0;
         // Slow if any part of the robot would be on the ramp.
-        if (ramps.some((o) => pointInRegion(p, o) || distToPoly(p, o) < inflate * 0.5))
+        if (
+          ramps.some(
+            (o) => o.near(p) && (pointInRegion(p, o.region) || distToPoly(p, o.region) < inflate * 0.5),
+          )
+        )
           this.slow[r * this.cols + c] = 1;
       }
     }
@@ -465,6 +469,30 @@ export class AllianceNav {
       )
       .map(flip);
   }
+}
+
+/**
+ * A footprint with a quick "could `p` be inside it or within `reach` of it" test: false only when `p`
+ * is clearly (1e-9 m) farther than `reach` outside its bounding box, where the exact tests
+ * (`pointInRegion`, `distToPoly(p) < reach`) are false too. It only skips work.
+ */
+function withBounds(region: Region2D, reach: number): { region: Region2D; near: (p: Vec2) => boolean } {
+  if (region.kind !== 'poly') return { region, near: () => true };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const q of region.points) {
+    minX = Math.min(minX, q.x);
+    minY = Math.min(minY, q.y);
+    maxX = Math.max(maxX, q.x);
+    maxY = Math.max(maxY, q.y);
+  }
+  const m = reach + 1e-9;
+  return {
+    region,
+    near: (p) => p.x >= minX - m && p.x <= maxX + m && p.y >= minY - m && p.y <= maxY + m,
+  };
 }
 
 function distToPoly(p: Vec2, r: Region2D): number {

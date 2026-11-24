@@ -1,5 +1,5 @@
 import { solveShot } from '../sim/ballistics.ts';
-import type { XTarget } from '../sim/expand.ts';
+import type { XEndgame, XTarget } from '../sim/expand.ts';
 import {
   canReachHandoff,
   DEFAULT_RELIABILITY,
@@ -69,20 +69,47 @@ interface MatchAI {
   claims: Record<Alliance, Map<string, number>>;
   /** Where each bot is headed to stand (score / load / endgame spot), shared within its alliance. */
   intents: Record<Alliance, Map<number, Vec2>>;
+  /**
+   * Each alliance's protected zones (`botHints.protectedZones`), and the same plus its endgame-only
+   * ones (`endgameProtectedZones`): static, so collected once per match.
+   */
+  protected: Record<Alliance, { always: Region2D[]; endgame: Region2D[] }>;
+  /** Path penalty for each alliance's robots: the opponent's protected zones. */
+  penalty: Record<Alliance, { key: string; regions: Region2D[] } | undefined>;
 }
 const matchAI = new WeakMap<Match, MatchAI>();
 
 function aiFor(m: Match): MatchAI {
   let s = matchAI.get(m);
   if (!s) {
+    const hints = m.def.botHints;
+    const always = hints?.protectedZones ?? [];
+    const endgame = [...always, ...(hints?.endgameProtectedZones ?? [])];
+    const regions = (a: Alliance, ids: readonly string[]) =>
+      m.game.zones
+        .filter((z) => (z.alliance === a || z.alliance === null) && ids.includes(z.baseId))
+        .map((z) => z.region);
+    const penalty = (a: Alliance) => {
+      if (!always.length) return undefined;
+      const opp = other(a);
+      const zones = m.game.zones.filter((z) => z.alliance === opp && always.includes(z.baseId));
+      return { key: `protected:${opp}`, regions: zones.map((z) => z.region) };
+    };
     s = {
       claims: { blue: new Map(), red: new Map() },
       intents: { blue: new Map(), red: new Map() },
+      protected: {
+        blue: { always: regions('blue', always), endgame: regions('blue', endgame) },
+        red: { always: regions('red', always), endgame: regions('red', endgame) },
+      },
+      penalty: { blue: penalty('blue'), red: penalty('red') },
     };
     matchAI.set(m, s);
   }
   return s;
 }
+
+const other = (a: Alliance): Alliance => (a === 'blue' ? 'red' : 'blue');
 
 /**
  * Nav grids per game definition, alliance and robot size. Each alliance plans on a grid laid out
@@ -91,18 +118,27 @@ function aiFor(m: Match): MatchAI {
  * one instead of rebuilding it.
  */
 const navGrids = new WeakMap<GameDefinition, Map<string, AllianceNav>>();
+/** Each robot's grid (a robot's alliance, size and game never change), looked up once. */
+const robotGrids = new WeakMap<Robot, AllianceNav>();
+
+/** Nav grid inflation for a robot frame: half its larger side plus a margin, in 5 cm steps. */
+export function navInflation(frame: { length: number; width: number }): number {
+  return Math.round((Math.max(frame.length, frame.width) / 2 + 0.08) * 20) / 20;
+}
 
 function gridFor(m: Match, r: Robot): AllianceNav {
-  const inflate =
-    Math.round((Math.max(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.08) * 20) / 20;
+  let g = robotGrids.get(r);
+  if (g) return g;
+  const inflate = navInflation(r.archetype.frame);
   let grids = navGrids.get(m.def);
   if (!grids) navGrids.set(m.def, (grids = new Map()));
   const key = `${r.alliance}:${inflate}`;
-  let g = grids.get(key);
+  g = grids.get(key);
   if (!g) {
     g = new AllianceNav(m.game, inflate, r.alliance);
     grids.set(key, g);
   }
+  robotGrids.set(r, g);
   return g;
 }
 
@@ -533,7 +569,7 @@ export class BotBrain implements RobotController {
       const claim = `piece:${p.id}`;
       if (this.claimedByOther(m, r, claim)) continue;
       // Loose pieces in the opponent's protected zones aren't worth the contact fouls.
-      if (inProtectedZone(m, pos, r.alliance === 'blue' ? 'red' : 'blue')) continue;
+      if (inProtectedZone(m, pos, other(r.alliance))) continue;
       if (this.blacklist.has(p.id) && (this.blacklist.get(p.id) ?? 0) > m.time) continue;
       const approachYaw = this.approachYaw(m, r, pos);
       if (approachYaw === null) continue; // no way to get an intake on it (e.g. against a wall)
@@ -582,6 +618,14 @@ export class BotBrain implements RobotController {
     const auto = m.phase === 'auto';
     if (!auto && m.phase !== 'teleop') return null;
     const pref = m.def.botHints?.endgamePreference;
+    const baseLead = m.def.botHints?.endgameLeadSec ?? 3;
+    const lead = auto
+      ? 0.5
+      : this.strategy === 'max-cycles'
+        ? 0.5
+        : this.strategy === 'early-endgame'
+          ? baseLead + 15
+          : baseLead;
     let best: Option | null = null;
     for (const a of m.game.endgame) {
       if (a.alliance && a.alliance !== r.alliance) continue;
@@ -590,39 +634,26 @@ export class BotBrain implements RobotController {
       if (dur === undefined) continue;
       const rank = pref ? pref.indexOf(a.baseId) : -1;
       if (pref && rank < 0) continue;
-      a.zones.forEach((z, zoneIndex) => {
-        const center = regionCenter(z);
+      // One-at-a-time actions: also wait for teammates already headed for (or doing) one.
+      const queue = a.oneAtATime && !auto ? this.endgameQueue(m, r) * dur : 0;
+      const spots = endgameSpots(a);
+      for (let zoneIndex = 0; zoneIndex < spots.length; zoneIndex++) {
+        const spot = spots[zoneIndex]!;
+        const point = spotPoint(gridFor(m, r), spot);
+        // Timing first (everything here is a pure test, so the order doesn't change the answer).
+        const need = this.travelTime(m, r, point) * 1.4 + dur + lead + queue + this.skill.think;
+        if (m.remaining > need && !force) continue;
+        // Too late to finish: in auto there's no time to spare, so keep scoring instead.
+        if (auto && m.remaining < this.travelTime(m, r, point) + dur) continue;
         // Claims and occupancy are per physical spot, so two different actions that share a zone
         // (e.g. dock vs. engage on the same platform slot) don't send two robots to one place.
-        const claim = `eg:${a.alliance ?? 'n'}:${center.x.toFixed(2)},${center.y.toFixed(2)}`;
-        if (this.claimedByOther(m, r, claim)) return;
-        const occupied = m.robots.some((o) => {
-          if (o === r || !o.endgameDone) return false;
-          const oa = m.game.endgame.find((e) => e.id === o.endgameDone!.actionId);
-          const oz = oa?.zones[o.endgameDone.zoneIndex];
-          return !!oz && pointInRegion(regionCenter(oz), z);
-        });
-        if (occupied && (a.maxRobotsPerZone ?? Infinity) <= 1) return;
-        const point = gridFor(m, r).nearestFree(center);
-        const baseLead = m.def.botHints?.endgameLeadSec ?? 3;
-        const lead = auto
-          ? 0.5
-          : this.strategy === 'max-cycles'
-            ? 0.5
-            : this.strategy === 'early-endgame'
-              ? baseLead + 15
-              : baseLead;
-        // One-at-a-time actions: also wait for teammates already headed for (or doing) one.
-        const queue = a.oneAtATime && !auto ? this.endgameQueue(m, r) * dur : 0;
-        const need = this.travelTime(m, r, point) * 1.4 + dur + lead + queue + this.skill.think;
-        if (m.remaining > need && !force) return;
-        // Too late to finish: in auto there's no time to spare, so keep scoring instead.
-        if (auto && m.remaining < this.travelTime(m, r, point) + dur) return;
+        if (this.claimedByOther(m, r, spot.claim)) continue;
+        if ((a.maxRobotsPerZone ?? Infinity) <= 1 && spotOccupied(m, r, spot.zone)) continue;
         const pts = auto ? (a.autoPoints ?? a.points) : a.points;
         const utility = pts / (rank >= 0 ? rank + 1 : 1) - this.travelTime(m, r, point);
         if (!best || utility > best.utility)
-          best = { plan: { kind: 'endgame', actionId: a.id, zoneIndex, point }, utility, claim };
-      });
+          best = { plan: { kind: 'endgame', actionId: a.id, zoneIndex, point }, utility, claim: spot.claim };
+      }
     }
     return best;
   }
@@ -839,7 +870,7 @@ export class BotBrain implements RobotController {
       Math.hypot(goal.x - this.pathGoal.x, goal.y - this.pathGoal.y) > 0.3 ||
       this.pathAge > 1
     ) {
-      const zones = opponentZones(m, r.alliance);
+      const zones = aiFor(m).penalty[r.alliance];
       this.path = finalApproach ? [goal] : grid.findPath(r, goal, this.parkedRobots(m, r), zones);
       // Parked robots can wall off the only way around (e.g. a barrier end): then path through them.
       if (!this.path.length && !finalApproach) this.path = grid.findPath(r, goal, [], zones);
@@ -964,7 +995,7 @@ export class BotBrain implements RobotController {
         const yaw = Math.atan2(p.aim.y - r.y, p.aim.x - r.x);
         const near = s.dist < 0.4;
         if (near) this.arrivedFor += dt;
-        const canNow = m.shotOptions(r).some((o) => o.target.id === p.targetId);
+        const canNow = m.canShootAt(r, p.targetId);
         const settled = near && r.speed < 0.25 && this.arrivedFor >= this.skill.dwell;
         const fire = canNow && (settled || (sh.shootOnMove ?? false));
         const omega = s.dist < 2.5 && !sh.turret ? this.faceCmd(m, r, yaw) : this.travelFace(m, r, s);
@@ -1062,6 +1093,47 @@ function yieldPriority(m: Match, r: Robot, other: Robot): number {
   return endgame + (r.held.length > 0 ? 2 : 0) + (r.id < other.id ? 1 : 0);
 }
 
+interface EndgameSpot {
+  zone: Region2D;
+  center: Vec2;
+  /** Claim key of the physical spot, shared by every action using the same zone. */
+  claim: string;
+  /** The spot's nearest free point per nav grid. */
+  points: Map<AllianceNav, Vec2>;
+}
+const egSpots = new WeakMap<XEndgame, EndgameSpot[]>();
+
+/** An endgame action's zones with their static data (centers, claim keys), computed once. */
+function endgameSpots(a: XEndgame): EndgameSpot[] {
+  let spots = egSpots.get(a);
+  if (!spots) {
+    spots = a.zones.map((zone) => {
+      const center = regionCenter(zone);
+      const claim = `eg:${a.alliance ?? 'n'}:${center.x.toFixed(2)},${center.y.toFixed(2)}`;
+      return { zone, center, claim, points: new Map() };
+    });
+    egSpots.set(a, spots);
+  }
+  return spots;
+}
+
+/** Where a robot on `grid` stands for `spot` (static geometry, so looked up once per grid). */
+function spotPoint(grid: AllianceNav, spot: EndgameSpot): Vec2 {
+  let p = spot.points.get(grid);
+  if (!p) spot.points.set(grid, (p = grid.nearestFree(spot.center)));
+  return p;
+}
+
+/** Another robot has finished an endgame action on a spot whose center lies in `zone`. */
+function spotOccupied(m: Match, r: Robot, zone: Region2D): boolean {
+  return m.robots.some((o) => {
+    if (o === r || !o.endgameDone) return false;
+    const oa = m.game.endgame.find((e) => e.id === o.endgameDone!.actionId);
+    const spot = oa && endgameSpots(oa)[o.endgameDone.zoneIndex];
+    return !!spot && pointInRegion(spot.center, zone);
+  });
+}
+
 /** Where a defender stands to block `o`: just in front of it, toward its own alliance wall. */
 function blockPoint(m: Match, o: Robot): Vec2 {
   const home = o.alliance === 'blue' ? 0 : m.def.field.length;
@@ -1079,15 +1151,10 @@ function inProtectedZone(m: Match, p: Vec2, alliance: Alliance): boolean {
  * endgame-only protected zones when `endgame`).
  */
 function nearProtectedZone(m: Match, p: Vec2, alliance: Alliance, margin: number, endgame: boolean): boolean {
-  const hints = m.def.botHints;
-  const ids = [...(hints?.protectedZones ?? []), ...(endgame ? (hints?.endgameProtectedZones ?? []) : [])];
-  if (!ids.length) return false;
-  return m.game.zones.some(
-    (z) =>
-      (z.alliance === alliance || z.alliance === null) &&
-      ids.includes(z.baseId) &&
-      (pointInRegion(p, z.region) || (margin > 0 && distToRegion(p, z.region) < margin)),
-  );
+  const zones = aiFor(m).protected[alliance];
+  for (const region of endgame ? zones.endgame : zones.always)
+    if (pointInRegion(p, region) || (margin > 0 && distToRegion(p, region) < margin)) return true;
+  return false;
 }
 
 function distToRegion(p: Vec2, region: Region2D): number {
@@ -1108,17 +1175,6 @@ function distToRegion(p: Vec2, region: Region2D): number {
 function isDefending(o: Robot): boolean {
   const b = o.controller instanceof BotBrain ? o.controller : null;
   return !!b && (b.role === 'defense' || b.currentPlan.kind === 'defend');
-}
-
-/** The opponent's protected zones, as a path penalty for `alliance`'s robots. */
-function opponentZones(m: Match, alliance: Alliance): { key: string; regions: Region2D[] } | undefined {
-  const ids = m.def.botHints?.protectedZones;
-  if (!ids?.length) return undefined;
-  const opp = alliance === 'blue' ? 'red' : 'blue';
-  const regions = m.game.zones
-    .filter((z) => z.alliance === opp && ids.includes(z.baseId))
-    .map((z) => z.region);
-  return { key: `protected:${opp}`, regions };
 }
 
 /** Best points the opponent could get for a piece it is carrying (its open targets, this period). */

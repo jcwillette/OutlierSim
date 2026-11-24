@@ -1,11 +1,11 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { attachBots } from '../src/engine/ai/bot.ts';
-import { NavGrid, type DynamicObstacle } from '../src/engine/ai/navgrid.ts';
+import { NavGrid, obstacleFootprints, type DynamicObstacle } from '../src/engine/ai/navgrid.ts';
 import { PointIndex } from '../src/engine/ai/spatial.ts';
 import { stepWorld } from '../src/engine/sim/bodyState.ts';
 import { Match, initPhysics } from '../src/engine/sim/index.ts';
-import { makeRng, yawFromQuat } from '../src/engine/sim/math.ts';
+import { makeRng, pointInRegion, yawFromQuat } from '../src/engine/sim/math.ts';
 import { findGame } from '../src/games/index.ts';
 import type { Region2D, Vec2 } from '../src/engine/sim/types.ts';
 
@@ -218,6 +218,44 @@ function referenceSearch(grid: NavGrid, a: Vec2, b: Vec2): Vec2[] {
   }
   return out;
 }
+
+describe('NavGrid occupancy', () => {
+  /** Distance from p to a polygon's outline (the grid builder's own formula). */
+  const distToPoly = (p: Vec2, pts: Vec2[]) => {
+    let best = Infinity;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const a = pts[j]!;
+      const b = pts[i]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1e-9)));
+      best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+    }
+    return best;
+  };
+  it('the bounding-box shortcut marks exactly the cells the plain per-cell test does', () => {
+    for (const def of [cu, ref]) {
+      const m = new Match(def, { seed: 1 });
+      for (const inflate of [0.3, 0.5, 0.55]) {
+        const grid = new NavGrid(m.game, inflate);
+        const g = grid as unknown as { blocked: Uint8Array; slow: Uint8Array; cols: number; rows: number };
+        const { length: L, width: W } = def.field;
+        const solid = obstacleFootprints(m.game);
+        const ramps = obstacleFootprints(m.game, 0.5, true);
+        const pts = (o: Region2D) => (o as { points: Vec2[] }).points;
+        for (let r = 0; r < g.rows; r++)
+          for (let c = 0; c < g.cols; c++) {
+            const p = { x: (c + 0.5) * grid.cell, y: (r + 0.5) * grid.cell };
+            const wall = p.x < inflate || p.y < inflate || p.x > L - inflate || p.y > W - inflate;
+            const blocked = wall || solid.some((o) => pointInRegion(p, o) || distToPoly(p, pts(o)) < inflate);
+            const slow = ramps.some((o) => pointInRegion(p, o) || distToPoly(p, pts(o)) < inflate * 0.5);
+            expect(g.blocked[r * g.cols + c]).toBe(blocked ? 1 : 0);
+            expect(g.slow[r * g.cols + c]).toBe(slow ? 1 : 0);
+          }
+      }
+    }
+  });
+});
 
 describe('NavGrid.findPath', () => {
   it('finds exactly the paths of the original A* (parked robots, penalty zones, dead ends)', () => {

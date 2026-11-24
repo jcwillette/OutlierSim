@@ -1,5 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { AllianceNav, attachBots, type BotBrain, type DynamicObstacle } from '../src/engine/ai/index.ts';
+import {
+  AllianceNav,
+  attachBots,
+  navInflation,
+  type BotBrain,
+  type DynamicObstacle,
+} from '../src/engine/ai/index.ts';
 import { Match, PhysicsFrame, expandDefinition, initPhysics } from '../src/engine/sim/index.ts';
 import { eulerToQuat, makeRng, rotateVec, wrapAngle } from '../src/engine/sim/math.ts';
 import type { GameDefinition, Region2D, Vec2 } from '../src/engine/sim/types.ts';
@@ -22,11 +28,7 @@ const flipper = (def: GameDefinition) => {
 };
 
 /** The nav grid inflations the bots use (one per robot size). */
-const inflations = (def: GameDefinition) => [
-  ...new Set(
-    def.archetypes.map((a) => Math.round((Math.max(a.frame.length, a.frame.width) / 2 + 0.08) * 20) / 20),
-  ),
-];
+const inflations = (def: GameDefinition) => [...new Set(def.archetypes.map((a) => navInflation(a.frame)))];
 
 describe.each(GAMES.map((g) => [g.definition.id, g.definition] as const))(
   'alliance symmetry of navigation: %s',
