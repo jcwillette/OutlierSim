@@ -1627,6 +1627,16 @@ class Hud {
       return `${a?.name ?? 'Endgame'}… ${pct}%`;
     }
     const lines: string[] = [];
+    // Where contact would draw a foul (the game's declared contact rules), so students learn them.
+    const opp = r.alliance === 'blue' ? 'red' : 'blue';
+    for (const w of m.contactWarnings(r).slice(0, 2))
+      lines.push(
+        `<span class="warn">${
+          w.opponent
+            ? `${robotName(w.opponent)} is in its ${w.zone}: touching it is a foul (${w.rule.id})`
+            : `In ${opp}'s ${w.zone}: touching ${opp} robots is a foul (${w.rule.id})`
+        }</span>`,
+      );
     const eg = m.availableEndgame(r)[0];
     if (eg) lines.push(`<b>G</b>: ${eg.action.name} (+${eg.action.points})`);
     const place = controller.placeChoice(m, r);
@@ -1645,7 +1655,8 @@ class Hud {
       const name = m.def.pieces.find((p) => p.id === want)?.name ?? want;
       lines.push(`At human player station: intake to receive a <b>${name}</b> (<b>F</b> to switch)`);
     } else if (stations.length) lines.push('At human player station: intake to receive');
-    if (!lines.length) lines.push(r.held.length ? 'Drive to a scoring location' : 'Collect a game piece');
+    if (lines.every((l) => l.startsWith('<span class="warn">')))
+      lines.push(r.held.length ? 'Drive to a scoring location' : 'Collect a game piece');
     return lines.join('<br>');
   }
 }

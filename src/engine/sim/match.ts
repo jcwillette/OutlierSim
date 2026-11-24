@@ -5,7 +5,7 @@ import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from '
 import { ScoreLedger } from './ledger.ts';
 import { bodyEpoch, stepWorld } from './bodyState.ts';
 import { PhysicsFrame, handedness } from './frame.ts';
-import { Referee } from './referee.ts';
+import { Referee, type ContactWarning } from './referee.ts';
 import {
   clamp,
   eulerToQuat,
@@ -1113,6 +1113,14 @@ export class Match {
           out.push(t);
     }
     return out;
+  }
+
+  /**
+   * The game's declared contact rules that would call a foul on this robot if it touched an
+   * opponent now (it is in an opponent's protected zone, or a nearby opponent is in its own).
+   */
+  contactWarnings(r: Robot): ContactWarning[] {
+    return this.referee?.contactWarnings(r) ?? [];
   }
 
   /** Stations whose zone the robot is in and that could feed it a piece. */

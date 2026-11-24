@@ -325,6 +325,9 @@ label.check {
 .hint b {
   color: var(--accent);
 }
+.hint .warn {
+  color: #ff9f43;
+}
 .camlabel {
   position: absolute;
   right: 12px;

@@ -77,7 +77,21 @@ interface ContactCheck {
   rule: ContactFoulRule;
   /** Each alliance's protected regions under this rule. */
   zones: Record<Alliance, Region2D[]>;
+  /** The same zones with their names, for warnings. */
+  named: Record<Alliance, Array<{ region: Region2D; name: string }>>;
 }
+
+/** A contact rule that would call a foul if a robot touched an opponent now (`Match.contactWarnings`). */
+export interface ContactWarning {
+  rule: ContactFoulRule;
+  /** The zone that makes it a foul. */
+  zone: string;
+  /** For `inside: 'protected'` rules: the opponent that is protected (in its own zone). */
+  opponent?: Robot;
+}
+
+/** Opponents this close (m, center to center) count for `contactWarnings`. */
+const WARN_RANGE = 2.5;
 
 export class Referee {
   private readonly contact: ContactCheck[];
@@ -102,9 +116,17 @@ export class Referee {
 
   constructor(private readonly m: Match) {
     this.contact = (m.def.fouls.contact ?? []).map((rule) => {
-      const zones = (a: Alliance) =>
-        m.game.zones.filter((z) => z.alliance === a && rule.zones.includes(z.baseId)).map((z) => z.region);
-      return { rule, zones: { blue: zones('blue'), red: zones('red') } };
+      const named = (a: Alliance) =>
+        m.game.zones
+          .filter((z) => z.alliance === a && rule.zones.includes(z.baseId))
+          .map((z) => ({ region: z.region, name: z.name ?? z.baseId }));
+      const blue = named('blue');
+      const red = named('red');
+      return {
+        rule,
+        zones: { blue: blue.map((z) => z.region), red: red.map((z) => z.region) },
+        named: { blue, red },
+      };
     });
     this.pinning = m.def.fouls.pinning;
     this.halfDiag = m.robots.map((r) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2);
@@ -167,6 +189,32 @@ export class Referee {
         k++;
       }
     }
+  }
+
+  /**
+   * The contact rules that would call a foul on `r` if it touched an opponent now: `r` is in an
+   * opponent's zone (`inside: 'intruder'`), or an opponent within a couple of meters is in its own
+   * (`inside: 'protected'`). For the HUD, so students learn where contact costs points.
+   */
+  contactWarnings(r: Robot): ContactWarning[] {
+    const m = this.m;
+    const out: ContactWarning[] = [];
+    if (m.phase !== 'auto' && m.phase !== 'teleop') return out;
+    const opp: Alliance = r.alliance === 'blue' ? 'red' : 'blue';
+    for (const { rule, named } of this.contact) {
+      if (rule.endgameOnly && !m.isEndgame) continue;
+      if (rule.inside === 'intruder') {
+        const z = named[opp].find((x) => robotInZone(r, x.region, rule.fully));
+        if (z) out.push({ rule, zone: z.name });
+        continue;
+      }
+      for (const o of m.robots) {
+        if (o.alliance !== opp || Math.hypot(o.x - r.x, o.y - r.y) > WARN_RANGE) continue;
+        const z = named[opp].find((x) => robotInZone(o, x.region, rule.fully));
+        if (z) out.push({ rule, zone: z.name, opponent: o });
+      }
+    }
+    return out;
   }
 
   private contactFouls(a: Robot, b: Robot): void {

@@ -255,6 +255,34 @@ describe('protected-zone contact fouls', () => {
   });
 });
 
+describe('contact warnings (for the HUD)', () => {
+  it("warn a robot in the opponent's zone under an 'intruder' rule", () => {
+    const m = setup(withFouls());
+    const [blue, red] = [m.robots[0]!, m.robots[3]!];
+    put(red, 8, 1.5); // in blue's loading zone
+    put(blue, 8, 1.5 + 2); // blue's own zone: no warning for blue
+    expect(m.contactWarnings(red).map((w) => [w.rule.id, w.zone, w.opponent])).toEqual([
+      ['G1', 'load', undefined],
+    ]);
+    expect(m.contactWarnings(blue)).toEqual([]);
+    put(red, 5.5, 1.5); // just outside
+    expect(m.contactWarnings(red)).toEqual([]);
+  });
+
+  it("warn a robot near an opponent that is in its own zone under a 'protected' rule", () => {
+    const m = setup(withFouls({ inside: 'protected' }));
+    const [blue, red] = [m.robots[0]!, m.robots[3]!];
+    put(blue, 8, 1.5); // protected in its loading zone
+    put(red, 8, 3.5);
+    expect(m.contactWarnings(red).map((w) => [w.rule.id, w.zone, w.opponent?.id])).toEqual([
+      ['G1', 'load', blue.id],
+    ]);
+    expect(m.contactWarnings(blue)).toEqual([]);
+    put(red, 8, 5); // too far away to matter
+    expect(m.contactWarnings(red)).toEqual([]);
+  });
+});
+
 describe('pinning', () => {
   it('validates its numbers', () => {
     const def = withFouls();
