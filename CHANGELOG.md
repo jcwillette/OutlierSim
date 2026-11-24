@@ -4,6 +4,16 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- Faster win probability, same results:
+  - Each headless match is about 2× faster, and the same seed still plays the exact same match, bit for bit (ADR 0006). Per match, min of 3 runs: 2023 random lineups 1.45 → 0.77 s, 2023 presets 1.28 → 0.63 s, reference game 1.34 → 0.90 s.
+    - Robot and piece positions are cached per physics step instead of being read from Rapier each time (about 4 million reads per 2023 match). Any change to a body clears the cache.
+    - The physics step skips Rapier 0.21's soft-body bookkeeping, which walked every body and collider after each step.
+    - A* reuses its buffers, keeps its heap in typed arrays and precomputes the wall tests. On 2,300 recorded 2023 searches it is 2.5× faster and returns identical paths.
+    - Nav grids and shot spots are built once per game instead of once per match. The nearest shot spot is found with a bucket index.
+    - 2023 rules snapshot the robots and GRIDs once per tick.
+  - One worker per logical core, up to 16 (was cores − 1, at most 8). In Chromium on 4 cores, 4 workers did 19 % more match-ups per second than 3.
+  - Together: a 1000-match-up 2023 run on a 4-core machine dropped from 7.3 min to about 2.7 min. The unit tests run in 16 s instead of 23 s.
+  - New `npm run bench`: time per match plus a fingerprint of every match; `--compare before.json` fails if any match changed. New `tests/speed.test.ts` pins every speed-up to the plain code it replaced. `?threads=N` overrides the worker count.
 - Win probability (Monte Carlo) in spectator mode:
   - The watch menu has a **Win probability** section: pick 100-2,500 match-ups and press **Simulate match-ups**. Each match-up plays the menu's exact setup (robots, roles, strategies, bot skill per alliance, breakdowns, tuning) bot vs bot, headless; Random slots are re-dealt every match-up.
   - The results screen updates live: each alliance's win chance with a 95 % Wilson interval, ties, mean / median / 10th-90th percentile scores, average RP and each bonus RP rate, and a histogram of winning margins. **Stop** keeps what has run so far; **Run again** uses fresh seeds.

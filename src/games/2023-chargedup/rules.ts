@@ -1,4 +1,4 @@
-import type { Alliance, GameRules, RulesContext } from '../../engine/sim/types.ts';
+import type { Alliance, GameRules, RobotInfo, RulesContext } from '../../engine/sim/types.ts';
 import { pointInRegion } from '../../engine/sim/math.ts';
 import {
   COMMUNITY,
@@ -42,22 +42,32 @@ const PIN_COUNT_SEC = 5;
  * pinned against something) for 5 s draws a FOUL, then a TECH FOUL every further 5 s. The count
  * resets once they separate.
  */
-function checkG202(ctx: RulesContext, dt: number): void {
+function checkG202(ctx: RulesContext, dt: number, robots: readonly RobotInfo[]): void {
   if (ctx.phase !== 'teleop' && ctx.phase !== 'auto') return;
   const pins = (ctx.vars.pins ??= {}) as Record<string, { t: number; called: number }>;
-  const robots = ctx.robots();
+  // Each ordered pair is visited once per tick, so only pins that existed before can need clearing.
+  let anyPins = false;
+  for (const _ in pins) {
+    anyPins = true;
+    break;
+  }
   for (const a of robots) {
     for (const v of robots) {
       if (a.alliance === v.alliance) continue;
-      const key = `${a.id}>${v.id}`;
       const dx = v.x - a.x;
       const dy = v.y - a.y;
       const d = Math.hypot(dx, dy);
-      const victimStuck =
-        Math.hypot(v.vx, v.vy) < 0.25 && Math.hypot(v.cmdX, v.cmdY) > 0.3 && !v.endgameAction;
-      const pushing = d > 1e-3 && (a.cmdX * dx + a.cmdY * dy) / d > 0.3;
-      if (d < CONTACT_DIST && victimStuck && pushing) {
-        const p = (pins[key] ??= { t: 0, called: 0 });
+      const contact =
+        d < CONTACT_DIST &&
+        // victim stuck: trying to move but not moving
+        Math.hypot(v.vx, v.vy) < 0.25 &&
+        Math.hypot(v.cmdX, v.cmdY) > 0.3 &&
+        !v.endgameAction &&
+        // pushing: driving into the victim
+        d > 1e-3 &&
+        (a.cmdX * dx + a.cmdY * dy) / d > 0.3;
+      if (contact) {
+        const p = (pins[`${a.id}>${v.id}`] ??= { t: 0, called: 0 });
         p.t += dt;
         const periods = Math.floor(p.t / PIN_COUNT_SEC);
         if (periods > p.called) {
@@ -68,15 +78,14 @@ function checkG202(ctx: RulesContext, dt: number): void {
             `G202 pinning for ${periods * PIN_COUNT_SEC} s`,
           );
         }
-      } else if (d > CONTACT_DIST + 0.3) delete pins[key];
+      } else if (anyPins && d > CONTACT_DIST + 0.3) delete pins[`${a.id}>${v.id}`];
     }
   }
 }
 
-function checkG207(ctx: RulesContext): void {
+function checkG207(ctx: RulesContext, robots: readonly RobotInfo[]): void {
   if (ctx.phase !== 'auto' && ctx.phase !== 'teleop') return;
   const last = (ctx.vars.g207 ??= {}) as Record<string, number>;
-  const robots = ctx.robots();
   for (const a of robots) {
     if (a.alliance !== 'blue') continue;
     for (const b of robots) {
@@ -106,6 +115,8 @@ function checkG207(ctx: RulesContext): void {
 }
 
 const ALLIANCES: Alliance[] = ['blue', 'red'];
+const LINKS_INDICATOR = { blue: 'blue links', red: 'red links' } as const;
+const COOP_INDICATOR = { blue: 'blue co-op', red: 'red co-op' } as const;
 
 const filled = (ctx: RulesContext, a: Alliance) => filledNodes((id) => ctx.targetCount(id), a);
 
@@ -115,18 +126,21 @@ export const rules: GameRules = {
   },
 
   onTick(ctx, dt) {
-    checkG207(ctx);
-    checkG202(ctx, dt);
+    // One snapshot of the robots and of each GRID per tick (nothing here moves robots or scores).
+    const robots = ctx.robots();
+    checkG207(ctx, robots);
+    checkG202(ctx, dt, robots);
     // When each robot finished its endgame action (to know who got on the Charge Station last).
     const doneAt = (ctx.vars.doneAt ??= {}) as Record<number, number>;
-    for (const r of ctx.robots()) {
+    for (const r of robots) {
       if (r.endgameAction && doneAt[r.id] === undefined) doneAt[r.id] = ctx.time;
       if (!r.endgameAction) delete doneAt[r.id]; // released after auto
     }
-    const coop = ALLIANCES.map((a) => coopPieces(filled(ctx, a)));
+    const grids = ALLIANCES.map((a) => filled(ctx, a));
+    const coop = grids.map((f) => coopPieces(f));
     const coopBonus = coop.every((n) => n >= 3);
     ALLIANCES.forEach((a, i) => {
-      const f = filled(ctx, a);
+      const f = grids[i]!;
       const complete = isComplete(f);
       const key = `supercharge.${a}`;
       if (complete && !(ctx.vars[key] as boolean | undefined)) {
@@ -134,8 +148,8 @@ export const rules: GameRules = {
         ctx.setTargetEnabled(key, true);
         ctx.announce(`${a.toUpperCase()} GRID complete: extra pieces SUPERCHARGE (+3)`, a);
       }
-      ctx.setIndicator(`${a} links`, `${countLinks(f)} / ${coopBonus ? 5 : 6}`);
-      ctx.setIndicator(`${a} co-op`, `${Math.min(coop[i]!, 3)}/3`);
+      ctx.setIndicator(LINKS_INDICATOR[a], `${countLinks(f)} / ${coopBonus ? 5 : 6}`);
+      ctx.setIndicator(COOP_INDICATOR[a], `${Math.min(coop[i]!, 3)}/3`);
     });
     if (coopBonus && !ctx.vars.coopAnnounced) {
       ctx.vars.coopAnnounced = true;
