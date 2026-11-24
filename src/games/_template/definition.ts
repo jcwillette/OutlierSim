@@ -69,7 +69,7 @@ export const definition: GameDefinition = {
     // Protected zones (quote the rule: "any part of", "regardless of who initiates"):
     // contact: [{ id: 'G4xx', name: "contact in the opponent's <zone>", zones: ['<zone id>'],
     //   inside: 'intruder', severity: 'minor', repeatSec: 3, source: M(0, 'G4xx') }],
-    // pinning: { id: 'G4xx', countSec: 5, releaseGap: feet(6), source: M(0, 'G4xx') },
+    // pinning: { id: 'G4xx', countSec: 5, releaseGap: feet(6), repinSec: 3, source: M(0, 'G4xx') },
     source: M(0),
   },
   archetypes: [

@@ -1,6 +1,6 @@
 import type { Match, Robot } from './match.ts';
 import { footprint, footprintInside, footprintOverlaps } from './math.ts';
-import type { Alliance, ContactFoulRule, PinningRule, Region2D } from './types.ts';
+import type { Alliance, ContactFoulRule, PinningRule, Region2D, Vec2 } from './types.ts';
 
 /**
  * The fouls a game declares in `GameDefinition.fouls` (protected-zone contact, pinning), called by
@@ -17,9 +17,11 @@ const TRYING_CMD = 0.3;
 /** ...and moving slower than this (m/s). */
 const STUCK_SPEED = 0.25;
 const DEFAULT_REPEAT_SEC = 3;
-const DEFAULT_PIN_SEC = 5;
+export const DEFAULT_PIN_SEC = 5;
 /** 6 ft: "PINNED until the ROBOTS have separated by at least 6 ft." */
 export const DEFAULT_PIN_RELEASE_GAP = 1.83;
+/** "The PINNING ROBOT(S) must then wait for at least 3 seconds before attempting to PIN ... again." */
+export const DEFAULT_REPIN_SEC = 3;
 
 /**
  * Gap between two robots' bumper boxes on the floor, m (0 or less: overlapping). A separating-axis
@@ -58,6 +60,19 @@ export function robotInZone(r: Robot, zone: Region2D, fully = false): boolean {
   return fully ? footprintInside(corners, zone) : footprintOverlaps(corners, zone);
 }
 
+/** One robot pinning another (`Referee.pins`). */
+interface Pin {
+  /** Seconds of pinning counted so far. */
+  count: number;
+  /** Fouls called for it so far (one per `countSec`). */
+  called: number;
+  /** Where each robot was when the pin started (or resumed). */
+  attackerFrom: Vec2;
+  victimFrom: Vec2;
+  /** Match time the pin ended, or null while it's on. */
+  endedAt: number | null;
+}
+
 interface ContactCheck {
   rule: ContactFoulRule;
   /** Each alliance's protected regions under this rule. */
@@ -69,8 +84,14 @@ export class Referee {
   private readonly pinning: PinningRule | undefined;
   /** Last match time each (rule, offender, protected robot) drew a contact foul. */
   private readonly lastCall = new Map<string, number>();
-  /** Pins in progress per (pinning robot, pinned robot). */
-  private readonly pins = new Map<string, { t: number; called: number }>();
+  /** Pins per (pinning robot, pinned robot): on, or ended less than `repinSec` ago. */
+  private readonly pins = new Map<string, Pin>();
+  /** Per blue-red pair this tick (blue-major order): the gap, and who is pinning whom. */
+  private readonly gaps: number[] = [];
+  private readonly bluePins: boolean[] = [];
+  private readonly redPins: boolean[] = [];
+  /** Robots being pinned this tick, by robot id. */
+  private readonly pinned: boolean[];
   /** Each robot's heading cosine and sine this tick, by robot id. */
   private readonly cos: number[] = [];
   private readonly sin: number[] = [];
@@ -87,6 +108,7 @@ export class Referee {
     });
     this.pinning = m.def.fouls.pinning;
     this.halfDiag = m.robots.map((r) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2);
+    this.pinned = m.robots.map(() => false);
     this.farGap = Math.max(
       CONTACT_GAP,
       this.pinning ? (this.pinning.releaseGap ?? DEFAULT_PIN_RELEASE_GAP) : 0,
@@ -107,7 +129,11 @@ export class Referee {
       this.cos[r.id] = Math.cos(yaw);
       this.sin[r.id] = Math.sin(yaw);
     }
-    const { cos, sin, halfDiag } = this;
+    const { cos, sin, halfDiag, gaps, bluePins, redPins, pinned } = this;
+    pinned.fill(false);
+    // Contact fouls, and who is pinning whom (a pin ends when the pinning robot gets pinned, so
+    // every pair is looked at before any pin count moves).
+    let k = 0;
     for (const a of m.robots) {
       if (a.alliance !== 'blue') continue;
       for (const b of m.robots) {
@@ -120,11 +146,25 @@ export class Referee {
           0.7 * d - halfDiag[a.id]! - halfDiag[b.id]! > this.farGap + 1e-6
             ? Infinity
             : gapWith(a, b, cos[a.id]!, sin[a.id]!, cos[b.id]!, sin[b.id]!);
-        if (gap < CONTACT_GAP) this.contactFouls(a, b);
-        if (this.pinning) {
-          this.pin(this.pinning, a, b, gap, dt);
-          this.pin(this.pinning, b, a, gap, dt);
-        }
+        gaps[k] = gap;
+        const touching = gap < CONTACT_GAP;
+        if (touching) this.contactFouls(a, b);
+        bluePins[k] = !!this.pinning && touching && pinning(a, b);
+        redPins[k] = !!this.pinning && touching && pinning(b, a);
+        if (bluePins[k]) pinned[b.id] = true;
+        if (redPins[k]) pinned[a.id] = true;
+        k++;
+      }
+    }
+    if (!this.pinning) return;
+    k = 0;
+    for (const a of m.robots) {
+      if (a.alliance !== 'blue') continue;
+      for (const b of m.robots) {
+        if (b.alliance !== 'red') continue;
+        this.pin(this.pinning, a, b, gaps[k]!, bluePins[k]!, dt);
+        this.pin(this.pinning, b, a, gaps[k]!, redPins[k]!, dt);
+        k++;
       }
     }
   }
@@ -148,20 +188,55 @@ export class Referee {
     }
   }
 
-  private pin(rule: PinningRule, attacker: Robot, victim: Robot, gap: number, dt: number): void {
+  /**
+   * One robot's pin on another this tick. The count runs while `attacker` is pinning `victim` and
+   * pauses while it isn't. The pin ends once the robots are `releaseGap` apart, either robot has
+   * moved `releaseGap` from where the pin started, or the pinning robot is pinned itself. Pinning
+   * the same robot again within `repinSec` of the end resumes the count; later, it starts over.
+   */
+  private pin(
+    rule: PinningRule,
+    attacker: Robot,
+    victim: Robot,
+    gap: number,
+    now: boolean,
+    dt: number,
+  ): void {
     const key = `${attacker.id}>${victim.id}`;
-    if (gap < CONTACT_GAP && pinning(attacker, victim)) {
-      let p = this.pins.get(key);
-      if (!p) this.pins.set(key, (p = { t: 0, called: 0 }));
-      p.t += dt;
-      const count = rule.countSec ?? DEFAULT_PIN_SEC;
-      const periods = Math.floor(p.t / count);
-      if (periods > p.called) {
-        p.called = periods;
-        const severity = periods === 1 ? (rule.severity ?? 'minor') : (rule.repeatSeverity ?? 'major');
-        this.m.addFoul(attacker.alliance, severity, `${rule.id} pinning`, `${periods * count} s`);
-      }
-    } else if (gap >= (rule.releaseGap ?? DEFAULT_PIN_RELEASE_GAP)) this.pins.delete(key);
+    let p = this.pins.get(key);
+    const t = this.m.time;
+    const release = rule.releaseGap ?? DEFAULT_PIN_RELEASE_GAP;
+    const pinnedItself = this.pinned[attacker.id]!;
+    if (
+      p &&
+      p.endedAt === null &&
+      (gap >= release ||
+        pinnedItself ||
+        Math.hypot(attacker.x - p.attackerFrom.x, attacker.y - p.attackerFrom.y) >= release ||
+        Math.hypot(victim.x - p.victimFrom.x, victim.y - p.victimFrom.y) >= release)
+    )
+      p.endedAt = t;
+    const repin = rule.repinSec ?? DEFAULT_REPIN_SEC;
+    if (!now || pinnedItself) {
+      // Forget a pin once it can no longer resume.
+      if (p && p.endedAt !== null && t - p.endedAt >= repin) this.pins.delete(key);
+      return;
+    }
+    const from = () => ({
+      attackerFrom: { x: attacker.x, y: attacker.y },
+      victimFrom: { x: victim.x, y: victim.y },
+    });
+    if (!p || (p.endedAt !== null && t - p.endedAt >= repin))
+      this.pins.set(key, (p = { count: 0, called: 0, ...from(), endedAt: null }));
+    else if (p.endedAt !== null) Object.assign(p, from(), { endedAt: null });
+    p.count += dt;
+    const count = rule.countSec ?? DEFAULT_PIN_SEC;
+    const periods = Math.floor(p.count / count);
+    if (periods > p.called) {
+      p.called = periods;
+      const severity = periods === 1 ? (rule.severity ?? 'minor') : (rule.repeatSeverity ?? 'major');
+      this.m.addFoul(attacker.alliance, severity, `${rule.id} pinning`, `${periods * count} s`);
+    }
   }
 }
 

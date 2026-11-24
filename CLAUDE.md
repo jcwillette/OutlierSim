@@ -61,7 +61,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - Defense is clean (`worthDefending`, `watchPin`):
     - it never marks an opposing defender;
     - it keeps 0.6 m from the opponent's `botHints.protectedZones` (plus `endgameProtectedZones` in the endgame);
-    - it breaks off pins after 3 s, backs off past the pin release gap (`fouls.pinning.releaseGap`, default 6 ft) and waits 4 s before re-engaging.
+    - it breaks off pins after 3 s (2 s short of a shorter `fouls.pinning.countSec`), backs off past the pin release gap (`releaseGap`, default 6 ft) and waits 4 s (or 1 s past a longer `repinSec`) before re-engaging.
   - Bots have tunnel-vision lapses (`SKILL.lapse` plus robot unreliability), where they ignore teammates.
   - `attachBots` takes per-robot `roles` and per-alliance `strategies` (`AllianceStrategy`).
 - Imperfect robots: `MatchOptions.breakdowns` rolls each robot's breakdown, mechanism failure and power losses from `RobotArchetype.reliability` (seeded). Breakdowns and mechanism failures can clear (more often for reliable robots). `Robot.isOut(t)` blocks driving and mechanisms; `Robot.mechDown` blocks only game-piece handling (endgame still works), and bots with one play defense. It's off by default in the engine (so tests stay deterministic), on in the app (except the player's robot, by default) and in `npm run sim` (`--perfect` turns it off).

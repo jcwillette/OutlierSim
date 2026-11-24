@@ -392,10 +392,11 @@ export interface ContactFoulRule {
 }
 
 /**
- * Pinning (e.g. 2023 G202): pressing an opponent that is trying to move but can't. Pinning time
- * counts while the contact lasts and resumes if it starts again; every `countSec` of it draws a
- * foul (the first `severity`, then `repeatSeverity`). The count ends once the robots are
- * `releaseGap` apart.
+ * Pinning (e.g. 2023 G202): pressing an opponent that is trying to move but can't. The count runs
+ * while the pin lasts and pauses while it doesn't; every `countSec` of it draws a foul (the first
+ * `severity`, then `repeatSeverity`). The pin ends once the robots are `releaseGap` apart, either
+ * robot has moved `releaseGap` from where it started, or the pinning robot gets pinned itself
+ * (the usual FRC wording). Pinning the same robot again within `repinSec` resumes the count.
  */
 export interface PinningRule {
   id: string;
@@ -405,8 +406,13 @@ export interface PinningRule {
   severity?: 'minor' | 'major';
   /** Each further call. Default 'major'. */
   repeatSeverity?: 'minor' | 'major';
-  /** Bumper-to-bumper gap (m) that ends a pin. Default 1.83 (6 ft, the usual FRC wording). */
+  /**
+   * Bumper-to-bumper gap (m) that ends a pin, and how far (m) either robot moves from where the pin
+   * started to end it. Default 1.83 (6 ft, the usual FRC wording).
+   */
   releaseGap?: number;
+  /** Seconds after a pin ends within which pinning the same robot again resumes its count. Default 3. */
+  repinSec?: number;
   source?: Citation;
 }
 

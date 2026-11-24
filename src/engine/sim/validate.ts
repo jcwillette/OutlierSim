@@ -204,6 +204,7 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     if (pin.countSec !== undefined && !(pin.countSec > 0)) err('fouls.pinning', 'countSec must be > 0');
     if (pin.releaseGap !== undefined && !(pin.releaseGap >= 0))
       err('fouls.pinning', 'releaseGap must be >= 0');
+    if (pin.repinSec !== undefined && !(pin.repinSec >= 0)) err('fouls.pinning', 'repinSec must be >= 0');
     for (const s of [pin.severity, pin.repeatSeverity])
       if (s !== undefined && !severities.has(s)) err('fouls.pinning', "severity must be 'minor' or 'major'");
     if (!pin.source) warn('fouls.pinning', 'no source citation');

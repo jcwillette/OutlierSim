@@ -74,10 +74,10 @@ Pick the declarative kind when it fits: `piecesAtLeast` (pieces in targets with 
 
 Quote the rule text: the exact wording decides the model ("any part of", "regardless of who initiates", "fully contained", the pin release distance).
 
-| Rule | Kind                     | Zones (per alliance) | Who must be inside (`intruder` / `protected`), any part or fully | Endgame only? | Severity / repeat    | Source |
-| ---- | ------------------------ | -------------------- | ---------------------------------------------------------------- | ------------- | -------------------- | ------ |
-|      | protected-zone contact   |                      |                                                                  |               |                      |        |
-|      | pinning (count, release) |                      | n/a                                                              | n/a           | first / each further |        |
+| Rule | Kind                                  | Zones (per alliance) | Who must be inside (`intruder` / `protected`), any part or fully | Endgame only? | Severity / repeat    | Source |
+| ---- | ------------------------------------- | -------------------- | ---------------------------------------------------------------- | ------------- | -------------------- | ------ |
+|      | protected-zone contact                |                      |                                                                  |               |                      |        |
+|      | pinning (count, release, re-pin wait) |                      | n/a                                                              | n/a           | first / each further |        |
 
 Rules whose penalty isn't a foul (e.g. 2023 G209: touched robots count as engaged) can't be `fouls.contact`: give the bots the zone as `botHints.endgameProtectedZones` and list the penalty under Simplifications.
 

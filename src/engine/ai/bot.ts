@@ -10,7 +10,7 @@ import {
   type RobotController,
 } from '../sim/match.ts';
 import { handedness as frameHandedness } from '../sim/frame.ts';
-import { DEFAULT_PIN_RELEASE_GAP } from '../sim/referee.ts';
+import { DEFAULT_PIN_RELEASE_GAP, DEFAULT_PIN_SEC, DEFAULT_REPIN_SEC } from '../sim/referee.ts';
 import {
   clamp,
   distToRegion,
@@ -866,15 +866,15 @@ export class BotBrain implements RobotController {
   }
 
   /**
-   * Pin 5-count (G202-style): pressed against a stopped opponent for PIN_BREAK_SEC, back off and
-   * leave that robot alone for PIN_COOLDOWN_SEC.
+   * Pin count (G202-style): pressed against a stopped opponent for a while (`pinBreakSec`), back off
+   * and leave that robot alone (`pinCooldownSec`).
    */
   private watchPin(m: Match, r: Robot, o: Robot, dt: number): boolean {
     const touching = Math.hypot(o.x - r.x, o.y - r.y) < halfSize(o) + halfSize(r) + 0.1;
     this.pinTime = touching && o.speed < 0.25 ? this.pinTime + dt : Math.max(0, this.pinTime - dt * 2);
-    if (this.pinTime < PIN_BREAK_SEC) return false;
+    if (this.pinTime < pinBreakSec(m)) return false;
     this.pinTime = 0;
-    this.harassCooldown.set(o.id, m.time + PIN_COOLDOWN_SEC);
+    this.harassCooldown.set(o.id, m.time + pinCooldownSec(m));
     return true;
   }
 
@@ -1163,10 +1163,21 @@ function samePlan(a: Plan, b: Plan): boolean {
 
 /** Defenders keep this far (m) from an opponent's protected zones, so contact can't happen inside. */
 const DEFENSE_ZONE_MARGIN = 0.6;
-/** Break off after this long pressed against a stopped opponent (manual pin counts are 5 s). */
+/** Break off after this long pressed against a stopped opponent (manual pin counts are 5 s)... */
 const PIN_BREAK_SEC = 3;
 /** ...and leave that robot alone this long (manuals require 3 s before re-pinning). */
 const PIN_COOLDOWN_SEC = 4;
+
+/** How long a defender presses a stopped opponent: 3 s, or 2 s short of a shorter pin count. */
+function pinBreakSec(m: Match): number {
+  const count = m.def.fouls.pinning?.countSec ?? DEFAULT_PIN_SEC;
+  return Math.max(0.5, Math.min(PIN_BREAK_SEC, count - 2));
+}
+
+/** How long a defender then leaves that robot alone: 4 s, or 1 s past a longer re-pin wait. */
+function pinCooldownSec(m: Match): number {
+  return Math.max(PIN_COOLDOWN_SEC, (m.def.fouls.pinning?.repinSec ?? DEFAULT_REPIN_SEC) + 1);
+}
 
 /**
  * How far (m) a defender backs off to break a pin: past the game's pin release gap (`fouls.pinning`,

@@ -256,6 +256,21 @@ describe('protected-zone contact fouls', () => {
 });
 
 describe('pinning', () => {
+  it('validates its numbers', () => {
+    const def = withFouls();
+    const bad = {
+      ...def,
+      fouls: {
+        ...def.fouls,
+        pinning: { id: 'G2', countSec: 0, releaseGap: -1, repinSec: -1, source: 'test' },
+      },
+    };
+    expect(
+      validateDefinition(bad)
+        .filter((i) => i.level === 'error')
+        .map((i) => i.message),
+    ).toEqual(['countSec must be > 0', 'releaseGap must be >= 0', 'repinSec must be >= 0']);
+  });
   /**
    * Blue pushes red (a robot too weak to push back) against the side wall while red tries to
    * drive along it. Red never drives toward blue, so only blue is pinning.
@@ -286,7 +301,7 @@ describe('pinning', () => {
   it("isn't a pin when the pressed robot isn't trying to move", () => {
     expect(fouls(pin(10.5, false))).toEqual([]);
   });
-  it('the count resumes after a short break and ends once the robots are 6 ft apart', () => {
+  it('the count resumes after a short break', () => {
     const m = pin(3);
     const blue = m.robots[0]!;
     blue.controller = ctl(() => ({ vy: 1 })); // back off a little...
@@ -294,12 +309,56 @@ describe('pinning', () => {
     blue.controller = ctl(() => ({ vy: -1 })); // ...and pin again: the count goes on from 3 s
     stepFor(m, 3);
     expect(fouls(m)).toEqual(['foul:G2 pinning']);
-    put(blue, 4, 0.45 + 0.8 + 1.9); // 1.9 m apart: the pin is over
+  });
+
+  /** Pin for 3 s, move blue `away` m (bumper gap) off for `wait` s, then pin again for `again` s. */
+  const separate = (away: number, wait: number, again: number) => {
+    const m = pin(3);
+    const blue = m.robots[0]!;
+    put(blue, 4, 0.45 + 0.8 + away);
     blue.controller = ctl(() => ({}));
-    stepFor(m, 0.2);
+    stepFor(m, wait);
     put(blue, 4, 0.45 + 0.8 + 0.01);
     blue.controller = ctl(() => ({ vy: -1 }));
-    stepFor(m, 4.5); // a fresh count: under 5 s
-    expect(fouls(m)).toHaveLength(1);
+    stepFor(m, again);
+    return fouls(m);
+  };
+  it('ends once the robots are 6 ft apart, and starts over unless the robot pins again within 3 s', () => {
+    expect(separate(1.9, 3.5, 4.5)).toEqual([]); // a fresh count: 4.5 s
+    expect(separate(1.9, 1, 2.5)).toEqual(['foul:G2 pinning']); // back within 3 s: 3 + 2.5 s
+    expect(separate(1.5, 3.5, 2.5)).toEqual(['foul:G2 pinning']); // never 6 ft apart: still on
+  });
+
+  it('ends once either robot has moved 6 ft from where the pin started', () => {
+    /** Pin 3 s, both robots move `dx` along the wall, touching but idle for 3.5 s, then pin 4.5 s. */
+    const slide = (dx: number) => {
+      const m = pin(3);
+      const [blue, red] = [m.robots[0]!, m.robots[3]!];
+      blue.controller = ctl(() => ({}));
+      red.controller = ctl(() => ({}));
+      put(red, 4 - dx, 0.45);
+      put(blue, 4 - dx, 0.45 + 0.8 + 0.01);
+      stepFor(m, 3.5);
+      blue.controller = ctl(() => ({ vy: -1 }));
+      red.controller = ctl(() => ({ vx: 1 }));
+      stepFor(m, 4.5);
+      return fouls(m);
+    };
+    expect(slide(2)).toEqual([]); // the pin ended: a fresh 4.5 s count
+    expect(slide(1)).toEqual(['foul:G2 pinning']); // still the same pin: 3 + 4.5 s
+  });
+
+  it('ends when the pinning robot gets pinned itself', () => {
+    const m = pin(3);
+    const [blue, red2] = [m.robots[0]!, m.robots[4]!];
+    // Red 2 presses blue from above while blue keeps pressing red 1 against the wall.
+    put(red2, 4, blue.y + 0.81);
+    red2.controller = ctl(() => ({ vy: -1 }));
+    stepFor(m, 3);
+    expect(fouls(m)).toEqual([]); // blue's count stopped at 3 s, red 2's is at 3 s
+    stepFor(m, 2.5);
+    expect(fouls(m)).toEqual(['foul:G2 pinning']);
+    expect(m.fouls.red).toEqual({ minor: 1, major: 0 });
+    expect(m.fouls.blue).toEqual({ minor: 0, major: 0 });
   });
 });
