@@ -14,8 +14,9 @@ describe('plausibility tool helpers', () => {
     expect(() => lineupsFor(cu, ['nope'])).toThrow(/Unknown lineup 'nope'/);
   });
   it('bounds the pieces an alliance can score from the definition', () => {
-    // 2023: 3 preloads + 4 staged + 42 at the substations, into 27 nodes + 27 supercharge slots.
-    expect(pieceCeiling(cu)).toMatchObject({ available: 49, capacity: 54 });
+    // 2023: 3 preloads + 8 staged (4 per alliance, either can take them) + 42 at its substations,
+    // into 27 nodes + 27 supercharge slots.
+    expect(pieceCeiling(cu)).toMatchObject({ available: 53, capacity: 54 });
     // The reference game recycles its orbs: no bound.
     expect(pieceCeiling(ref).available).toBe(Infinity);
   });

@@ -215,8 +215,10 @@ export function pieceCeiling(def: GameDefinition): { available: number; capacity
     }),
     0,
   );
+  // Staged pieces on the field: both alliances' copies (a robot can take the opponent's) and the
+  // neutral ones.
   let staged = 0;
-  for (const s of def.staging) staged += s.positions.length * (s.side === 'neutral' ? 0.5 : 1);
+  for (const s of def.staging) staged += s.positions.length * (s.side === 'neutral' ? 1 : 2);
   const supply = def.stations.reduce((t, st) => t + (st.supply ?? Infinity), 0);
   const recycles = def.targets.some((t) => t.afterScore?.kind === 'recycle');
   const available = recycles ? Infinity : 3 * perRobot + staged + supply;
@@ -226,7 +228,7 @@ export function pieceCeiling(def: GameDefinition): { available: number; capacity
   );
   const note = recycles
     ? 'scored pieces recycle, so pieces are unbounded'
-    : `${3 * perRobot} preloaded + ${staged} staged (half the neutral ones) + ${Number.isFinite(supply) ? supply : 'unlimited'} from human players`;
+    : `${3 * perRobot} preloaded + ${staged} staged on the field (both alliances' and neutral ones) + ${Number.isFinite(supply) ? supply : 'unlimited'} from its human players`;
   return { available, capacity, note };
 }
 
