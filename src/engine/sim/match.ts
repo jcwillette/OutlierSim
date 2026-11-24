@@ -11,6 +11,7 @@ import {
   eulerToQuat,
   rotateVec,
   footprint,
+  footprintOverlaps,
   gaussian,
   makeRng,
   pointInRegion,
@@ -1436,7 +1437,7 @@ export class Match {
       )
         continue;
       const corners = footprint(r.x, r.y, r.yaw, r.archetype.frame.length, r.archetype.frame.width);
-      if (corners.every((c) => !pointInRegion(c, aw.zone))) r.leftZones.add(aw.id);
+      if (!footprintOverlaps(corners, aw.zone)) r.leftZones.add(aw.id);
     }
   }
 

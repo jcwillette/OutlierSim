@@ -6,9 +6,11 @@ import {
   validateDefinition,
   type ContactFoulRule,
   type GameDefinition,
+  type Region2D,
   type Robot,
   type RobotCommand,
 } from '../src/engine/sim/index.ts';
+import { footprint, footprintInside, footprintOverlaps, pointInRegion } from '../src/engine/sim/math.ts';
 import { CONTACT_GAP, robotGap, robotInZone } from '../src/engine/sim/referee.ts';
 import { miniGame } from './fixtures/mini-game.ts';
 
@@ -109,6 +111,77 @@ describe('robot contact geometry', () => {
     expect(robotInZone(r, zone, true)).toBe(true);
     put(r, 5.5, 1.5);
     expect(robotInZone(r, zone)).toBe(false);
+  });
+});
+
+describe('footprint and zone overlap (exact)', () => {
+  // A 0.8 m square robot.
+  const robot = (x: number, y: number, yaw = 0) => footprint(x, y, yaw, 0.8, 0.8);
+  const rect = (x0: number, y0: number, x1: number, y1: number): Region2D => ({
+    kind: 'rect',
+    min: { x: x0, y: y0 },
+    max: { x: x1, y: y1 },
+  });
+
+  it("counts a zone corner poking into the robot's side, with none of the robot's corners in the zone", () => {
+    // Turned 45 deg, the robot's top-right side is the line x + y = 10.566; the zone's corner
+    // (5.25, 5.25) is just inside it.
+    const diamond = robot(5, 5, Math.PI / 4);
+    const zone = rect(5.25, 5.25, 7, 7);
+    expect(diamond.some((c) => pointInRegion(c, zone))).toBe(false);
+    expect(footprintOverlaps(diamond, zone)).toBe(true);
+    expect(footprintOverlaps(diamond, rect(5.35, 5.35, 7, 7))).toBe(false);
+  });
+
+  it('counts a zone narrower than the robot running across it', () => {
+    const r = robot(5.25, 5); // x 4.85-5.65: the strip x 4.9-5.1 crosses it, center outside
+    expect(footprintOverlaps(r, rect(4.9, 0, 5.1, 10))).toBe(true);
+    expect(footprintOverlaps(r, rect(4.5, 0, 4.8, 10))).toBe(false);
+    const strip: Region2D = {
+      kind: 'poly',
+      points: [
+        { x: 4.9, y: 0 },
+        { x: 5.1, y: 0 },
+        { x: 5.1, y: 10 },
+        { x: 4.9, y: 10 },
+      ],
+    };
+    expect(footprintOverlaps(r, strip)).toBe(true);
+  });
+
+  it('is exact for circles', () => {
+    const r = robot(5, 5); // front side at x 5.4
+    expect(footprintOverlaps(r, { kind: 'circle', center: { x: 5.6, y: 5 }, radius: 0.25 })).toBe(true);
+    expect(footprintOverlaps(r, { kind: 'circle', center: { x: 5.7, y: 5 }, radius: 0.25 })).toBe(false);
+    expect(footprintOverlaps(r, { kind: 'circle', center: { x: 5, y: 5 }, radius: 0.1 })).toBe(true);
+    expect(footprintInside(r, { kind: 'circle', center: { x: 5, y: 5 }, radius: 0.6 })).toBe(true);
+    expect(footprintInside(r, { kind: 'circle', center: { x: 5, y: 5 }, radius: 0.5 })).toBe(false);
+  });
+
+  it('is fully inside a polygon only when no notch of it reaches into the robot', () => {
+    // A 10 m square with a 0.2 m slot cut down from the top edge to y = 5.
+    const slotted: Region2D = {
+      kind: 'poly',
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 5.1, y: 10 },
+        { x: 5.1, y: 5 },
+        { x: 4.9, y: 5 },
+        { x: 4.9, y: 10 },
+        { x: 0, y: 10 },
+      ],
+    };
+    // The slot runs right through the robot: every corner is inside, but the robot isn't.
+    const across = robot(5, 5.5);
+    expect(across.every((c) => pointInRegion(c, slotted))).toBe(true);
+    expect(footprintInside(across, slotted)).toBe(false);
+    // The slot's end pokes into the robot.
+    expect(footprintInside(robot(5, 4.8), slotted)).toBe(false);
+    expect(footprintInside(robot(5, 4.5), slotted)).toBe(true);
+    expect(footprintInside(robot(2, 2), rect(0, 0, 10, 10))).toBe(true);
+    expect(footprintInside(robot(9.7, 2), rect(0, 0, 10, 10))).toBe(false);
   });
 });
 

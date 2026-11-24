@@ -168,7 +168,8 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     if (b.kind === 'pointsAtLeast') {
       for (const c of b.categories ?? [])
         if (!['auto', 'teleop', 'endgame', 'penalty'].includes(c)) err(path, `unknown category '${c}'`);
-      // Sources may also be names a game's rules.ts passes to addPoints, so unknown ones only warn.
+      // Sources may also be names a game's rules.ts passes to addPoints, so unknown ones are only
+      // an error when there is no rules.ts.
       const unknown = (b.sources ?? []).filter((s) => !sourceIds.has(s));
       if (unknown.length && !def.rules)
         err(path, `unknown sources (no rules.ts adds points): ${unknown.join(', ')}`);

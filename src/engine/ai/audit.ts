@@ -1,5 +1,5 @@
 import { expandDefinition, restHeight } from '../sim/expand.ts';
-import { footprint, pointInRegion, regionCenter } from '../sim/math.ts';
+import { footprint, footprintOverlaps, pointInRegion, regionCenter } from '../sim/math.ts';
 import type { GameDefinition, Region2D, RobotArchetype, Vec2 } from '../sim/types.ts';
 import { approachHeading, findShotSpots, navInflation } from './bot.ts';
 import { AllianceNav, obstacleFootprints } from './navgrid.ts';
@@ -69,7 +69,7 @@ export function auditDefinition(def: GameDefinition): AuditIssue[] {
   starts.forEach((s, i) => {
     for (const n of navs) {
       const corners = footprint(s.x, s.y, s.yaw, n.arch.frame.length, n.arch.frame.width);
-      if (solid.some((o) => corners.some((c) => pointInRegion(c, o)) || pointInRegion(s, o))) {
+      if (solid.some((o) => footprintOverlaps(corners, o))) {
         err(`start pose ${i + 1}`, `a ${n.arch.id} robot there overlaps a field element`);
         break;
       }

@@ -1,6 +1,6 @@
 import type { Match, Robot } from './match.ts';
-import { footprint, pointInRegion } from './math.ts';
-import type { Alliance, ContactFoulRule, PinningRule, Region2D, Vec2 } from './types.ts';
+import { footprint, footprintInside, footprintOverlaps } from './math.ts';
+import type { Alliance, ContactFoulRule, PinningRule, Region2D } from './types.ts';
 
 /**
  * The fouls a game declares in `GameDefinition.fouls` (protected-zone contact, pinning), called by
@@ -52,12 +52,10 @@ function gapWith(a: Robot, b: Robot, ca: number, sa: number, cb: number, sb: num
   return gap;
 }
 
-/** Whether a robot is in a zone: any part of its footprint (corners or center), or all of it. */
+/** Whether a robot is in a zone: any part of its bumper footprint, or (`fully`) all of it. */
 export function robotInZone(r: Robot, zone: Region2D, fully = false): boolean {
-  const corners: Vec2[] = footprint(r.x, r.y, r.yaw, r.archetype.frame.length, r.archetype.frame.width);
-  return fully
-    ? corners.every((c) => pointInRegion(c, zone))
-    : pointInRegion(r, zone) || corners.some((c) => pointInRegion(c, zone));
+  const corners = footprint(r.x, r.y, r.yaw, r.archetype.frame.length, r.archetype.frame.width);
+  return fully ? footprintInside(corners, zone) : footprintOverlaps(corners, zone);
 }
 
 interface ContactCheck {
