@@ -45,6 +45,7 @@ Status of the build plan. Update this file in every PR.
 - The reference game's tower recycles orbs right back to midfield, so scores are unrealistically high (~650/alliance). That's fine for an engine test.
 
 - No touch controls, so phones and tablets can only use the menus. Matches need a keyboard or gamepad.
+- No graphics quality setting: soft shadows (every mesh casts), antialiasing and up to 1.5× pixel ratio are always on. Untested on low-end school laptops (CI renders in software); a low setting (no shadows, pixel ratio 1) would be the first thing to try if students report slow frames.
 - The bundle is about 4.9 MB (Rapier's WASM is inlined by `rapier3d-compat`). Consider the non-compat build with a separate `.wasm` file if load time matters on school networks.
 - Robots are drawn as generic boxes. Archetypes could get a simple visual hint per mechanism (shooter hood, elevator).
 - Scored pieces are drawn only in targets with a `display` point (2023's nodes); elsewhere they vanish (consumed) or reappear at the recycle exits.
