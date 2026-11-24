@@ -756,7 +756,7 @@ export class App {
         { class: 'summary small' },
         'Play this exact setup (robots, roles, strategies, bot skill, breakdowns and tuning) many times ' +
           'without drawing it, and estimate how often each alliance wins. Random robot slots are re-dealt ' +
-          'every match-up. Runs on all but one of your CPU cores.',
+          'every match-up. Runs on all of your CPU cores.',
       ),
       h(
         'div',
@@ -797,10 +797,14 @@ export class App {
         const v = this.mcView;
         if (v && v.run === r && this.uiLayer.contains(v.root)) v.update();
       };
+      // ?threads=N (dev): worker count override (1-32), for measuring throughput.
+      const asked = Number(new URLSearchParams(location.search).get('threads'));
+      const threads = asked >= 1 ? Math.min(32, Math.floor(asked)) : undefined;
       this.mc = new MonteCarloRun(spec, {
         total: this.setup.mcMatches,
         baseSeed: (Math.random() * 2 ** 30) | 0,
         def,
+        ...(threads ? { threads } : {}),
         onUpdate: (r) => {
           if (r.state !== 'running') return redraw(r);
           if (pending) return;

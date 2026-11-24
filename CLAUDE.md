@@ -19,7 +19,9 @@ npx vitest run tests/smoke.test.ts   # single file
 npx vitest run -t "loads Rapier"     # single test by name
 npm run build                        # typecheck + production build to dist/
 npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archetypes a,b,c] [--tuning t.json] [--json out.json]
-                                     # headless bot-vs-bot matches (~2.5 s each) -> score/RP/piece stats, win rates
+                                     # headless bot-vs-bot matches (~0.6-0.9 s each) -> score/RP/piece stats, win rates
+npm run bench [-- --game <id>] [--matches 6] [--json before.json | --compare before.json]
+                                     # ms per match + a fingerprint of every match; --compare fails if any match changed (ADR 0006)
 npm run test:e2e                     # build + Playwright: every game loads, plays, spectates, runs win-probability workers; screenshots in test-results/
 npm run calibrate -- --game <id> [--events 2024casj,...] [--matches 30] [--difficulty hard] [--write | --dump]
                                      # ONLY when the owner asks: compare sim vs real TBA matches
@@ -35,9 +37,10 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
 
 - `src/engine/sim/`: the headless, deterministic core.
   - Rapier physics at a fixed 60 Hz step, match clock and phases, scoring sensors, and a score ledger with a TBA-style breakdown.
+  - Step the physics with `stepWorld(world)` (`bodyState.ts`), not `world.step()`; it skips Rapier's per-step soft-body bookkeeping. `Robot` pose / velocity getters and `Piece.position` are cached per `bodyEpoch`, which advances on every step and every `RigidBody` mutator call (wrapped once in `bodyState.ts`), so setting a body directly (tests do) is always seen.
   - **Must never import Three.js, the DOM, `ui/`, `input/` or `render/`.** ESLint `no-restricted-imports` enforces this for `sim/`, `ai/` and `games/`. That rule is what lets full matches run in Node for tests and calibration.
 - `src/engine/ai/`: the generic bot AI. It is headless and drives robots only through `RobotCommand`, the same as the player, so it never cheats.
-  - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m.
+  - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m. Nav grids and shot spots (`PointIndex`, exact nearest-spot queries) are cached per `GameDefinition` object and shared by every match of it, so never mutate a definition: `applyTuning` returns a copy.
   - `BotBrain` is a utility planner. Each option is scored as points per second over the whole cycle (fetch, travel to score, action time), with hysteresis.
   - It picks shot spots precomputed with `solveShot`, uses approach headings so intakes can reach pieces, makes time-boxed endgame decisions, and plays defense when `botHints.defenseShare` > 0.
   - Teammates coordinate like an alliance on a radio:
@@ -63,7 +66,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - `Session` calls `attachBots()` for the non-player robots. The player's robot can run a `BotBrain` during auto (the "auto routine" option).
   - Spectator mode (`Setup.mode === 'watch'`, `?watch=1`): `Session.player` is null and all six robots are bots. `CameraRig` uses `SPECTATOR_CAMERA_MODES`, starting on the sideline view. The followed robot gets the ring (`FieldView.highlight`), and `describeBot()` turns its `BotBrain.currentPlan` into HUD commentary. Playback speed scales `match.advance`.
   - The menu's alliance composition (preset, strategy, robot and role per slot) lives in `ui/lineup.ts` (DOM-free, unit-tested). Games offer presets via `GameDefinition.lineups`.
-  - Win probability (spectator menu, ADR 0005): `ui/montecarlo.ts` (DOM-free, unit-tested) plays one `MonteCarloSpec` per seed (`runMatchup`) and aggregates (`summarize`, Wilson CI, margin histogram). `ui/montecarloPool.ts` (`MonteCarloRun`) fans seeds out to `ui/montecarlo.worker.ts` Web Workers. Random slots are dealt from `dealRng(seed)`, so `App.start(seed)` replays a sampled match-up exactly. `window.outlierSim.mc` is the latest run.
+  - Win probability (spectator menu, ADR 0005): `ui/montecarlo.ts` (DOM-free, unit-tested) plays one `MonteCarloSpec` per seed (`runMatchup`) and aggregates (`summarize`, Wilson CI, margin histogram). `ui/montecarloPool.ts` (`MonteCarloRun`) fans seeds out to `ui/montecarlo.worker.ts` Web Workers. Random slots are dealt from `dealRng(seed)`, so `App.start(seed)` replays a sampled match-up exactly. `window.outlierSim.mc` is the latest run. Workers default to one per logical core (`defaultThreads`, max 16); `?threads=N` overrides it for measuring.
   - The menu's "Robot & field tuning" lives in `ui/tuning.ts` (DOM-free, unit-tested): per robot type and per human player station overrides in display units (ft, lb, s, %). `applyTuning(def, tuning)` returns a tuned copy of the definition, which `App.start` (and `npm run sim --tuning`) pass to `Match`. Explicit fault rates go in `RobotArchetype.faults` and override `faultRates()` (`sim/faults.ts`).
   - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`. The bot AI uses the same helpers.
 - `src/games/<year>-<slug>/`: one folder per season.
@@ -90,6 +93,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - A target's `display` point draws scored pieces in place. Without one, scored pieces are hidden.
   - When a new game needs something the schema can't express, put it in that game's `rules.ts` first. Promote it into the engine only when a second game needs it.
 - **Rapier**: call `await RAPIER.init()` before creating a world (browser and Node).
+- **Speed-ups never change results** (ADR 0006): the same seed must give the same match, bit for bit. Run `npm run bench -- --json before.json` first and `npm run bench -- --compare before.json` after, and keep `tests/speed.test.ts` passing. Changes that alter matches (Rapier SIMD build, lower physics rate, sparser re-planning) are model changes, not speed-ups.
 - **IP hygiene**: field and robots use generic primitives and alliance colors, with no _FIRST_ logos or copied assets. The UI says the game is unofficial. Manuals and videos go in the git-ignored `work/` directory and are never committed.
 
 ## Checking the client in a browser

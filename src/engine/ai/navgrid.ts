@@ -80,11 +80,13 @@ export function obstacleFootprints(game: ExpandedGame, robotHeight = 0.5, slow =
   return out;
 }
 
-interface Node {
-  i: number;
-  g: number;
-  f: number;
-}
+/** Neighbor steps for A*: 4 straight, then 4 diagonal (this order decides ties). */
+const STEP_DC = [1, -1, 0, 0, 1, 1, -1, -1] as const;
+const STEP_DR = [0, 0, 1, -1, 1, -1, 1, -1] as const;
+const STEP_COST = [1, 1, 1, 1, Math.SQRT2, Math.SQRT2, Math.SQRT2, Math.SQRT2] as const;
+const STEP_COST_SLOW = STEP_COST.map((c) => c * SLOW_COST);
+/** Octile-distance weight of the diagonal part of the A* heuristic. */
+const DIAG_EXTRA = Math.SQRT2 - 1;
 
 /** Occupancy grid of the field for one robot size, with A* + line-of-sight smoothing. */
 export class NavGrid {
@@ -92,6 +94,13 @@ export class NavGrid {
   readonly cols: number;
   readonly rows: number;
   private readonly blocked: Uint8Array;
+  /**
+   * Per cell, bit k set if step k (STEP_DC/DR[k]) stays on the field, lands on an unblocked cell
+   * and, for a diagonal, doesn't cut a blocked corner: the static part of A*'s neighbor test.
+   */
+  private readonly moves: Uint8Array;
+  /** Index offset of each step. */
+  private readonly stepDelta: Int32Array;
   /** Cells on drivable ramps / platforms (extra path cost). */
   private readonly slow: Uint8Array;
   /** Per-call dynamic obstacle mask (set during findPath). */
@@ -99,6 +108,16 @@ export class NavGrid {
   /** Per-call "keep out if you can" mask (set during findPath), costed like slow ground. */
   private pen: Uint8Array | null = null;
   private readonly penaltyCache = new Map<string, Uint8Array>();
+  // A* scratch, reused across searches. g / came are valid where `stamp` equals the current search
+  // id, and a cell is closed where `closedAt` does; this saves clearing ~10k cells per search.
+  // g stays Float32 (as it always was), so path costs, ties and paths are unchanged.
+  private readonly gScratch: Float32Array;
+  private readonly came: Int32Array;
+  private readonly stamp: Uint32Array;
+  private readonly closedAt: Uint32Array;
+  private searchId = 0;
+  private readonly open = new NodeHeap();
+  private dynScratch: Uint8Array | null = null;
 
   constructor(
     readonly game: ExpandedGame,
@@ -111,6 +130,12 @@ export class NavGrid {
     this.rows = Math.ceil(W / cell);
     this.blocked = new Uint8Array(this.cols * this.rows);
     this.slow = new Uint8Array(this.cols * this.rows);
+    this.moves = new Uint8Array(this.cols * this.rows);
+    this.stepDelta = Int32Array.from(STEP_DC, (dc, k) => STEP_DR[k]! * this.cols + dc);
+    this.gScratch = new Float32Array(this.cols * this.rows);
+    this.came = new Int32Array(this.cols * this.rows);
+    this.stamp = new Uint32Array(this.cols * this.rows);
+    this.closedAt = new Uint32Array(this.cols * this.rows);
     const obstacles = obstacleFootprints(game);
     const ramps = obstacleFootprints(game, 0.5, true);
     for (let r = 0; r < this.rows; r++) {
@@ -131,29 +156,54 @@ export class NavGrid {
           this.slow[r * this.cols + c] = 1;
       }
     }
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        let mask = 0;
+        for (let k = 0; k < 8; k++) {
+          const dc = STEP_DC[k]!;
+          const dr = STEP_DR[k]!;
+          const nc = c + dc;
+          const nr = r + dr;
+          if (nc < 0 || nr < 0 || nc >= this.cols || nr >= this.rows) continue;
+          if (this.blocked[nr * this.cols + nc]) continue;
+          if (dc && dr && (this.blocked[r * this.cols + nc] || this.blocked[nr * this.cols + c])) continue;
+          mask |= 1 << k;
+        }
+        this.moves[r * this.cols + c] = mask;
+      }
+    }
   }
 
   private center(c: number, r: number): Vec2 {
     return { x: (c + 0.5) * this.cell, y: (r + 0.5) * this.cell };
   }
   private cellOf(p: Vec2): [number, number] {
-    return [
-      Math.min(this.cols - 1, Math.max(0, Math.floor(p.x / this.cell))),
-      Math.min(this.rows - 1, Math.max(0, Math.floor(p.y / this.cell))),
-    ];
+    return [this.colOf(p.x), this.rowOf(p.y)];
+  }
+  private colOf(x: number): number {
+    return Math.min(this.cols - 1, Math.max(0, Math.floor(x / this.cell)));
+  }
+  private rowOf(y: number): number {
+    return Math.min(this.rows - 1, Math.max(0, Math.floor(y / this.cell)));
+  }
+  /** Grid index of the cell containing (x, y), clamped to the field. */
+  private indexAt(x: number, y: number): number {
+    return this.rowOf(y) * this.cols + this.colOf(x);
+  }
+  private freeAt(i: number): boolean {
+    return this.blocked[i] === 0 && !this.dyn?.[i];
+  }
+  private slowAt(i: number): boolean {
+    return this.slow[i] === 1 || this.pen?.[i] === 1;
   }
 
   isFree(p: Vec2): boolean {
-    const [c, r] = this.cellOf(p);
-    const i = r * this.cols + c;
-    return this.blocked[i] === 0 && !this.dyn?.[i];
+    return this.freeAt(this.indexAt(p.x, p.y));
   }
 
   /** True if `p` is on a drivable ramp or platform, or in this search's penalty regions. */
   isSlow(p: Vec2): boolean {
-    const [c, r] = this.cellOf(p);
-    const i = r * this.cols + c;
-    return this.slow[i] === 1 || this.pen?.[i] === 1;
+    return this.slowAt(this.indexAt(p.x, p.y));
   }
 
   /** Cells inside `regions`, cached under `key` (e.g. the zones one alliance should stay out of). */
@@ -201,8 +251,8 @@ export class NavGrid {
     const n = Math.ceil(d / (this.cell * 0.5));
     for (let i = 1; i < n; i++) {
       const t = i / n;
-      const q = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-      if (!this.isFree(q) || (!slowOk && this.isSlow(q))) return false;
+      const k = this.indexAt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+      if (!this.freeAt(k) || (!slowOk && this.slowAt(k))) return false;
     }
     return true;
   }
@@ -234,7 +284,10 @@ export class NavGrid {
     for (const o of avoid) {
       const rad = o.radius + this.inflate;
       if (Math.hypot(a.x - o.x, a.y - o.y) < rad || Math.hypot(b.x - o.x, b.y - o.y) < rad) continue;
-      mask ??= new Uint8Array(this.cols * this.rows);
+      if (!mask) {
+        mask = this.dynScratch ??= new Uint8Array(this.cols * this.rows);
+        mask.fill(0);
+      }
       const [c0, r0] = this.cellOf({ x: o.x - rad, y: o.y - rad });
       const [c1, r1] = this.cellOf({ x: o.x + rad, y: o.y + rad });
       for (let r = r0; r <= r1; r++)
@@ -250,64 +303,66 @@ export class NavGrid {
     const start = this.nearestFree(a);
     const goal = this.nearestFree(b);
     if (this.lineOfSight(start, goal, this.isSlow(start) || this.isSlow(goal))) return [goal];
-    const [sc, sr] = this.cellOf(start);
-    const [gc, gr] = this.cellOf(goal);
-    const N = this.cols * this.rows;
-    const g = new Float32Array(N).fill(Infinity);
-    const came = new Int32Array(N).fill(-1);
-    const closed = new Uint8Array(N);
-    const si = sr * this.cols + sc;
-    const gi = gr * this.cols + gc;
-    const h = (i: number) => {
-      const c = i % this.cols;
-      const r = (i / this.cols) | 0;
+    const cols = this.cols;
+    const si = this.indexAt(start.x, start.y);
+    const gc = this.colOf(goal.x);
+    const gr = this.rowOf(goal.y);
+    const gi = gr * cols + gc;
+    if (++this.searchId === 0xffffffff) {
+      this.stamp.fill(0);
+      this.closedAt.fill(0);
+      this.searchId = 1;
+    }
+    const id = this.searchId;
+    const g = this.gScratch;
+    const came = this.came;
+    const stamp = this.stamp;
+    const closed = this.closedAt;
+    const moves = this.moves;
+    const delta = this.stepDelta;
+    const slow = this.slow;
+    const dyn = this.dyn;
+    const pen = this.pen;
+    // Octile distance to the goal cell (admissible: every step costs at least its length).
+    const h = (c: number, r: number) => {
       const dx = Math.abs(c - gc);
       const dy = Math.abs(r - gr);
-      return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
+      return Math.max(dx, dy) + DIAG_EXTRA * Math.min(dx, dy);
     };
-    const open = new MinHeap();
+    const open = this.open;
+    open.clear();
     g[si] = 0;
-    open.push({ i: si, g: 0, f: h(si) });
-    const dirs = [
-      [1, 0, 1],
-      [-1, 0, 1],
-      [0, 1, 1],
-      [0, -1, 1],
-      [1, 1, Math.SQRT2],
-      [1, -1, Math.SQRT2],
-      [-1, 1, Math.SQRT2],
-      [-1, -1, Math.SQRT2],
-    ] as const;
+    stamp[si] = id;
+    came[si] = -1;
+    open.push(si, 0, h(si % cols, (si / cols) | 0));
     let found = false;
     while (open.size) {
-      const cur = open.pop()!;
-      if (closed[cur.i]) continue;
-      closed[cur.i] = 1;
-      if (cur.i === gi) {
+      open.pop();
+      const ci = open.poppedI;
+      const cg = open.poppedG;
+      if (closed[ci] === id) continue;
+      closed[ci] = id;
+      if (ci === gi) {
         found = true;
         break;
       }
-      const c = cur.i % this.cols;
-      const r = (cur.i / this.cols) | 0;
-      for (const [dc, dr, cost] of dirs) {
-        const nc = c + dc;
-        const nr = r + dr;
-        if (nc < 0 || nr < 0 || nc >= this.cols || nr >= this.rows) continue;
-        const ni = nr * this.cols + nc;
-        if (this.blocked[ni] || this.dyn?.[ni] || closed[ni]) continue;
-        const side1 = r * this.cols + nc;
-        const side2 = nr * this.cols + c;
-        if (
-          dc &&
-          dr &&
-          (this.blocked[side1] || this.blocked[side2] || this.dyn?.[side1] || this.dyn?.[side2])
-        )
-          continue;
-        const ng = cur.g + cost * (this.slow[ni] || this.pen?.[ni] ? SLOW_COST : 1);
-        if (ng < g[ni]!) {
+      const c = ci % cols;
+      const r = (ci / cols) | 0;
+      const mv = moves[ci]!;
+      for (let k = 0; k < 8; k++) {
+        if (!(mv & (1 << k))) continue; // off the field, into a wall, or cutting a wall's corner
+        const ni = ci + delta[k]!;
+        if (closed[ni] === id) continue;
+        const dc = STEP_DC[k]!;
+        const dr = STEP_DR[k]!;
+        // Parked robots this search: same tests as walls.
+        if (dyn !== null && (dyn[ni] || (dc && dr && (dyn[ci + dc] || dyn[ci + dr * cols])))) continue;
+        const ng = cg + (slow[ni] || (pen !== null && pen[ni]) ? STEP_COST_SLOW[k]! : STEP_COST[k]!);
+        if (ng < (stamp[ni] === id ? g[ni]! : Infinity)) {
           g[ni] = ng;
-          came[ni] = cur.i;
-          open.push({ i: ni, g: ng, f: ng + h(ni) });
+          stamp[ni] = id;
+          came[ni] = ci;
+          open.push(ni, ng, ng + h(c + dc, r + dr));
         }
       }
     }
@@ -349,40 +404,87 @@ function distToPoly(p: Vec2, r: Region2D): number {
   return best;
 }
 
-class MinHeap {
-  private readonly a: Node[] = [];
-  get size(): number {
-    return this.a.length;
+/**
+ * Binary min-heap of A* nodes (cell index, g, f) on typed arrays. Same comparisons and sift order
+ * as a textbook array heap (`<=` going up, strict `<` going down, left child first), so nodes with
+ * equal f come out in the same order as they always did.
+ */
+class NodeHeap {
+  private cell = new Int32Array(1024);
+  private g = new Float64Array(1024);
+  private f = new Float64Array(1024);
+  size = 0;
+  /** The node the last `pop()` removed. */
+  poppedI = 0;
+  poppedG = 0;
+
+  clear(): void {
+    this.size = 0;
   }
-  push(n: Node): void {
-    const a = this.a;
-    a.push(n);
-    let i = a.length - 1;
-    while (i > 0) {
-      const p = (i - 1) >> 1;
-      if (a[p]!.f <= a[i]!.f) break;
-      [a[p], a[i]] = [a[i]!, a[p]!];
-      i = p;
+
+  push(i: number, g: number, f: number): void {
+    if (this.size === this.cell.length) this.grow();
+    const cell = this.cell;
+    const gs = this.g;
+    const fs = this.f;
+    let k = this.size++;
+    while (k > 0) {
+      const p = (k - 1) >> 1;
+      if (fs[p]! <= f) break;
+      cell[k] = cell[p]!;
+      gs[k] = gs[p]!;
+      fs[k] = fs[p]!;
+      k = p;
     }
+    cell[k] = i;
+    gs[k] = g;
+    fs[k] = f;
   }
-  pop(): Node | undefined {
-    const a = this.a;
-    const top = a[0];
-    const last = a.pop();
-    if (a.length && last) {
-      a[0] = last;
-      let i = 0;
-      for (;;) {
-        const l = 2 * i + 1;
-        const r = l + 1;
-        let m = i;
-        if (l < a.length && a[l]!.f < a[m]!.f) m = l;
-        if (r < a.length && a[r]!.f < a[m]!.f) m = r;
-        if (m === i) break;
-        [a[m], a[i]] = [a[i]!, a[m]!];
-        i = m;
+
+  pop(): void {
+    const cell = this.cell;
+    const gs = this.g;
+    const fs = this.f;
+    this.poppedI = cell[0]!;
+    this.poppedG = gs[0]!;
+    const n = --this.size;
+    if (n === 0) return;
+    // Sift the last node down from the root.
+    const li = cell[n]!;
+    const lg = gs[n]!;
+    const lf = fs[n]!;
+    let k = 0;
+    for (;;) {
+      const l = 2 * k + 1;
+      const r = l + 1;
+      let m = k;
+      let mf = lf;
+      if (l < n && fs[l]! < mf) {
+        m = l;
+        mf = fs[l]!;
       }
+      if (r < n && fs[r]! < mf) m = r;
+      if (m === k) break;
+      cell[k] = cell[m]!;
+      gs[k] = gs[m]!;
+      fs[k] = fs[m]!;
+      k = m;
     }
-    return top;
+    cell[k] = li;
+    gs[k] = lg;
+    fs[k] = lf;
+  }
+
+  private grow(): void {
+    const n = this.cell.length * 2;
+    const cell = new Int32Array(n);
+    const g = new Float64Array(n);
+    const f = new Float64Array(n);
+    cell.set(this.cell);
+    g.set(this.g);
+    f.set(this.f);
+    this.cell = cell;
+    this.g = g;
+    this.f = f;
   }
 }

@@ -64,6 +64,17 @@ export const columnY = (c: number): number => 2.75 + (c - 5) * COLUMN_PITCH;
 /** Base target id of a node, e.g. `high-3`. Expanded ids add `.blue` / `.red`. */
 export const nodeId = (row: Row, c: number): string => `${row}-${c}`;
 
+/** Expanded node target ids of an alliance as [row][column-1], built once per alliance. */
+const NODE_IDS = new Map<string, string[][]>();
+function allianceNodeIds(alliance: string): string[][] {
+  let ids = NODE_IDS.get(alliance);
+  if (!ids) {
+    ids = ROWS.map((row) => COLUMNS.map((c) => `${nodeId(row, c)}.${alliance}`));
+    NODE_IDS.set(alliance, ids);
+  }
+  return ids;
+}
+
 /** Which nodes of an alliance hold a piece, as [row][column-1]. */
 export function filledNodes(
   counts: Record<string, { auto: number; teleop: number }> | ((id: string) => number),
@@ -73,7 +84,7 @@ export function filledNodes(
     typeof counts === 'function'
       ? counts
       : (id: string) => (counts[id] ? counts[id].auto + counts[id].teleop : 0);
-  return ROWS.map((row) => COLUMNS.map((c) => get(`${nodeId(row, c)}.${alliance}`) > 0));
+  return allianceNodeIds(alliance).map((row) => row.map((id) => get(id) > 0));
 }
 
 /**

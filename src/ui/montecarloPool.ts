@@ -2,11 +2,20 @@ import type { GameDefinition } from '../engine/sim/types.ts';
 import { runMatchup, type MatchupSample, type MonteCarloSpec } from './montecarlo.ts';
 
 /**
- * Runs Monte Carlo match-ups in parallel Web Workers (one headless match takes ~1-2 s, so 1000 on
- * one thread would take half an hour). Workers pull seeds one at a time from a shared queue, so a
- * slow core doesn't hold up the end of the run. Without Worker support it falls back to the main
- * thread, one match per task so the page stays responsive.
+ * Runs Monte Carlo match-ups in parallel Web Workers (one headless match takes ~0.6-0.9 s, so 1000
+ * on one thread would take over ten minutes). Workers pull seeds one at a time from a shared queue,
+ * so a slow core doesn't hold up the end of the run. Without Worker support it falls back to the
+ * main thread, one match per task so the page stays responsive.
  */
+
+/**
+ * Default worker count: every logical core, up to 16. The page itself is nearly idle during a run
+ * (it only redraws when a match-up finishes), so it doesn't need a core of its own: on 4 cores, 4
+ * workers did 19 % more match-ups per second than 3, and 6 were no faster than 4.
+ */
+export function defaultThreads(cores: number): number {
+  return Math.max(1, Math.min(16, cores));
+}
 
 export type WorkerRequest = { type: 'init'; spec: MonteCarloSpec } | { type: 'run'; seeds: number[] };
 export type WorkerReply =
@@ -32,7 +41,7 @@ export interface RunOptions {
   def: GameDefinition;
   /** Called after every finished match-up and when the run ends. */
   onUpdate: (run: MonteCarloRun) => void;
-  /** Worker count (default: logical cores − 1, at most 8). */
+  /** Worker count (default: `defaultThreads(navigator.hardwareConcurrency)`). */
   threads?: number;
   /** Worker factory; null forces the main-thread fallback. */
   makeWorker?: (() => WorkerLike) | null;
@@ -65,9 +74,7 @@ export class MonteCarloRun {
         : opts.makeWorker;
     const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
     this.inline = make === null;
-    this.threads = this.inline
-      ? 1
-      : Math.max(1, Math.min(opts.total, opts.threads ?? Math.min(8, cores - 1)));
+    this.threads = this.inline ? 1 : Math.max(1, Math.min(opts.total, opts.threads ?? defaultThreads(cores)));
     if (make === null) {
       setTimeout(() => this.inlineStep(), 0);
       return;

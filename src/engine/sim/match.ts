@@ -3,6 +3,7 @@ import { GRAVITY, solveShot, type ShotSolution } from './ballistics.ts';
 import { expandDefinition, type ExpandedGame, type XEndgame, type XStation, type XTarget } from './expand.ts';
 import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from './faults.ts';
 import { ScoreLedger } from './ledger.ts';
+import { bodyEpoch, stepWorld } from './bodyState.ts';
 import {
   clamp,
   eulerToQuat,
@@ -126,8 +127,35 @@ export class Robot {
     readonly body: RAPIER.RigidBody,
   ) {}
 
+  // Pose and velocity as Rapier reports them, cached until the physics state can have changed
+  // (`bodyEpoch`, see bodyState.ts). The bots read these thousands of times per step.
+  private poseAt = -1;
+  private px = 0;
+  private py = 0;
+  private pz = 0;
+  private yawAt = -1;
+  private pyaw = 0;
+  private velAt = -1;
+  private pvx = 0;
+  private pvy = 0;
+
+  private readPose(): void {
+    const t = this.body.translation();
+    this.px = t.x;
+    this.py = t.y;
+    this.pz = t.z;
+    this.poseAt = bodyEpoch;
+  }
+  private readVel(): void {
+    const v = this.body.linvel();
+    this.pvx = v.x;
+    this.pvy = v.y;
+    this.velAt = bodyEpoch;
+  }
+
   get x(): number {
-    return this.body.translation().x;
+    if (this.poseAt !== bodyEpoch) this.readPose();
+    return this.px;
   }
 
   /** Broken down or in a short outage at match time `t`: no driving, no mechanisms. */
@@ -140,30 +168,41 @@ export class Robot {
     return !this.mechDown && !this.isOut(t);
   }
   get y(): number {
-    return this.body.translation().y;
+    if (this.poseAt !== bodyEpoch) this.readPose();
+    return this.py;
   }
   get z(): number {
-    return this.body.translation().z;
+    if (this.poseAt !== bodyEpoch) this.readPose();
+    return this.pz;
   }
   get yaw(): number {
-    return yawFromQuat(this.body.rotation());
+    if (this.yawAt !== bodyEpoch) {
+      this.pyaw = yawFromQuat(this.body.rotation());
+      this.yawAt = bodyEpoch;
+    }
+    return this.pyaw;
   }
   get vx(): number {
-    return this.body.linvel().x;
+    if (this.velAt !== bodyEpoch) this.readVel();
+    return this.pvx;
   }
   get vy(): number {
-    return this.body.linvel().y;
+    if (this.velAt !== bodyEpoch) this.readVel();
+    return this.pvy;
   }
   get speed(): number {
-    const v = this.body.linvel();
-    return Math.hypot(v.x, v.y);
+    if (this.velAt !== bodyEpoch) this.readVel();
+    return Math.hypot(this.pvx, this.pvy);
   }
+  private totalCap: number | undefined;
   get totalCapacity(): number {
-    return this.archetype.totalCapacity ?? Object.values(this.archetype.capacity).reduce((a, b) => a + b, 0);
+    return (this.totalCap ??=
+      this.archetype.totalCapacity ?? Object.values(this.archetype.capacity).reduce((a, b) => a + b, 0));
   }
   canHold(type: string): boolean {
     const cap = this.archetype.capacity[type] ?? 0;
-    const n = this.held.filter((h) => h === type).length;
+    let n = 0;
+    for (const h of this.held) if (h === type) n++;
     return n < cap && this.held.length < this.totalCapacity;
   }
   /** Seconds to place at `target`, or null if this robot can't place there. */
@@ -200,9 +239,21 @@ export class Piece {
     readonly body: RAPIER.RigidBody,
     readonly radius: number,
   ) {}
+  // Cached like Robot's pose (see bodyState.ts).
+  private poseAt = -1;
+  private px = 0;
+  private py = 0;
+  private pz = 0;
+  /** A fresh object each call (callers may keep or change it). */
   get position(): Vec3 {
-    const t = this.body.translation();
-    return { x: t.x, y: t.y, z: t.z };
+    if (this.poseAt !== bodyEpoch) {
+      const t = this.body.translation();
+      this.px = t.x;
+      this.py = t.y;
+      this.pz = t.z;
+      this.poseAt = bodyEpoch;
+    }
+    return { x: this.px, y: this.py, z: this.pz };
   }
 }
 
@@ -317,6 +368,8 @@ export class Match {
   readonly stationUsed = new Map<string, number>();
   private readonly stationCooldown = new Map<string, number>();
   private readonly recycleQueue: Array<{ piece: Piece; target: XTarget }> = [];
+  /** cos / sin of each aperture's -yaw (constant), for the per-step scoring check. */
+  private readonly apertureTrig = new Map<object, [number, number]>();
   private readonly vars: Record<string, unknown> = {};
   private readonly rulesCtx: RulesContext;
   private accumulator = 0;
@@ -655,7 +708,7 @@ export class Match {
   step(): void {
     const dt = SIM_DT;
     if (this.phase === 'pre' || this.phase === 'post') {
-      this.world.step();
+      stepWorld(this.world);
       return;
     }
     this.time += dt;
@@ -684,7 +737,7 @@ export class Match {
     }
     for (const r of this.robots) this.drive(r, dt, enabled);
 
-    this.world.step();
+    stepWorld(this.world);
 
     this.updatePieceDamping();
     this.trackTouches();
@@ -1083,7 +1136,7 @@ export class Match {
   private updatePieceDamping(): void {
     for (const p of this.pieces) {
       if (p.status !== 'field') continue;
-      const grounded = p.body.translation().z < p.radius + 0.05;
+      const grounded = p.position.z < p.radius + 0.05;
       if (grounded !== p.grounded) {
         p.grounded = grounded;
         p.body.setLinearDamping(grounded ? 0.6 : 0);
@@ -1092,13 +1145,17 @@ export class Match {
   }
 
   private trackTouches(): void {
-    for (const r of this.robots) {
-      const reach = Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.05;
-      for (const p of this.pieces) {
-        if (p.status !== 'field') continue;
-        const pos = p.position;
+    // Piece by piece (each position read once); robots in id order, so the last robot touching a
+    // piece still gets the touch, as when the loops were the other way around.
+    const reach = this.robots.map(
+      (r) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.05,
+    );
+    for (const p of this.pieces) {
+      if (p.status !== 'field') continue;
+      const pos = p.position;
+      for (const r of this.robots) {
         if (
-          Math.hypot(pos.x - r.x, pos.y - r.y) < reach + p.radius &&
+          Math.hypot(pos.x - r.x, pos.y - r.y) < reach[r.id]! + p.radius &&
           pos.z < r.archetype.frame.height + 0.3
         ) {
           p.lastTouch = r.id;
@@ -1117,8 +1174,9 @@ export class Match {
         if (!ap || !ts.enabled || !ts.target.accepts.includes(p.type.id)) continue;
         const dx = pos.x - ap.center.x;
         const dy = pos.y - ap.center.y;
-        const c = Math.cos(-(ap.yaw ?? 0));
-        const s = Math.sin(-(ap.yaw ?? 0));
+        let trig = this.apertureTrig.get(ap);
+        if (!trig) this.apertureTrig.set(ap, (trig = [Math.cos(-(ap.yaw ?? 0)), Math.sin(-(ap.yaw ?? 0))]));
+        const [c, s] = trig;
         const lx = dx * c - dy * s;
         const ly = dx * s + dy * c;
         if (

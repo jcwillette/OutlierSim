@@ -10,8 +10,9 @@ import {
   type RobotController,
 } from '../sim/match.ts';
 import { clamp, pointInRegion, regionCenter, regionOutline, wrapAngle } from '../sim/math.ts';
-import type { Alliance, AllianceStrategy, Region2D, RobotRole, Vec2 } from '../sim/types.ts';
+import type { Alliance, AllianceStrategy, GameDefinition, Region2D, RobotRole, Vec2 } from '../sim/types.ts';
 import { NavGrid, type DynamicObstacle } from './navgrid.ts';
+import { PointIndex } from './spatial.ts';
 
 /**
  * Generic bot AI that plays any GameDefinition. Utility-based cycle planner:
@@ -64,8 +65,6 @@ interface Option {
 // ------------------------------------------------------------------ shared per-match state
 
 interface MatchAI {
-  grids: Map<number, NavGrid>;
-  shotSpots: Map<string, Vec2[]>;
   claims: Record<Alliance, Map<string, number>>;
   /** Where each bot is headed to stand (score / load / endgame spot), shared within its alliance. */
   intents: Record<Alliance, Map<number, Vec2>>;
@@ -76,8 +75,6 @@ function aiFor(m: Match): MatchAI {
   let s = matchAI.get(m);
   if (!s) {
     s = {
-      grids: new Map(),
-      shotSpots: new Map(),
       claims: { blue: new Map(), red: new Map() },
       intents: { blue: new Map(), red: new Map() },
     };
@@ -86,25 +83,36 @@ function aiFor(m: Match): MatchAI {
   return s;
 }
 
+/**
+ * Nav grids per game definition and robot size. A grid depends only on the field geometry, so
+ * every match of the same definition (e.g. a Monte Carlo run) shares one instead of rebuilding it.
+ */
+const navGrids = new WeakMap<GameDefinition, Map<number, NavGrid>>();
+
 function gridFor(m: Match, r: Robot): NavGrid {
-  const ai = aiFor(m);
   const inflate =
     Math.round((Math.max(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.08) * 20) / 20;
-  let g = ai.grids.get(inflate);
+  let grids = navGrids.get(m.def);
+  if (!grids) navGrids.set(m.def, (grids = new Map()));
+  let g = grids.get(inflate);
   if (!g) {
     g = new NavGrid(m.game, inflate);
-    ai.grids.set(inflate, g);
+    grids.set(inflate, g);
   }
   return g;
 }
 
+/** Shot spots per game definition, by `archetype id|target id` (static geometry, like nav grids). */
+const shotSpotSets = new WeakMap<GameDefinition, Map<string, PointIndex>>();
+
 /** Spots from which this robot's shooter can reach `target` (static geometry only). */
-function shotSpots(m: Match, r: Robot, t: XTarget): Vec2[] {
-  const ai = aiFor(m);
+function shotSpots(m: Match, r: Robot, t: XTarget): PointIndex {
+  let sets = shotSpotSets.get(m.def);
+  if (!sets) shotSpotSets.set(m.def, (sets = new Map()));
   const key = `${r.archetype.id}|${t.id}`;
-  let spots = ai.shotSpots.get(key);
-  if (spots) return spots;
-  spots = [];
+  const cached = sets.get(key);
+  if (cached) return cached;
+  const spots: Vec2[] = [];
   const sh = r.archetype.shooter;
   if (sh && t.aperture) {
     const aim = t.aimPoint ?? t.aperture.center;
@@ -131,8 +139,9 @@ function shotSpots(m: Match, r: Robot, t: XTarget): Vec2[] {
       }
     }
   }
-  ai.shotSpots.set(key, spots);
-  return spots;
+  const set = new PointIndex(spots);
+  sets.set(key, set);
+  return set;
 }
 
 // ------------------------------------------------------------------ brain
@@ -367,15 +376,7 @@ export class BotBrain implements RobotController {
         consider(pts, this.travelBetween(r, from, regionCenter(t.place.zone)) + placeTime);
       const sh = r.archetype.shooter;
       if (t.aperture && sh?.pieceTypes.includes(type)) {
-        let bestD = Infinity;
-        let spot: Vec2 | null = null;
-        for (const s of shotSpots(m, r, t)) {
-          const d = Math.hypot(s.x - from.x, s.y - from.y);
-          if (d < bestD) {
-            bestD = d;
-            spot = s;
-          }
-        }
+        const spot = shotSpots(m, r, t).nearest(from);
         if (spot) consider(pts, this.travelBetween(r, from, spot) + sh.reloadSec + 0.4);
       }
     }
@@ -488,16 +489,7 @@ export class BotBrain implements RobotController {
       }
       const sh = r.archetype.shooter;
       if (t.aperture && sh && r.held.some((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h))) {
-        const spots = shotSpots(m, r, t);
-        let best: Vec2 | null = null;
-        let bestD = Infinity;
-        for (const s of spots) {
-          const d = Math.hypot(s.x - r.x, s.y - r.y);
-          if (d < bestD) {
-            bestD = d;
-            best = s;
-          }
-        }
+        const best = shotSpots(m, r, t).nearest(r);
         if (best) {
           const aim = t.aimPoint ?? t.aperture.center;
           const nShots = r.held.filter((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h)).length;
