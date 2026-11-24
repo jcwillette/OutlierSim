@@ -76,6 +76,10 @@ export class Referee {
   /** Each robot's heading cosine and sine this tick, by robot id. */
   private readonly cos: number[] = [];
   private readonly sin: number[] = [];
+  /** Each robot's half diagonal (constant), by robot id. */
+  private readonly halfDiag: number[];
+  /** No gap at or beyond this matters: contact and pin release are both closer. */
+  private readonly farGap: number;
 
   constructor(private readonly m: Match) {
     this.contact = (m.def.fouls.contact ?? []).map((rule) => {
@@ -84,6 +88,11 @@ export class Referee {
       return { rule, zones: { blue: zones('blue'), red: zones('red') } };
     });
     this.pinning = m.def.fouls.pinning;
+    this.halfDiag = m.robots.map((r) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2);
+    this.farGap = Math.max(
+      CONTACT_GAP,
+      this.pinning ? (this.pinning.releaseGap ?? DEFAULT_PIN_RELEASE_GAP) : 0,
+    );
   }
 
   /** Whether the game declares anything for the referee to call. */
@@ -100,12 +109,19 @@ export class Referee {
       this.cos[r.id] = Math.cos(yaw);
       this.sin[r.id] = Math.sin(yaw);
     }
-    const { cos, sin } = this;
+    const { cos, sin, halfDiag } = this;
     for (const a of m.robots) {
       if (a.alliance !== 'blue') continue;
       for (const b of m.robots) {
         if (b.alliance !== 'red') continue;
-        const gap = gapWith(a, b, cos[a.id]!, sin[a.id]!, cos[b.id]!, sin[b.id]!);
+        // One of each box's side normals is within 45 deg of the line between the centers, so the
+        // separating-axis gap is at least 0.7 x center distance - both half diagonals. Clearly
+        // beyond every distance that matters, skip the box test (the answers would be the same).
+        const d = Math.hypot(b.x - a.x, b.y - a.y);
+        const gap =
+          0.7 * d - halfDiag[a.id]! - halfDiag[b.id]! > this.farGap + 1e-6
+            ? Infinity
+            : gapWith(a, b, cos[a.id]!, sin[a.id]!, cos[b.id]!, sin[b.id]!);
         if (gap < CONTACT_GAP) this.contactFouls(a, b);
         if (this.pinning) {
           this.pin(this.pinning, a, b, gap, dt);

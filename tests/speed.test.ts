@@ -4,7 +4,7 @@ import { attachBots, nearZone, zoneCheck } from '../src/engine/ai/bot.ts';
 import { NavGrid, obstacleFootprints, type DynamicObstacle } from '../src/engine/ai/navgrid.ts';
 import { PointIndex } from '../src/engine/ai/spatial.ts';
 import { stepWorld } from '../src/engine/sim/bodyState.ts';
-import { Match, initPhysics } from '../src/engine/sim/index.ts';
+import { Match, initPhysics, robotGap } from '../src/engine/sim/index.ts';
 import { distToRegion, makeRng, pointInRegion, yawFromQuat } from '../src/engine/sim/math.ts';
 import { findGame } from '../src/games/index.ts';
 import type { Region2D, Vec2 } from '../src/engine/sim/types.ts';
@@ -312,6 +312,24 @@ describe('protected-zone checks', () => {
           expect(nearZone(p, z, margin)).toBe(plain);
         }
       }
+    }
+  });
+});
+
+describe('referee far-pair shortcut', () => {
+  it('the box gap is never below 0.7 x center distance minus both half diagonals', () => {
+    const m = new Match(cu, { seed: 1, archetypes: { 0: 'defender', 3: 'kitbot' } });
+    const [a, b] = [m.robots[0]!, m.robots[3]!];
+    const half = (r: typeof a) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2;
+    const rand = makeRng(4);
+    for (let i = 0; i < 3000; i++) {
+      for (const r of [a, b]) {
+        r.setPosition({ x: 4 + rand() * 8, y: 1 + rand() * 6, z: r.archetype.frame.height / 2 });
+        const yaw = rand() * 2 * Math.PI;
+        r.body.setRotation({ x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) }, true);
+      }
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      expect(robotGap(a, b)).toBeGreaterThanOrEqual(0.7 * d - half(a) - half(b) - 1e-9);
     }
   });
 });
