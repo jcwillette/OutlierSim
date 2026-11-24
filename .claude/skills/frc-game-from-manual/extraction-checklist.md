@@ -8,7 +8,7 @@ Confidence: **high** (stated explicitly), **med** (derived from a drawing or sev
 | Item                                                 | Value | Notes |
 | ---------------------------------------------------- | ----- | ----- |
 | Manual revision and date (cover page / footer)       |       |       |
-| Manual SHA-256 (`sha256sum work/<id>/manual.pdf`)    |       |       |
+| Manual SHA-256 (`work/<id>/manual/meta.txt`)         |       |       |
 | Team Updates read (numbers and dates)                |       |       |
 | Reveal video (file name, length), or "not available" |       |       |
 | Field drawings / AprilTag layout JSON used, if any   |       |       |
