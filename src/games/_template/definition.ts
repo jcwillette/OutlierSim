@@ -1,4 +1,5 @@
-import type { GameDefinition, Region2D } from '../../engine/sim/types.ts';
+import { IN, LB, cite, feet, rect } from '../../engine/sim/authoring.ts';
+import type { GameDefinition } from '../../engine/sim/types.ts';
 // import { GEARINGS, MOTORS, driveFor, onFieldMass, swerve, tank } from '../../engine/sim/drivetrain.ts';
 // import { rules } from './rules.ts';   // only if the game needs a custom mechanic
 
@@ -8,18 +9,13 @@ import type { GameDefinition, Region2D } from '../../engine/sim/types.ts';
  * simplifications.
  *
  * Coordinates: WPILib field frame, meters. BLUE half authored; red derived by `field.symmetry`.
+ * Keep the manual's own figures in the expressions (`feet(54, 3.25)`, `14.25 * IN`) so a reviewer
+ * can check them against the page.
  */
 
-const IN = 0.0254; // inches -> meters
-const LB = 0.4536; // pounds -> kg
-const L = 0; // TODO field length (m)
-const W = 0; // TODO field width (m)
-const rect = (x0: number, y0: number, x1: number, y1: number): Region2D => ({
-  kind: 'rect',
-  min: { x: x0, y: y0 },
-  max: { x: x1, y: y1 },
-});
-const M = (page: number | string, what = '') => `Manual p.${page}${what ? ', ' + what : ''}`;
+const M = cite('Manual'); // M(47, 'Table 6-2') -> "Manual p.47, Table 6-2"
+const L = feet(0); // TODO field length, e.g. feet(54, 3.25)
+const W = feet(0); // TODO field width
 
 export const definition: GameDefinition = {
   id: '<year>-<slug>',
@@ -36,6 +32,8 @@ export const definition: GameDefinition = {
     elements: [
       // { id: 'hub', name: 'Hub', side: 'blue', shape: { kind: 'box', size: { x, y, z } },
       //   position: { x, y, z: height / 2 }, color: 'alliance', source: M(0, 'Figure 5-x') },
+      // Ramps and platforms robots drive onto: a sloped `hull` at the manual's height with
+      // nav: 'ramp'. Guards robots can't cross: nav: 'wall'. Structures robots fit under: nav: 'none'.
     ],
     zones: [
       // { id: 'start', name: 'Starting zone', side: 'blue', region: rect(0, 0, x, W), source: M(0) },
@@ -56,8 +54,24 @@ export const definition: GameDefinition = {
   stations: [],
   endgame: [],
   awards: [],
-  rankingPoints: { win: 3, tie: 1, bonuses: [] },
-  fouls: { minor: 0, major: 0, source: M(0) },
+  rankingPoints: {
+    win: 3,
+    tie: 1,
+    bonuses: [
+      // { id: 'pieces', name: '<RP name>', rp: 1, kind: 'piecesAtLeast', count: 20, tags: ['<tag>'] },
+      // { id: 'climb', name: '<RP name>', rp: 1, kind: 'pointsAtLeast', points: 14,
+      //   sources: ['<endgame action id>', '<award id>'], source: M(0) },
+    ],
+  },
+  fouls: {
+    minor: 0,
+    major: 0,
+    // Protected zones (quote the rule: "any part of", "regardless of who initiates"):
+    // contact: [{ id: 'G4xx', name: "contact in the opponent's <zone>", zones: ['<zone id>'],
+    //   inside: 'intruder', severity: 'minor', repeatSec: 3, source: M(0, 'G4xx') }],
+    // pinning: { id: 'G4xx', countSec: 5, releaseGap: feet(6), repinSec: 3, source: M(0, 'G4xx') },
+    source: M(0),
+  },
   archetypes: [
     // {
     //   id: 'allround', name: 'All-rounder', description: 'What students should picture.',
@@ -66,10 +80,14 @@ export const definition: GameDefinition = {
     //   mass: onFieldMass(120),
     //   drive: driveFor(swerve(MOTORS.krakenX60, GEARINGS.mk4L2, 120), 9),
     //   capacity: { piece: 1 }, intake: { pieceTypes: ['piece'], timeSec: 0.3 },
-    //   place: { L1: 0.6 }, endgame: { climb: 5 },
+    //   place: { L1: 0.6 }, endgame: { climb: 5 }, reliability: 0.95,
     // },
   ],
   defaultArchetype: 'allround',
+  lineups: [
+    // { id: 'powerhouse', name: 'Powerhouse', description: 'Three all-rounders.',
+    //   robots: [{ archetype: 'allround' }, { archetype: 'allround' }, { archetype: 'allround' }] },
+  ],
   // rules,
   botHints: {},
 };

@@ -2,6 +2,8 @@ export * from './types.ts';
 export * from './match.ts';
 export { PhysicsFrame } from './frame.ts';
 export { faultRates } from './faults.ts';
+export { CONTACT_GAP, robotGap, robotInZone } from './referee.ts';
+export * as authoring from './authoring.ts';
 export * as drivetrain from './drivetrain.ts';
 export * from './expand.ts';
 export * from './validate.ts';

@@ -22,6 +22,9 @@ npm run sim -- --game 0000-reference --matches 20 [--difficulty hard] [--archety
                                      # headless bot-vs-bot matches (~0.6-0.9 s each) -> score/RP/piece stats, win rates
 npm run bench [-- --game <id>] [--matches 6] [--json before.json | --compare before.json]
                                      # ms per match + a fingerprint of every match; --compare fails if any match changed (ADR 0006)
+npm run plausibility -- --game <id> [--matches 12] [--difficulties easy,normal,hard] [--lineups all|a,b] [--against <lineup>] [--md out.md]
+                                     # validation + bots' geometry audit + piece ceiling + every lineup vs itself in workers -> SOURCES.md table + checks
+                                     # (--against: every lineup vs one lineup -> head-to-head table)
 npm run test:e2e                     # build + Playwright: every game loads, plays, spectates, runs win-probability workers; screenshots in test-results/
 npm run calibrate -- --game <id> [--events 2024casj,...] [--matches 30] [--difficulty hard] [--write | --dump]
                                      # ONLY when the owner asks: compare sim vs real TBA matches
@@ -40,26 +43,31 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - Step the physics with `stepWorld(world)` (`bodyState.ts`), not `world.step()`; it skips Rapier's per-step soft-body bookkeeping. `Robot` pose / velocity getters and `Piece.position` are cached per `bodyEpoch`, which advances on every step and every `RigidBody` mutator call (wrapped once in `bodyState.ts`), so setting a body directly (tests do) is always seen.
   - Rapier's world is not the field frame (`PhysicsFrame` in `frame.ts`, ADR 0007). It is centered on the field, so float32 rounds both halves alike, and on even seeds it is the field's mirror / rotation image (`MatchOptions.flipPhysics`), so Rapier's handedness favors neither end over a run. Read poses through `Robot` / `Piece` getters and move bodies with `setPosition` / `setVelocity` (field coordinates). Raw `body` calls see physics coordinates; go through `match.physics` if you must use them.
   - **Must never import Three.js, the DOM, `ui/`, `input/` or `render/`.** ESLint `no-restricted-imports` enforces this for `sim/`, `ai/` and `games/`. That rule is what lets full matches run in Node for tests and calibration.
+  - Fouls a game declares (`fouls.contact` protected-zone contact, `fouls.pinning`) are called by `Referee` (`referee.ts`) every tick of auto and teleop, on bumper contact (`robotGap` under `CONTACT_GAP`, 3 cm). A pin also needs the pressed robot to be up against a wall, an element or another robot beyond it (read from Rapier's contacts, never changing them). ADR 0008. Only what can't be declared goes through `ctx.foul()` in `rules.ts`.
+  - Ramps: a `hull` with `nav: 'ramp'` gets its floor edges continued 3 cm below the floor in physics (`sinkRampBase`), so the pitch-locked box robots can drive up from any speed.
+  - Endgame attempts roll `RobotArchetype.endgameSuccess` (default 1: no roll, so no match changes) and earn `EndgameAction.fallback` on a failure.
+  - `authoring.ts` has the helpers definitions use: `IN`, `FT`, `LB`, `DEG`, `feet()`, `rect()`, `poly()`, `circle()`, `cite()`.
 - `src/engine/ai/`: the generic bot AI. It is headless and drives robots only through `RobotCommand`, the same as the player, so it never cheats.
-  - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m. Bots use it through `AllianceNav`: each alliance plans on a grid laid out from its own wall, so red's half is never a slightly different maze (cell alignment, tie-breaks). Fixed turn or side preferences go through `handedness()`. Both are ADR 0007. Nav grids and shot spots (`PointIndex`, exact nearest-spot queries) are cached per `GameDefinition` object and shared by every match of it, so never mutate a definition: `applyTuning` returns a copy.
+  - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m (`FieldElement.nav` overrides: `'wall'`, `'ramp'`, `'none'`). Bots use it through `AllianceNav`: each alliance plans on a grid laid out from its own wall, so red's half is never a slightly different maze (cell alignment, tie-breaks). Fixed turn or side preferences go through `handedness()`. Both are ADR 0007. Nav grids and shot spots (`PointIndex`, exact nearest-spot queries) are cached per `GameDefinition` object and shared by every match of it, so never mutate a definition: `applyTuning` returns a copy.
   - `BotBrain` is a utility planner. Each option is scored as points per second over the whole cycle (fetch, travel to score, action time), with hysteresis.
   - It picks shot spots precomputed with `solveShot`, uses approach headings so intakes can reach pieces, makes time-boxed endgame decisions, and plays defense when `botHints.defenseShare` > 0.
-  - Teammates coordinate like an alliance on a radio:
+  - Teammates coordinate like an alliance on a radio (`MatchAI` blackboard):
     - soft claims on targets, pieces and stations
     - shared intents, so two bots don't head for overlapping spots
     - paths that avoid parked robots (`NavGrid.findPath` dynamic obstacles)
-    - yielding in lane conflicts (`yieldPriority`)
+    - yielding in lane conflicts (`yieldPriority`), and making room when standing on a higher-priority teammate's announced spot (`makeRoom`)
   - Opponents defend opportunistically (`harassOption`, `botHints.defenseOpportunism`).
+  - Protected zones come from the declared contact fouls unless `botHints.protectedZones` / `endgameProtectedZones` override them. Bots keep their whole body out of the opponent's (path penalty inflated by the robot size), skip loose pieces there, and steer wider around opponents while partly inside one.
   - Defense is clean (`worthDefending`, `watchPin`):
     - it never marks an opposing defender;
     - it keeps 0.6 m from the opponent's `botHints.protectedZones` (plus `endgameProtectedZones` in the endgame);
-    - it breaks off pins after 3 s and waits 4 s before re-engaging.
+    - it breaks off pins after 3 s (2 s short of a shorter `fouls.pinning.countSec`), backs off past the pin release gap (`releaseGap`, default 6 ft) and waits 4 s (or 1 s past a longer `repinSec`) before re-engaging.
   - Bots have tunnel-vision lapses (`SKILL.lapse` plus robot unreliability), where they ignore teammates.
   - `attachBots` takes per-robot `roles` and per-alliance `strategies` (`AllianceStrategy`).
 - Imperfect robots: `MatchOptions.breakdowns` rolls each robot's breakdown, mechanism failure and power losses from `RobotArchetype.reliability` (seeded). Breakdowns and mechanism failures can clear (more often for reliable robots). `Robot.isOut(t)` blocks driving and mechanisms; `Robot.mechDown` blocks only game-piece handling (endgame still works), and bots with one play defense. It's off by default in the engine (so tests stay deterministic), on in the app (except the player's robot, by default) and in `npm run sim` (`--perfect` turns it off).
   - Ramps (drivable elements 0.05-0.2 m tall) are slow ground, both in A* cost and in bot speed.
   - `attachBots()` wires up a match. Difficulty (`SKILL`) only changes speed, think rate, utility noise and dwell.
-  - If bots can't score in a new game, the definition is usually wrong (unreachable zones, impossible shots). `tests/games.test.ts` checks for this.
+  - If bots can't score in a new game, the definition is usually wrong (unreachable zones, impossible shots). `auditDefinition` (`ai/audit.ts`, run for every game by `tests/audit.test.ts` and by `npm run plausibility`) names each target, shot, station, endgame zone or staged piece the bots can't use, with the reason; `tests/games.test.ts` checks that bots score at all. `findShotSpots` and `approachHeading` are the bots' own spot logic, shared with the audit.
 - `src/engine/render/`, `src/engine/input/`, `src/ui/`: browser-only.
   - `FieldView` builds the Three.js scene from the `ExpandedGame` and copies sim state into it each frame (`sync`). It never mutates the match.
   - `CameraRig` has the driver-station, chase and overhead views. It also supplies `driveYaw`, which makes `PlayerController` field-oriented from the active view.
@@ -69,15 +77,16 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - The menu's alliance composition (preset, strategy, robot and role per slot) lives in `ui/lineup.ts` (DOM-free, unit-tested). Games offer presets via `GameDefinition.lineups`.
   - Win probability (spectator menu, ADR 0005): `ui/montecarlo.ts` (DOM-free, unit-tested) plays one `MonteCarloSpec` per seed (`runMatchup`) and aggregates (`summarize`, Wilson CI, margin histogram). `ui/montecarloPool.ts` (`MonteCarloRun`) fans seeds out to `ui/montecarlo.worker.ts` Web Workers. Random slots are dealt from `dealRng(seed)`, so `App.start(seed)` replays a sampled match-up exactly. `window.outlierSim.mc` is the latest run. Workers default to one per logical core (`defaultThreads`, max 16); `?threads=N` overrides it for measuring.
   - The menu's "Robot & field tuning" lives in `ui/tuning.ts` (DOM-free, unit-tested): per robot type and per human player station overrides in display units (ft, lb, s, %). `applyTuning(def, tuning)` returns a tuned copy of the definition, which `App.start` (and `npm run sim --tuning`) pass to `Match`. Explicit fault rates go in `RobotArchetype.faults` and override `faultRates()` (`sim/faults.ts`).
-  - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`. The bot AI uses the same helpers.
+  - The HUD's context hints come from the `Match` query helpers: `placeOptions`, `shotOptions`, `availableEndgame`, `stationsFor`, `contactWarnings` (where touching an opponent would draw one of the game's declared contact fouls) and `pinCounts` (the referee's pin count, shown like a referee's hand count). The bot AI uses the first four.
 - `src/games/<year>-<slug>/`: one folder per season.
   - `definition.ts`: the `GameDefinition` data (field, elements, pieces, scoring targets, zones, timing, endgame, RPs, robot archetypes).
     - Archetype drive limits and mass come from `src/engine/sim/drivetrain.ts`: `drive: driveFor(swerve(MOTORS.x, GEARINGS.y, robotLb, { tipping }), maxOmega)` and `mass: onFieldMass(robotLb)`. Don't hand-type m/s numbers.
   - Optional `rules.ts` hooks, for mechanics the schema can't express.
   - `botHints` in the definition: optional AI strategy hints (target weights, endgame preference, defense share).
+  - Declarative before custom: protected zones and pins in `fouls`, RPs as `piecesAtLeast` / `endgamePointsAtLeast` / `pointsAtLeast` (ledger sources by base id, `sourceBase()`), nav hints on elements. `custom` RPs and `rules.ts` are for what's truly game-specific.
   - `SOURCES.md`: cites the manual for every number.
   - Only when the owner asks for a real-match comparison: `calibration.ts` (a `CalibrationSpec` mapping TBA `score_breakdown` fields to sim metrics, copied from `src/games/_template-calibration/` and registered next to the definition in `src/games/index.ts`) and the generated `CALIBRATION.md`.
-  - `2023-chargedup` (blind stress test) is the worked example of a node grid with adjacency bonuses (`layout.ts`), shelf stations, auto docking and a one-at-a-time Charge Station.
+  - `2023-chargedup` (blind stress test) is the worked example of a node grid with adjacency bonuses (`layout.ts`), shelf stations, auto docking, a one-at-a-time Charge Station at its real height (`nav: 'ramp'`), declared G207/G202 fouls and a `pointsAtLeast` RP.
   - `src/games/_template/` is the typechecked starter, and `_template-calibration/` the opt-in calibration starter. Neither is registered.
   - Every game is registered in `src/games/index.ts`.
 
@@ -88,9 +97,10 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - Intake is a sensor volume at the front of the robot.
   - Placing and climbing are timed actions inside a target or zone.
     - An endgame action finished in auto (an auto dock) releases the robot when teleop starts.
+    - An attempt counts with probability `RobotArchetype.endgameSuccess` (default 1, no roll); a failure earns the action's `fallback`, if any.
     - `oneAtATime` actions make teammates board a shared platform one by one.
   - Shooting spawns a real ballistic projectile.
-  - Human player shelves: `handoffHeight` needs a tall enough intake, and `handoffSec` is the time to line up and grab.
+  - Human player shelves: `handoffHeight` needs a tall enough intake, and `handoffSec` is the time to line up and grab. A station with `choice` hands out the piece the robot asks for (`RobotCommand.pieceType`; players switch with F / gamepad X, `Match.choiceTypes`); otherwise the first type the robot can hold.
   - A target's `display` point draws scored pieces in place. Without one, scored pieces are hidden.
   - When a new game needs something the schema can't express, put it in that game's `rules.ts` first. Promote it into the engine only when a second game needs it.
 - **Rapier**: call `await RAPIER.init()` before creating a world (browser and Node).

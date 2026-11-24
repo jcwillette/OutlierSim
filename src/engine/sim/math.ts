@@ -97,6 +97,21 @@ export function regionOutline(r: Region2D): Vec2[] {
   }
 }
 
+const outlines = new WeakMap<Region2D, Vec2[]>();
+
+/**
+ * Distance from `p` to a region's outline (circles via their 24-gon outline); 0 on the outline. The
+ * outline is computed once per region object: regions, like the definitions they come from, are
+ * never mutated.
+ */
+export function distToRegion(p: Vec2, region: Region2D): number {
+  const pts = outlineOf(region);
+  let best = Infinity;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++)
+    best = Math.min(best, distToSegment(p, pts[j]!, pts[i]!));
+  return best;
+}
+
 /** Corners of a robot footprint. */
 export function footprint(x: number, y: number, yaw: number, length: number, width: number): Vec2[] {
   const c = Math.cos(yaw);
@@ -109,6 +124,101 @@ export function footprint(x: number, y: number, yaw: number, length: number, wid
     [-hl, -hw],
     [-hl, hw],
   ].map(([a, b]) => ({ x: x + a! * c - b! * s, y: y + a! * s + b! * c }));
+}
+
+/**
+ * Whether a footprint (a convex polygon, corners in order, e.g. `footprint()`) and a region share any
+ * point: a corner in the region, a region corner in the footprint, or crossing edges. Exact for
+ * every region kind, so a zone corner poking into a robot's side counts, and so does a zone
+ * narrower than the robot.
+ */
+export function footprintOverlaps(corners: readonly Vec2[], region: Region2D): boolean {
+  for (const c of corners) if (pointInRegion(c, region)) return true;
+  if (region.kind === 'circle') {
+    if (inConvex(region.center, corners, false)) return true;
+    for (let i = 0, j = corners.length - 1; i < corners.length; j = i++)
+      if (distToSegment(region.center, corners[j]!, corners[i]!) <= region.radius) return true;
+    return false;
+  }
+  const outline = outlineOf(region);
+  for (const q of outline) if (inConvex(q, corners, false)) return true;
+  return edgesMeet(corners, outline, false);
+}
+
+/**
+ * Whether a footprint (convex, corners in order) lies entirely inside a region, its outline counting
+ * as inside. Rects and circles are convex, so the corners decide; a polygon zone must also have no
+ * corner inside the footprint and no edge crossing it (a notch reaching in).
+ */
+export function footprintInside(corners: readonly Vec2[], region: Region2D): boolean {
+  for (const c of corners) if (!pointInRegion(c, region)) return false;
+  if (region.kind !== 'poly') return true;
+  const outline = outlineOf(region);
+  for (const q of outline) if (inConvex(q, corners, true)) return false;
+  return !edgesMeet(corners, outline, true);
+}
+
+function outlineOf(region: Region2D): Vec2[] {
+  let pts = outlines.get(region);
+  if (!pts) outlines.set(region, (pts = regionOutline(region)));
+  return pts;
+}
+
+/** Twice the signed area of triangle abc (> 0 when c is left of a -> b). */
+function orient(a: Vec2, b: Vec2, c: Vec2): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+/** `p` is inside the convex polygon `poly` (either winding); `strict` leaves out its outline. */
+function inConvex(p: Vec2, poly: readonly Vec2[], strict: boolean): boolean {
+  let pos = false;
+  let neg = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const o = orient(poly[j]!, poly[i]!, p);
+    if (o > 0) pos = true;
+    else if (o < 0) neg = true;
+    else if (strict) return false;
+    if (pos && neg) return false;
+  }
+  return true;
+}
+
+/**
+ * Some edge of polygon `a` meets some edge of polygon `b`: crosses it, or with `!proper` also
+ * touches it (an end on the other edge, or overlapping collinear edges).
+ */
+function edgesMeet(a: readonly Vec2[], b: readonly Vec2[], proper: boolean): boolean {
+  for (let i = 0, j = a.length - 1; i < a.length; j = i++)
+    for (let k = 0, l = b.length - 1; k < b.length; l = k++)
+      if (segmentsMeet(a[j]!, a[i]!, b[l]!, b[k]!, proper)) return true;
+  return false;
+}
+
+function segmentsMeet(p: Vec2, q: Vec2, r: Vec2, s: Vec2, proper: boolean): boolean {
+  const d1 = orient(r, s, p);
+  const d2 = orient(r, s, q);
+  const d3 = orient(p, q, r);
+  const d4 = orient(p, q, s);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  if (proper) return false;
+  const on = (a: Vec2, b: Vec2, c: Vec2) =>
+    Math.min(a.x, b.x) <= c.x &&
+    c.x <= Math.max(a.x, b.x) &&
+    Math.min(a.y, b.y) <= c.y &&
+    c.y <= Math.max(a.y, b.y);
+  return (
+    (d1 === 0 && on(r, s, p)) ||
+    (d2 === 0 && on(r, s, q)) ||
+    (d3 === 0 && on(p, q, r)) ||
+    (d4 === 0 && on(p, q, s))
+  );
+}
+
+function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1e-9)));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
 // ---------------------------------------------------------------- symmetry

@@ -325,6 +325,9 @@ label.check {
 .hint b {
   color: var(--accent);
 }
+.hint .warn {
+  color: #ff9f43;
+}
 .camlabel {
   position: absolute;
   right: 12px;
@@ -375,6 +378,17 @@ table.results .red {
   font-size: 22px;
   font-weight: 800;
   margin: 6px 0 12px;
+}
+ul.fouls {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: 14px;
+}
+ul.fouls .blue {
+  color: #7fb3ff;
+}
+ul.fouls .red {
+  color: #ff8a8a;
 }
 
 @media (max-width: 640px) {

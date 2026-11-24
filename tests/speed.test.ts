@@ -1,11 +1,11 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { attachBots } from '../src/engine/ai/bot.ts';
-import { NavGrid, type DynamicObstacle } from '../src/engine/ai/navgrid.ts';
+import { attachBots, nearZone, zoneCheck } from '../src/engine/ai/bot.ts';
+import { NavGrid, obstacleFootprints, type DynamicObstacle } from '../src/engine/ai/navgrid.ts';
 import { PointIndex } from '../src/engine/ai/spatial.ts';
 import { stepWorld } from '../src/engine/sim/bodyState.ts';
-import { Match, initPhysics } from '../src/engine/sim/index.ts';
-import { makeRng, yawFromQuat } from '../src/engine/sim/math.ts';
+import { Match, initPhysics, robotGap } from '../src/engine/sim/index.ts';
+import { distToRegion, makeRng, pointInRegion, yawFromQuat } from '../src/engine/sim/math.ts';
 import { findGame } from '../src/games/index.ts';
 import type { Region2D, Vec2 } from '../src/engine/sim/types.ts';
 
@@ -219,6 +219,44 @@ function referenceSearch(grid: NavGrid, a: Vec2, b: Vec2): Vec2[] {
   return out;
 }
 
+describe('NavGrid occupancy', () => {
+  /** Distance from p to a polygon's outline (the grid builder's own formula). */
+  const distToPoly = (p: Vec2, pts: Vec2[]) => {
+    let best = Infinity;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const a = pts[j]!;
+      const b = pts[i]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1e-9)));
+      best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
+    }
+    return best;
+  };
+  it('the bounding-box shortcut marks exactly the cells the plain per-cell test does', () => {
+    for (const def of [cu, ref]) {
+      const m = new Match(def, { seed: 1 });
+      for (const inflate of [0.3, 0.5, 0.55]) {
+        const grid = new NavGrid(m.game, inflate);
+        const g = grid as unknown as { blocked: Uint8Array; slow: Uint8Array; cols: number; rows: number };
+        const { length: L, width: W } = def.field;
+        const solid = obstacleFootprints(m.game);
+        const ramps = obstacleFootprints(m.game, 0.5, true);
+        const pts = (o: Region2D) => (o as { points: Vec2[] }).points;
+        for (let r = 0; r < g.rows; r++)
+          for (let c = 0; c < g.cols; c++) {
+            const p = { x: (c + 0.5) * grid.cell, y: (r + 0.5) * grid.cell };
+            const wall = p.x < inflate || p.y < inflate || p.x > L - inflate || p.y > W - inflate;
+            const blocked = wall || solid.some((o) => pointInRegion(p, o) || distToPoly(p, pts(o)) < inflate);
+            const slow = ramps.some((o) => pointInRegion(p, o) || distToPoly(p, pts(o)) < inflate * 0.5);
+            expect(g.blocked[r * g.cols + c]).toBe(blocked ? 1 : 0);
+            expect(g.slow[r * g.cols + c]).toBe(slow ? 1 : 0);
+          }
+      }
+    }
+  });
+});
+
 describe('NavGrid.findPath', () => {
   it('finds exactly the paths of the original A* (parked robots, penalty zones, dead ends)', () => {
     for (const def of [cu, ref]) {
@@ -244,6 +282,54 @@ describe('NavGrid.findPath', () => {
         compared++;
       }
       expect(compared).toBe(150);
+    }
+  });
+});
+
+describe('protected-zone checks', () => {
+  it('the bounding-box shortcut gives the plain answer for rects, polygons and circles', () => {
+    const rand = makeRng(9);
+    const regions: Region2D[] = [
+      { kind: 'rect', min: { x: 2, y: 1 }, max: { x: 4.5, y: 3 } },
+      {
+        kind: 'poly',
+        points: [
+          { x: 10, y: 1 },
+          { x: 13, y: 1.5 },
+          { x: 12, y: 4 },
+          { x: 11, y: 3 },
+          { x: 9.5, y: 3.5 },
+        ],
+      },
+      { kind: 'circle', center: { x: 6, y: 6 }, radius: 1.3 },
+    ];
+    for (const region of regions) {
+      const z = zoneCheck(region);
+      for (let i = 0; i < 4000; i++) {
+        const p = { x: rand() * 16, y: rand() * 8 };
+        for (const margin of [0, 0.3, 0.6, 1.5]) {
+          const plain = pointInRegion(p, region) || (margin > 0 && distToRegion(p, region) < margin);
+          expect(nearZone(p, z, margin)).toBe(plain);
+        }
+      }
+    }
+  });
+});
+
+describe('referee far-pair shortcut', () => {
+  it('the box gap is never below 0.7 x center distance minus both half diagonals', () => {
+    const m = new Match(cu, { seed: 1, archetypes: { 0: 'defender', 3: 'kitbot' } });
+    const [a, b] = [m.robots[0]!, m.robots[3]!];
+    const half = (r: typeof a) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2;
+    const rand = makeRng(4);
+    for (let i = 0; i < 3000; i++) {
+      for (const r of [a, b]) {
+        r.setPosition({ x: 4 + rand() * 8, y: 1 + rand() * 6, z: r.archetype.frame.height / 2 });
+        const yaw = rand() * 2 * Math.PI;
+        r.body.setRotation({ x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) }, true);
+      }
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      expect(robotGap(a, b)).toBeGreaterThanOrEqual(0.7 * d - half(a) - half(b) - 1e-9);
     }
   });
 });

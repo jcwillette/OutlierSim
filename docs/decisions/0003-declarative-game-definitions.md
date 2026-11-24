@@ -9,7 +9,7 @@ A new game has to be produced quickly and reliably from a manual. Hand-writing a
 
 ## Decision
 
-- Each season is a `GameDefinition` (data) in `src/games/<year>-<slug>/definition.ts`. Optional `rules.ts` hooks cover mechanics the schema can't express, and optional `bots.ts` adds strategy hints for the AI.
+- Each season is a `GameDefinition` (data) in `src/games/<year>-<slug>/definition.ts`. Optional `rules.ts` hooks cover mechanics the schema can't express, and optional `botHints` in the definition add strategy hints for the AI. (Amended 2026-11-24: the hints ended up in the definition, not a separate `bots.ts`.)
 - Robot mechanisms are abstracted rather than simulated as linkages:
   - Intake is a sensor volume at the front of the robot.
   - Placing is a timed action at a scoring target.
@@ -19,5 +19,5 @@ A new game has to be produced quickly and reliably from a manual. Hand-writing a
 
 ## Consequences
 
-- When a new game needs something the schema can't express, first try `rules.ts`. Generalize it into the engine only when a second game needs it too.
+- When a new game needs something the schema can't express, first try `rules.ts`. Generalize it into the engine only when a second game needs it too, or when it is a pattern nearly every season has (ADR 0008: protected-zone contact and pinning fouls).
 - The feel depends on robot archetype numbers (speed, cycle times, accuracy). These are engineering estimates from the manual's constraints and typical mechanism speeds (ADR 0004).

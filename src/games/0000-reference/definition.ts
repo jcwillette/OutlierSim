@@ -95,6 +95,7 @@ export const definition: GameDefinition = {
         },
         position: { x: L / 2, y: W / 2, z: 0 },
         color: 'neutral',
+        nav: 'ramp',
       },
     ],
     zones: [
@@ -104,6 +105,13 @@ export const definition: GameDefinition = {
         name: 'Base',
         side: 'blue',
         region: { kind: 'circle', center: { x: 1.4, y: 4.05 }, radius: 1.8 },
+      },
+      {
+        // Blue's human player stations are at the red end; robots loading there are protected.
+        id: 'loading',
+        name: 'Loading zone',
+        side: 'blue',
+        region: rect(14.6, 0, L, 2.6),
       },
     ],
   },
@@ -207,10 +215,12 @@ export const definition: GameDefinition = {
   stations: [
     {
       id: 'feeder',
-      name: 'Block feeder',
+      name: 'Feeder',
       side: 'blue',
       zone: rect(15.2, 0, L, 1.0),
-      pieceTypes: ['block'],
+      // Blocks or orbs, whichever the robot asks for.
+      pieceTypes: ['block', 'orb'],
+      choice: true,
       mode: 'direct',
       feedIntervalSec: 1.5,
       supply: 10,
@@ -276,7 +286,22 @@ export const definition: GameDefinition = {
       { id: 'lift', name: 'Lift RP (24 endgame pts)', rp: 1, kind: 'endgamePointsAtLeast', points: 24 },
     ],
   },
-  fouls: { minor: 2, major: 6, source: SRC },
+  fouls: {
+    minor: 2,
+    major: 6,
+    contact: [
+      {
+        id: 'R1',
+        name: 'contact with a robot in its loading zone',
+        zones: ['loading'],
+        inside: 'protected',
+        severity: 'minor',
+        source: SRC,
+      },
+    ],
+    pinning: { id: 'R2', countSec: 5, source: SRC },
+    source: SRC,
+  },
   archetypes: [
     {
       id: 'allround',
@@ -346,6 +371,27 @@ export const definition: GameDefinition = {
     },
   ],
   defaultArchetype: 'allround',
+  lineups: [
+    {
+      id: 'allround',
+      name: 'All-rounders',
+      description: 'Three all-rounders.',
+      robots: [{ archetype: 'allround' }, { archetype: 'allround' }, { archetype: 'allround' }],
+    },
+    {
+      id: 'mixed',
+      name: 'Mixed',
+      description: 'A turret shooter, a stacker and an all-rounder.',
+      robots: [{ archetype: 'turret' }, { archetype: 'stacker' }, { archetype: 'allround' }],
+    },
+    {
+      id: 'defense',
+      name: 'Defense',
+      description: 'Two all-rounders and a defender, playing aggressively.',
+      robots: [{ archetype: 'allround' }, { archetype: 'allround' }, { archetype: 'defender' }],
+      strategy: 'aggressive',
+    },
+  ],
   rules,
   botHints: { defenseShare: 0 },
 };

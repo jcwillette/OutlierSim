@@ -9,6 +9,8 @@
 #   pages/p###.txt        text per page (cite pages from these)
 #   index.md              which pages mention each topic (scoring, timing, field, endgame, RP, fouls...)
 #   headings.txt          numbered section headings with page numbers
+#   rules.md              every rule (G/H/R/S/E/T + number) with its page and first line
+#   meta.txt              SHA-256, title and dates of the PDF (record them in SOURCES.md)
 #   thumbs/p###.png       every page at low resolution
 #   sheets/sheet##.png    contact sheets of thumbnails (12 pages each) to spot drawings fast
 #   hi/p###.png           pages rendered at high resolution (pages with figures + --page requests)
@@ -16,6 +18,13 @@ set -euo pipefail
 
 pdf="${1:?usage: ingest-manual.sh <manual.pdf> <game-id> [--page N]}"
 game="${2:?usage: ingest-manual.sh <manual.pdf> <game-id> [--page N]}"
+[[ -f "$pdf" ]] || { echo "No such file: $pdf" >&2; exit 2; }
+for tool in pdfinfo pdftotext pdftoppm sha256sum; do
+  command -v "$tool" >/dev/null || {
+    echo "ingest-manual.sh needs $tool (Debian/Ubuntu: apt-get install -y poppler-utils). ImageMagick's montage is optional (contact sheets)." >&2
+    exit 2
+  }
+done
 out="work/${game}/manual"
 mkdir -p "$out/pages" "$out/thumbs" "$out/sheets" "$out/hi"
 
@@ -41,6 +50,28 @@ for f in "$out"/pages/p*.txt; do
   p=$(basename "$f" .txt)
   grep -E '^\s{0,4}[0-9]+(\.[0-9]+){0,3}\s+[A-Z][A-Za-z0-9 ,&/()-]{2,60}$' "$f" | sed "s/^ */$p  /" >> "$out/headings.txt" || true
 done
+
+# Rule index: each rule number (G207, R104, H309...) with its page and the start of its text, so
+# the protected-zone, pinning and contact rules can be found and quoted fast.
+{
+  echo "# Rule index: $game"
+  echo
+  echo "Each rule's first line and page. Quote the full text from pages/p###.txt: the exact wording"
+  echo "decides the model (\"any part of\", \"regardless of who initiates\", pin release distance)."
+  echo
+  for f in "$out"/pages/p*.txt; do
+    p=$(basename "$f" .txt)
+    grep -E '^\s{0,6}[GHRSET][0-9]{3}\b' "$f" | sed -E 's/^\s+//; s/\s{2,}/ /g' | cut -c1-160 | sed "s/^/- $p: /" || true
+  done
+} > "$out/rules.md"
+
+# Provenance: the exact file this build used (FIRST replaces the file behind the manual URL with
+# each revision).
+{
+  echo "file: $pdf"
+  echo "sha256: $(sha256sum "$pdf" | awk '{print $1}')"
+  pdfinfo "$pdf" | grep -E '^(Title|CreationDate|ModDate|Pages):' || true
+} > "$out/meta.txt"
 
 # Topic index: pages ranked by keyword hits.
 topic() {
@@ -106,6 +137,7 @@ done
 
 echo "Done."
 echo "  text:     $out/manual.txt  (per page: $out/pages/)"
-echo "  index:    $out/index.md   headings: $out/headings.txt"
+echo "  index:    $out/index.md   headings: $out/headings.txt   rules: $out/rules.md"
+echo "  meta:     $out/meta.txt (SHA-256 for SOURCES.md)"
 echo "  sheets:   $(ls "$out"/sheets | wc -l) contact sheets in $out/sheets/"
 echo "  figures:  $(ls "$out"/hi | wc -l) high-res pages in $out/hi/"

@@ -1,4 +1,5 @@
 import { expandDefinition } from './expand.ts';
+import { CATEGORIES } from './ledger.ts';
 import { regionOutline } from './math.ts';
 import type { GameDefinition, Region2D, Vec2 } from './types.ts';
 
@@ -64,6 +65,15 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     if (e.shape.kind === 'box' && (e.shape.size.x <= 0 || e.shape.size.y <= 0 || e.shape.size.z <= 0))
       err(path, 'box size must be > 0');
     if (e.shape.kind === 'hull' && e.shape.vertices.length < 4) err(path, 'hull needs >= 4 vertices');
+    if (e.nav !== undefined && !['auto', 'wall', 'ramp', 'none'].includes(e.nav))
+      err(path, "nav must be 'auto', 'wall', 'ramp' or 'none'");
+    if (e.nav !== undefined && e.nav !== 'auto' && e.solid === false)
+      warn(path, 'nav only applies to solid elements (bots ignore non-solid ones)');
+    if (e.nav === 'ramp' && e.shape.kind !== 'hull')
+      warn(
+        path,
+        "a 'ramp' with vertical sides is a step robots only get over with a run-up: use a hull with sloped sides",
+      );
   });
   def.field.zones.forEach((z, i) => checkRegion(`field.zones[${i}] ${z.id}`, z.region));
 
@@ -116,6 +126,7 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     for (const a of s.pieceTypes) if (!pieceIds.has(a)) err(path, `unknown piece type '${a}'`);
     if (s.mode === 'drop' && !s.dropPoint) err(path, "mode 'drop' needs dropPoint");
     if (s.feedIntervalSec <= 0) err(path, 'feedIntervalSec must be > 0');
+    if (s.choice && s.pieceTypes.length < 2) warn(path, 'choice only matters with two or more piece types');
     checkRegion(`${path}.zone`, s.zone);
   });
 
@@ -127,6 +138,13 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
   const endgameIds = new Set(def.endgame.map((e) => e.id));
   def.endgame.forEach((a, i) => {
     if (a.zones.length === 0) err(`endgame[${i}] ${a.id}`, 'needs at least one zone');
+    if (a.fallback !== undefined) {
+      const fb = def.endgame.find((e) => e.id === a.fallback);
+      if (!fb || fb.id === a.id)
+        err(`endgame[${i}] ${a.id}`, `fallback '${a.fallback}' is not another endgame action`);
+      else if (fb.zones.length < a.zones.length)
+        warn(`endgame[${i}] ${a.id}`, `fallback '${fb.id}' has fewer zones (the robot keeps its zone index)`);
+    }
     a.zones.forEach((z, j) => checkRegion(`endgame[${i}].zones[${j}]`, z));
   });
   unique(
@@ -134,6 +152,69 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     def.awards.map((a) => a.id),
   );
   def.awards.forEach((a, i) => checkRegion(`awards[${i}] ${a.id}`, a.zone));
+
+  // ranking points
+  unique(
+    'rankingPoints.bonuses',
+    def.rankingPoints.bonuses.map((b) => b.id),
+  );
+  const sourceIds = new Set([
+    ...def.targets.map((x) => x.id),
+    ...def.endgame.map((x) => x.id),
+    ...def.awards.map((x) => x.id),
+  ]);
+  def.rankingPoints.bonuses.forEach((b, i) => {
+    const path = `rankingPoints.bonuses[${i}] ${b.id}`;
+    if (b.id === 'win' || b.id === 'tie') err(path, "'win' and 'tie' are reserved ids");
+    if (b.kind === 'pointsAtLeast') {
+      for (const c of b.categories ?? []) if (!CATEGORIES.includes(c)) err(path, `unknown category '${c}'`);
+      // Sources may also be names a game's rules.ts passes to addPoints, so unknown ones are only
+      // an error when there is no rules.ts.
+      const unknown = (b.sources ?? []).filter((s) => !sourceIds.has(s));
+      if (unknown.length && !def.rules)
+        err(path, `unknown sources (no rules.ts adds points): ${unknown.join(', ')}`);
+    }
+    if (b.kind === 'piecesAtLeast') {
+      for (const id of b.targetIds ?? [])
+        if (!def.targets.some((t) => t.id === id)) err(path, `unknown target '${id}'`);
+      for (const tag of b.tags ?? []) if (!allTags.has(tag)) err(path, `no target has tag '${tag}'`);
+    }
+  });
+
+  // fouls the engine calls
+  const sidedZones = new Set(def.field.zones.filter((z) => z.side !== 'neutral').map((z) => z.id));
+  const severities = new Set(['minor', 'major']);
+  unique(
+    'fouls.contact',
+    (def.fouls.contact ?? []).map((c) => c.id),
+  );
+  (def.fouls.contact ?? []).forEach((c, i) => {
+    const path = `fouls.contact[${i}] ${c.id}`;
+    if (!c.zones.length) err(path, 'needs at least one zone');
+    for (const z of c.zones)
+      if (!sidedZones.has(z)) err(path, `zone '${z}' is not a sided (blue-authored) zone`);
+    if (!severities.has(c.severity)) err(path, "severity must be 'minor' or 'major'");
+    if (c.inside !== 'intruder' && c.inside !== 'protected')
+      err(path, "inside must be 'intruder' or 'protected'");
+    if (c.repeatSec !== undefined && !(c.repeatSec > 0)) err(path, 'repeatSec must be > 0');
+    if (!c.source) warn(path, 'no source citation');
+  });
+  const pin = def.fouls.pinning;
+  if (pin) {
+    if (pin.countSec !== undefined && !(pin.countSec > 0)) err('fouls.pinning', 'countSec must be > 0');
+    if (pin.releaseGap !== undefined && !(pin.releaseGap >= 0))
+      err('fouls.pinning', 'releaseGap must be >= 0');
+    if (pin.repinSec !== undefined && !(pin.repinSec >= 0)) err('fouls.pinning', 'repinSec must be >= 0');
+    for (const s of [pin.severity, pin.repeatSeverity])
+      if (s !== undefined && !severities.has(s)) err('fouls.pinning', "severity must be 'minor' or 'major'");
+    if (!pin.source) warn('fouls.pinning', 'no source citation');
+  }
+  for (const [key, ids] of [
+    ['protectedZones', def.botHints?.protectedZones],
+    ['endgameProtectedZones', def.botHints?.endgameProtectedZones],
+  ] as const)
+    for (const z of ids ?? [])
+      if (!def.field.zones.some((x) => x.id === z)) err(`botHints.${key}`, `unknown zone '${z}'`);
 
   // start poses
   def.startPoses.forEach((p, i) => {
@@ -162,6 +243,10 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
       if (!allTags.has(tag)) err(path, `place tag '${tag}' matches no target`);
     for (const id of Object.keys(a.endgame ?? {}))
       if (!endgameIds.has(id)) err(path, `endgame '${id}' is not an endgame action`);
+    for (const [id, p] of Object.entries(a.endgameSuccess ?? {})) {
+      if (!endgameIds.has(id)) err(path, `endgameSuccess '${id}' is not an endgame action`);
+      if (!(p >= 0 && p <= 1)) err(path, `endgameSuccess.${id} must be between 0 and 1`);
+    }
     // Preload is handed out in listed order while the robot has room, so a robot only needs to be
     // able to hold one of the listed types (e.g. "1 cone or 1 cube").
     const preload = Object.entries(def.preload);

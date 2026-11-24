@@ -1,5 +1,12 @@
 import { fieldFromRed, type ExpandedGame } from '../sim/expand.ts';
-import { eulerToQuat, flipRegion, pointInRegion, rotateVec } from '../sim/math.ts';
+import {
+  distToRegion,
+  eulerToQuat,
+  flipRegion,
+  pointInRegion,
+  regionOutline,
+  rotateVec,
+} from '../sim/math.ts';
 import type { Alliance, Region2D, Vec2 } from '../sim/types.ts';
 
 /** Elements whose top is below this are drivable (ramps, bumps). */
@@ -36,11 +43,16 @@ function convexHull2D(points: Vec2[]): Vec2[] {
   return lower.slice(0, -1).concat(upper.slice(0, -1));
 }
 
-/** 2D footprints of solid, robot-height field elements (or, with `slow`, of drivable raised ones). */
+/**
+ * 2D footprints of the solid field elements bots drive around (walls), or with `slow`, of the ones
+ * they drive over slowly (ramps, platforms). `FieldElement.nav` decides, or by default the height:
+ * parts at least `DRIVABLE_HEIGHT` tall that reach below `robotHeight` are walls, lower ones at least
+ * `SLOW_MIN_HEIGHT` tall are ramps.
+ */
 export function obstacleFootprints(game: ExpandedGame, robotHeight = 0.5, slow = false): Region2D[] {
   const out: Region2D[] = [];
   for (const e of game.elements) {
-    if (e.solid === false) continue;
+    if (e.solid === false || e.nav === 'none') continue;
     const q = eulerToQuat(e.rotation);
     let verts: Array<{ x: number; y: number; z: number }>;
     switch (e.shape.kind) {
@@ -71,10 +83,17 @@ export function obstacleFootprints(game: ExpandedGame, robotHeight = 0.5, slow =
     });
     const minZ = Math.min(...world.map((w) => w.z));
     const maxZ = Math.max(...world.map((w) => w.z));
-    if (
-      slow ? maxZ >= DRIVABLE_HEIGHT || maxZ < SLOW_MIN_HEIGHT : maxZ < DRIVABLE_HEIGHT || minZ > robotHeight
-    )
-      continue;
+    const kind =
+      e.nav === 'wall' || e.nav === 'ramp'
+        ? e.nav
+        : maxZ >= DRIVABLE_HEIGHT
+          ? minZ > robotHeight
+            ? null // overhead: robots fit under it
+            : 'wall'
+          : maxZ >= SLOW_MIN_HEIGHT
+            ? 'ramp'
+            : null;
+    if (kind !== (slow ? 'ramp' : 'wall')) continue;
     out.push({ kind: 'poly', points: convexHull2D(world) });
   }
   return out;
@@ -136,15 +155,15 @@ export class NavGrid {
     this.came = new Int32Array(this.cols * this.rows);
     this.stamp = new Uint32Array(this.cols * this.rows);
     this.closedAt = new Uint32Array(this.cols * this.rows);
-    const obstacles = obstacleFootprints(game);
-    const ramps = obstacleFootprints(game, 0.5, true);
+    const obstacles = obstacleFootprints(game).map((o) => withBounds(o, inflate));
+    const ramps = obstacleFootprints(game, 0.5, true).map((o) => withBounds(o, inflate * 0.5));
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
         const p = this.center(c, r);
         let b = p.x < inflate || p.y < inflate || p.x > L - inflate || p.y > W - inflate;
         if (!b) {
           for (const o of obstacles) {
-            if (pointInRegion(p, o) || distToPoly(p, o) < inflate) {
+            if (o.near(p) && (pointInRegion(p, o.region) || distToPoly(p, o.region) < inflate)) {
               b = true;
               break;
             }
@@ -152,7 +171,11 @@ export class NavGrid {
         }
         this.blocked[r * this.cols + c] = b ? 1 : 0;
         // Slow if any part of the robot would be on the ramp.
-        if (ramps.some((o) => pointInRegion(p, o) || distToPoly(p, o) < inflate * 0.5))
+        if (
+          ramps.some(
+            (o) => o.near(p) && (pointInRegion(p, o.region) || distToPoly(p, o.region) < inflate * 0.5),
+          )
+        )
           this.slow[r * this.cols + c] = 1;
       }
     }
@@ -206,14 +229,25 @@ export class NavGrid {
     return this.slowAt(this.indexAt(p.x, p.y));
   }
 
-  /** Cells inside `regions`, cached under `key` (e.g. the zones one alliance should stay out of). */
+  /**
+   * Cells where any part of the robot would be inside `regions` (center inside, or within the grid's
+   * inflation of one), cached under `key` (e.g. the zones one alliance should stay out of).
+   */
   private penaltyMask(key: string, regions: readonly Region2D[]): Uint8Array {
     let mask = this.penaltyCache.get(key);
     if (!mask) {
       mask = new Uint8Array(this.cols * this.rows);
+      const near = regions.map((z) => withBounds(z, this.inflate));
       for (let r = 0; r < this.rows; r++)
-        for (let c = 0; c < this.cols; c++)
-          if (regions.some((z) => pointInRegion(this.center(c, r), z))) mask[r * this.cols + c] = 1;
+        for (let c = 0; c < this.cols; c++) {
+          const p = this.center(c, r);
+          if (
+            near.some(
+              (z) => z.near(p) && (pointInRegion(p, z.region) || distToRegion(p, z.region) < this.inflate),
+            )
+          )
+            mask[r * this.cols + c] = 1;
+        }
       this.penaltyCache.set(key, mask);
     }
     return mask;
@@ -465,6 +499,30 @@ export class AllianceNav {
       )
       .map(flip);
   }
+}
+
+/**
+ * A footprint with a quick "could `p` be inside it or within `reach` of it" test: false only when `p`
+ * is clearly (1e-9 m) farther than `reach` outside its bounding box, where the exact tests
+ * (`pointInRegion`, `distToPoly(p) < reach`) are false too. It only skips work.
+ */
+function withBounds(region: Region2D, reach: number): { region: Region2D; near: (p: Vec2) => boolean } {
+  if (region.kind === 'circle') return { region, near: () => true };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const q of regionOutline(region)) {
+    minX = Math.min(minX, q.x);
+    minY = Math.min(minY, q.y);
+    maxX = Math.max(maxX, q.x);
+    maxY = Math.max(maxY, q.y);
+  }
+  const m = reach + 1e-9;
+  return {
+    region,
+    near: (p) => p.x >= minX - m && p.x <= maxX + m && p.y >= minY - m && p.y <= maxY + m,
+  };
 }
 
 function distToPoly(p: Vec2, r: Region2D): number {

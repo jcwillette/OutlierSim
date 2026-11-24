@@ -72,6 +72,21 @@ describe('2023 Charged Up: engine features it relies on', () => {
     expect(r.speed).toBeGreaterThan(0.5);
   });
 
+  it.each(definition.archetypes.map((a) => a.id))(
+    'a %s robot drives onto the Charge Station from a slow approach (no run-up needed)',
+    (id) => {
+      const m = new Match(definition, { archetypes: { 1: id } });
+      const r = m.robots[1]!; // blue station 2 starts in front of the Charge Station
+      // The bots' ramp speed (1.5 m/s), straight at the station until its center.
+      const v = Math.min(1, 1.5 / r.archetype.drive.maxSpeed);
+      r.controller = ctl((_mm, rr) => ({ vx: rr.x < 3.94 ? v : 0 }));
+      m.start();
+      stepFor(m, 4);
+      expect(r.x).toBeGreaterThan(3.8);
+      expect(r.z).toBeGreaterThan(r.archetype.frame.height / 2 + 0.2); // on the 0.23 m top
+    },
+  );
+
   it('shelf stations need a tall intake and take handoffSec to load', () => {
     const def = { ...definition, preload: {} };
     const m = new Match(def, { archetypes: { 0: 'elevator', 1: 'kitbot' } });
@@ -187,71 +202,24 @@ describe('2023 Charged Up: rules', () => {
     expect(added).toEqual([['blue', 'endgame', -4, 'station-tipped']]);
   });
 
-  const g207 = (rammed: boolean) => {
-    const fouls: string[] = [];
-    const ctx = {
-      vars: {} as Record<string, unknown>,
-      time: 50,
-      phase: 'teleop',
-      robots: () =>
-        [
-          // blue robot inside red's LOADING ZONE (at the blue end, high y), touching a red robot
-          { id: 0, alliance: 'blue', x: 2.0, y: 7.0, endgameAction: null, vx: rammed ? 0 : 1, vy: 0 },
-          { id: 3, alliance: 'red', x: 2.7, y: 7.0, endgameAction: null, vx: rammed ? -2 : 0, vy: 0 },
-        ] as RobotInfo[],
-      targetCount: () => 0,
-      setTargetEnabled: () => {},
-      setIndicator: () => {},
-      announce: () => {},
-      foul: (against: string) => fouls.push(against),
-    } as unknown as RulesContext;
-    rules.onTick!(ctx, 1 / 60);
-    rules.onTick!(ctx, 1 / 60); // same contact moments later: not another foul
-    return fouls;
-  };
-  it('G207: contact inside the opponent loading zone is a foul on the intruder', () => {
-    expect(g207(false)).toEqual(['blue']);
-  });
-  it('G201: no G207 foul when the zone owner drove into the intruder', () => {
-    expect(g207(true)).toEqual([]);
-  });
-
-  it('G202: pinning a robot that is trying to move is a FOUL at 5 s, then a TECH FOUL every 5 s', () => {
-    const pin = (victimTrying: boolean, seconds: number) => {
-      const fouls: string[] = [];
-      const ctx = {
-        vars: {} as Record<string, unknown>,
-        time: 50,
-        phase: 'teleop',
-        robots: () =>
-          [
-            // blue pushes (+x) into red, which is stuck mid-field (no protected zone involved)
-            { id: 0, alliance: 'blue', x: 8.0, y: 2.0, endgameAction: null, vx: 0, vy: 0, cmdX: 1, cmdY: 0 },
-            {
-              id: 3,
-              alliance: 'red',
-              x: 8.85,
-              y: 2.0,
-              endgameAction: null,
-              vx: 0,
-              vy: 0,
-              cmdX: 0,
-              cmdY: victimTrying ? 1 : 0,
-            },
-          ] as RobotInfo[],
-        targetCount: () => 0,
-        setTargetEnabled: () => {},
-        setIndicator: () => {},
-        announce: () => {},
-        foul: (against: string, severity: string) => fouls.push(`${against}:${severity}`),
-      } as unknown as RulesContext;
-      for (let t = 0; t < seconds; t += 1 / 60) rules.onTick!(ctx, 1 / 60);
-      return fouls;
-    };
-    expect(pin(true, 4.5)).toEqual([]);
-    expect(pin(true, 5.5)).toEqual(['blue:minor']);
-    expect(pin(true, 10.5)).toEqual(['blue:minor', 'blue:major']);
-    expect(pin(false, 10.5)).toEqual([]); // red wasn't trying to move: not a pin
+  it('declares G207 and G202 for the engine to call: contact by a robot partly in the opponent zone', () => {
+    expect(definition.fouls.contact?.map((c) => c.id)).toEqual(['G207']);
+    expect(definition.fouls.pinning?.id).toBe('G202');
+    const m = new Match({ ...definition, staging: [], preload: {} }, { seed: 1 });
+    m.start();
+    m.step();
+    const [blue, red] = [m.robots[0]!, m.robots[3]!];
+    // Red's LOADING ZONE is at the blue end along the far guardrail (y > 6.75 at x 3.36-6.71).
+    // A blue robot reaching 5 cm into it touches a red robot inside it: FOUL on blue (any part counts).
+    const half = blue.archetype.frame.width / 2;
+    teleport(blue, 5.0, 6.75 - half + 0.05);
+    teleport(red, 5.0, 6.75 + 0.05 + half + 0.005);
+    for (const r of m.robots) if (r !== blue && r !== red) teleport(r, 8, 1 + r.id * 1.2);
+    stepFor(m, 0.1);
+    expect(m.fouls.blue.minor).toBe(1);
+    expect(m.ledger.entries.at(-1)!.source).toBe(
+      "foul:G207 contact in the opponent's loading zone or community",
+    );
   });
 
   it('only one auto Charge Station robot counts per alliance', () => {
@@ -264,5 +232,30 @@ describe('2023 Charged Up: rules', () => {
     );
     rules.onPhaseChange!(ctx, 'teleop');
     expect(added).toEqual([['blue', 'auto', -8, 'auto-charge-limit']]);
+  });
+});
+
+describe('2023 Charged Up: the player picks the row to place on', () => {
+  it('Space places on the best row; V switches to the next one at the same column', async () => {
+    const { PlayerController } = await import('../src/engine/input/input.ts');
+    const m = new Match({ ...definition, preload: { cone: 1 } }, { seed: 1, archetypes: { 0: 'elevator' } });
+    const r = m.robots[0]!;
+    m.start();
+    m.step();
+    // In front of column 1 (a cone column), facing the grid.
+    r.setPosition({ x: 1.43 + 0.5, y: 2.75 - 4 * 0.559, z: r.archetype.frame.height / 2 + 0.01 });
+    r.body.setRotation({ x: 0, y: 0, z: 1, w: 0 }, true); // yaw = pi
+    m.step();
+    const input = { autoIntake: false } as unknown as ConstructorParameters<typeof PlayerController>[0];
+    const pc = new PlayerController(input, () => 0);
+    pc.latest = { ...pc.latest, score: true };
+    expect(m.placeOptions(r).map((o) => o.target.baseId)).toEqual(['high-1', 'mid-1', 'hybrid-1']);
+    expect(pc.placeChoice(m, r)?.target.baseId).toBe('high-1');
+    expect(pc.command(m, r).targetId).toBeUndefined(); // the default: best row
+    pc.placeRank++;
+    expect(pc.placeChoice(m, r)?.target.baseId).toBe('mid-1');
+    expect(pc.command(m, r).targetId).toBe('mid-1.blue');
+    pc.placeRank += 2; // wraps around
+    expect(pc.placeChoice(m, r)?.target.baseId).toBe('high-1');
   });
 });

@@ -873,6 +873,7 @@ export class App {
         ),
         row('Ranking points', result.blue.rp, result.red.rp),
       ),
+      foulList(result),
       h('h2', {}, 'Robots'),
       h(
         'table',
@@ -915,6 +916,23 @@ export class App {
 }
 
 // ------------------------------------------------------------------ win probability screen
+
+/** The fouls each alliance was called for, by rule, so students see which rules cost points. */
+function foulList(result: MatchResult): HTMLElement | null {
+  const lines = (['blue', 'red'] as const).flatMap((a) =>
+    Object.entries(result[a].foulCalls).map(([reason, n]) =>
+      h('li', { class: a }, `${a === 'blue' ? 'Blue' : 'Red'}: ${reason}${n > 1 ? ` ×${n}` : ''}`),
+    ),
+  );
+  return lines.length
+    ? h(
+        'div',
+        {},
+        h('h2', {}, 'Fouls called (the points go to the other alliance)'),
+        h('ul', { class: 'fouls' }, ...lines),
+      )
+    : null;
+}
 
 const pct0 = (x: number) => `${Math.round(x * 100)}%`;
 const pct1 = (x: number) => `${(x * 100).toFixed(1)}%`;
@@ -1207,6 +1225,27 @@ const SPEEDS = [0.25, 0.5, 1, 2, 4] as const;
 const robotName = (r: Robot) => `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${r.station + 1}`;
 
 /**
+ * The text or HTML last written to each HUD element. The HUD updates every frame, and rewriting an
+ * unchanged element still costs the browser style and layout work, so writes go through these.
+ */
+const written = new WeakMap<Element, string>();
+
+/** Set an element's text, only when it changed. */
+function setText(el: Element, text: string): void {
+  if (written.get(el) === text) return;
+  written.set(el, text);
+  el.textContent = text;
+}
+
+/** Set an element's HTML (built from trusted strings), only when it changed. */
+function setHtml(el: Element, html: string): void {
+  const key = `\u0000${html}`;
+  if (written.get(el) === key) return;
+  written.set(el, key);
+  el.innerHTML = html;
+}
+
+/**
  * One match on screen. With `setup.mode === 'play'` the student drives one robot; with 'watch' all
  * six robots are bots and the camera follows whichever robot the spectator picks.
  */
@@ -1268,13 +1307,19 @@ class Session {
     });
     if (this.player) {
       const controller = new PlayerController(input, () => this.rig.driveYaw);
+      controller.pieceType = this.match.choiceTypes(this.player)[0];
       this.controller = controller;
       const autoBrain = new BotBrain({ difficulty: 'hard' });
       // During auto the player's robot optionally runs the bot AI as its "auto routine".
       this.player.controller = setup.autoPilot
         ? { command: (m, r, dt) => (m.phase === 'auto' ? autoBrain : controller).command(m, r, dt) }
         : controller;
-      this.hud = new Hud(this.match, { kind: 'play', player: this.player, autoPilot: setup.autoPilot });
+      this.hud = new Hud(this.match, {
+        kind: 'play',
+        player: this.player,
+        autoPilot: setup.autoPilot,
+        controller,
+      });
     } else {
       this.controller = null;
       this.hud = new Hud(this.match, { kind: 'watch', brains: this.brains });
@@ -1302,6 +1347,13 @@ class Session {
     if (e === 'pause' && (this.state === 'running' || this.state === 'paused')) {
       this.state = this.state === 'running' ? 'paused' : 'running';
       this.hud.setPaused(this.state === 'paused', () => this.app.showMenu());
+    }
+    if (e === 'level' && this.controller) this.controller.placeRank++;
+    if (e === 'piece' && this.player && this.controller) {
+      // Next piece to ask the human player for, at stations that offer a choice.
+      const types = this.match.choiceTypes(this.player);
+      const i = types.indexOf(this.controller.pieceType ?? '');
+      if (types.length) this.controller.pieceType = types[(i + 1) % types.length];
     }
     if (this.player) return; // the rest are spectator controls
     const n = this.match.robots.length;
@@ -1356,7 +1408,8 @@ class Session {
 // ------------------------------------------------------------------ HUD
 
 type HudMode =
-  { kind: 'play'; player: Robot; autoPilot: boolean } | { kind: 'watch'; brains: Map<number, BotBrain> };
+  | { kind: 'play'; player: Robot; autoPilot: boolean; controller: PlayerController }
+  | { kind: 'watch'; brains: Map<number, BotBrain> };
 
 /** Plain-language summary of what a bot is doing right now (spectator commentary). */
 export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): string {
@@ -1429,6 +1482,7 @@ class Hud {
   private pauseCard: HTMLElement | null = null;
   private lastIndicatorKey = '';
   private lastToastKey = '';
+  private lastHeldKey = '';
   /** Robot shown in the status panel: the player, or the followed robot when spectating. */
   private robot: Robot;
   private speed = 1;
@@ -1490,7 +1544,7 @@ class Hud {
   }
 
   setCountdown(text: string | null): void {
-    this.countdown.textContent = text ?? '';
+    setText(this.countdown, text ?? '');
   }
 
   setPaused(paused: boolean, toMenu: () => void): void {
@@ -1517,8 +1571,8 @@ class Hud {
 
   update(): void {
     const m = this.match;
-    this.blue.textContent = String(m.ledger.total('blue'));
-    this.red.textContent = String(m.ledger.total('red'));
+    setText(this.blue, String(m.ledger.total('blue')));
+    setText(this.red, String(m.ledger.total('red')));
     const phaseName: Record<string, string> = {
       pre: 'pre-match',
       auto: 'autonomous',
@@ -1526,8 +1580,8 @@ class Hud {
       teleop: m.isEndgame ? 'endgame' : 'teleop',
       post: 'final',
     };
-    this.time.textContent = fmtTime(m.remaining);
-    this.phase.textContent = phaseName[m.phase] ?? m.phase;
+    setText(this.time, fmtTime(m.remaining));
+    setText(this.phase, phaseName[m.phase] ?? m.phase);
     this.clock.classList.toggle('endgame', m.isEndgame);
 
     const ind = [...m.indicators.entries()];
@@ -1555,21 +1609,25 @@ class Hud {
 
     const r = this.robot;
     const cap = r.totalCapacity;
-    const colors = new Map(m.def.pieces.map((p) => [p.id, p.color]));
-    this.held.replaceChildren(
-      ...Array.from({ length: cap }, (_, i) => {
-        const t = r.held[i];
-        return t
-          ? h('span', { style: `background:${colors.get(t)}`, title: t })
-          : h('span', { class: 'empty' });
-      }),
-    );
+    const heldKey = `${r.id}:${cap}:${r.held.join(',')}`;
+    if (heldKey !== this.lastHeldKey) {
+      this.lastHeldKey = heldKey;
+      const colors = new Map(m.def.pieces.map((p) => [p.id, p.color]));
+      this.held.replaceChildren(
+        ...Array.from({ length: cap }, (_, i) => {
+          const t = r.held[i];
+          return t
+            ? h('span', { style: `background:${colors.get(t)}`, title: t })
+            : h('span', { class: 'empty' });
+        }),
+      );
+    }
     if (this.mode.kind === 'watch') {
-      this.hint.textContent = `${describeBot(m, r, this.mode.brains.get(r.id))} · ${m.ledger.byRobot(r.id)} pts`;
-    } else this.hint.innerHTML = this.hintHtml(this.mode.autoPilot);
+      setText(this.hint, `${describeBot(m, r, this.mode.brains.get(r.id))} · ${m.ledger.byRobot(r.id)} pts`);
+    } else setHtml(this.hint, this.hintHtml(this.mode.autoPilot, this.mode.controller));
   }
 
-  private hintHtml(autoPilot: boolean): string {
+  private hintHtml(autoPilot: boolean, controller: PlayerController): string {
     const m = this.match;
     const r = this.robot;
     if (m.phase === 'pre') return 'Get ready…';
@@ -1595,16 +1653,49 @@ class Hud {
       return `${a?.name ?? 'Endgame'}… ${pct}%`;
     }
     const lines: string[] = [];
+    // Where contact would draw a foul (the game's declared contact rules), so students learn them.
+    const opp = r.alliance === 'blue' ? 'red' : 'blue';
+    for (const w of m.contactWarnings(r).slice(0, 2))
+      lines.push(
+        `<span class="warn">${
+          w.opponent
+            ? `${robotName(w.opponent)} is in its ${w.zone}: touching it is a foul (${w.rule.id})`
+            : `In ${opp}'s ${w.zone}: touching ${opp} robots is a foul (${w.rule.id})`
+        }</span>`,
+      );
+    // The referee's pin count, like a referee's hand count (shown from 1 s).
+    for (const p of m.pinCounts(r)) {
+      if (p.seconds < 1) continue;
+      const s = Math.floor(p.seconds);
+      const ft = Math.round(p.releaseGap / 0.3048);
+      lines.push(
+        `<span class="warn">${
+          p.attacker === r
+            ? `Pinning ${robotName(p.victim)}: ${s} s (a foul every ${p.countSec} s). Back off ${ft} ft to end it.`
+            : `${robotName(p.attacker)} is pinning you: ${s} s`
+        }</span>`,
+      );
+    }
     const eg = m.availableEndgame(r)[0];
     if (eg) lines.push(`<b>G</b>: ${eg.action.name} (+${eg.action.points})`);
-    const place = m.placeOptions(r)[0];
-    if (place) lines.push(`<b>Space</b>: place on ${place.target.name}`);
+    const place = controller.placeChoice(m, r);
+    const places = m.placeOptions(r).length;
+    if (place)
+      lines.push(
+        `<b>Space</b>: place on ${place.target.name}${places > 1 ? ' (<b>V</b>: another level)' : ''}`,
+      );
     else {
       const shot = m.shotOptions(r)[0];
       if (shot) lines.push(`<b>Space</b>: shoot at ${shot.target.name} (${shot.distance.toFixed(1)} m)`);
     }
-    if (m.stationsFor(r).length) lines.push('At human player station: intake to receive');
-    if (!lines.length) lines.push(r.held.length ? 'Drive to a scoring location' : 'Collect a game piece');
+    const stations = m.stationsFor(r);
+    const want = r.command.pieceType;
+    if (stations.some((st) => st.choice) && want) {
+      const name = m.def.pieces.find((p) => p.id === want)?.name ?? want;
+      lines.push(`At human player station: intake to receive a <b>${name}</b> (<b>F</b> to switch)`);
+    } else if (stations.length) lines.push('At human player station: intake to receive');
+    if (lines.every((l) => l.startsWith('<span class="warn">')))
+      lines.push(r.held.length ? 'Drive to a scoring location' : 'Collect a game piece');
     return lines.join('<br>');
   }
 }

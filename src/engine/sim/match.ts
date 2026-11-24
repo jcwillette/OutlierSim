@@ -5,11 +5,13 @@ import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from '
 import { ScoreLedger } from './ledger.ts';
 import { bodyEpoch, stepWorld } from './bodyState.ts';
 import { PhysicsFrame, handedness } from './frame.ts';
+import { Referee, type ContactWarning, type PinCount } from './referee.ts';
 import {
   clamp,
   eulerToQuat,
   rotateVec,
   footprint,
+  footprintOverlaps,
   gaussian,
   makeRng,
   pointInRegion,
@@ -45,6 +47,8 @@ export interface RobotCommand {
   eject: boolean;
   /** Restrict `score` to this expanded target id / `endgame` to this action id. */
   targetId?: string;
+  /** The piece to ask for at a human player station that offers a `choice`. */
+  pieceType?: string;
 }
 
 export const IDLE: RobotCommand = Object.freeze({
@@ -63,6 +67,38 @@ export interface RobotController {
 
 /** A vector as Rapier's (x, y, z) arguments. */
 const xyz = (v: Vec3): [number, number, number] => [v.x, v.y, v.z];
+
+/** How far (m) a ramp's floor edges continue below the floor in physics. */
+const RAMP_SINK = 0.03;
+
+/**
+ * A ramp hull (`nav: 'ramp'`) for physics: each vertex on the floor moves down `RAMP_SINK` along the
+ * line from its nearest raised vertex, so the slope continues just below the floor. Robots are flat
+ * boxes that can't pitch; driving into a slope that stops exactly at floor level, their bottom edge
+ * hits the ramp's edge like a wall and they only get on with a run-up. With the slope continued,
+ * they meet the sloped face and drive up at any speed. Nothing above the floor changes.
+ * `verts` are offsets from the element's position (already rotated); `baseZ` is its height.
+ */
+export function sinkRampBase(verts: readonly Vec3[], baseZ: number): Vec3[] {
+  const onFloor = (v: Vec3) => baseZ + v.z <= 1e-6;
+  const raised = verts.filter((v) => !onFloor(v));
+  if (!raised.length) return [...verts];
+  return verts.map((v) => {
+    if (!onFloor(v)) return v;
+    let top = raised[0]!;
+    let best = Infinity;
+    for (const r of raised) {
+      const d = Math.hypot(r.x - v.x, r.y - v.y, r.z - v.z);
+      if (d < best) {
+        best = d;
+        top = r;
+      }
+    }
+    // Continue the line top -> v down to RAMP_SINK below the floor.
+    const k = (baseZ + v.z + RAMP_SINK) / (top.z - v.z);
+    return { x: v.x + (v.x - top.x) * k, y: v.y + (v.y - top.y) * k, z: v.z - (top.z - v.z) * k };
+  });
+}
 
 export type RobotAction =
   | { kind: 'place'; targetId: string; pieceType: string; remaining: number; total: number }
@@ -175,16 +211,6 @@ export class Robot {
     if (this.poseAt !== bodyEpoch) this.readPose();
     return this.px;
   }
-
-  /** Broken down or in a short outage at match time `t`: no driving, no mechanisms. */
-  isOut(t: number): boolean {
-    return this.brokenDown || t < this.stalledUntil;
-  }
-
-  /** Can intake, place and shoot at match time `t` (not out, mechanisms working). */
-  canHandlePieces(t: number): boolean {
-    return !this.mechDown && !this.isOut(t);
-  }
   get y(): number {
     if (this.poseAt !== bodyEpoch) this.readPose();
     return this.py;
@@ -212,6 +238,21 @@ export class Robot {
     if (this.velAt !== bodyEpoch) this.readVel();
     return Math.hypot(this.pvx, this.pvy);
   }
+  /** Broken down or in a short outage at match time `t`: no driving, no mechanisms. */
+  isOut(t: number): boolean {
+    return this.brokenDown || t < this.stalledUntil;
+  }
+
+  /** Can intake, place and shoot at match time `t` (not out, mechanisms working). */
+  canHandlePieces(t: number): boolean {
+    return !this.mechDown && !this.isOut(t);
+  }
+
+  private bodyMass: number | undefined;
+  /** Rapier's mass for the chassis (constant: it comes from the one collider's density). */
+  get mass(): number {
+    return (this.bodyMass ??= this.body.mass());
+  }
   private totalCap: number | undefined;
   get totalCapacity(): number {
     return (this.totalCap ??=
@@ -236,6 +277,16 @@ export class Robot {
 }
 
 export type PieceStatus = 'field' | 'held' | 'scored' | 'queued';
+
+type Shooter = NonNullable<RobotArchetype['shooter']>;
+
+/** An aperture target a robot could shoot at from where it is (`Match.shotOptions`). */
+export interface ShotOption {
+  target: XTarget;
+  pieceType: string;
+  /** Horizontal distance to the aim point, m. */
+  distance: number;
+}
 
 /** Whether a robot's intake reaches a station's handoff height (shelf). */
 export function canReachHandoff(r: Robot, st: { handoffHeight?: number }): boolean {
@@ -299,12 +350,6 @@ export interface Announcement {
   time: number;
   text: string;
   alliance?: Alliance;
-}
-
-export interface RobotSlot {
-  alliance: Alliance;
-  station: number;
-  archetype?: string;
 }
 
 export interface MatchOptions {
@@ -377,6 +422,16 @@ const ROBOT_IDS: Array<{ alliance: Alliance; station: number }> = [
 
 const other = (a: Alliance): Alliance => (a === 'blue' ? 'red' : 'blue');
 
+/** Every category but fouls. */
+const SCORING_CATEGORIES: readonly ScoreCategory[] = ['auto', 'teleop', 'endgame'];
+
+/** A ledger source without its alliance suffix: 'dock.blue' -> 'dock'; rules sources stay as they are. */
+export function sourceBase(source: string): string {
+  return source.endsWith('.blue') || source.endsWith('.red')
+    ? source.slice(0, source.lastIndexOf('.'))
+    : source;
+}
+
 /**
  * One FRC match: Rapier world, 6 robots, pieces, scoring, clock. Headless: no rendering or DOM.
  * Drive it with `step()` (fixed 60 Hz) or `advance(realDt)`; attach controllers to robots.
@@ -395,6 +450,8 @@ export class Match {
     blue: { minor: 0, major: 0 },
     red: { minor: 0, major: 0 },
   };
+  /** Fouls called on each alliance, by reason. */
+  readonly foulCalls: Record<Alliance, Record<string, number>> = { blue: {}, red: {} };
   readonly random: () => number;
   /**
    * Where Rapier's world sits on the field: centered, and in every other match flipped
@@ -411,8 +468,14 @@ export class Match {
   private readonly recycleQueue: Array<{ piece: Piece; target: XTarget }> = [];
   /** cos / sin of each aperture's -yaw (constant), for the per-step scoring check. */
   private readonly apertureTrig = new Map<object, [number, number]>();
+  /** Targets with an aperture, in `targets` order (static, collected on first use). */
+  private apertureTargets: TargetState[] | null = null;
+  /** Per robot id: center-to-piece distance (plus the piece's radius) that counts as a touch. */
+  private touchReach: number[] | null = null;
   private readonly vars: Record<string, unknown> = {};
   private readonly rulesCtx: RulesContext;
+  /** Calls the fouls the game declares (`fouls.contact`, `fouls.pinning`), if any. */
+  private readonly referee: Referee | null;
   private accumulator = 0;
   private result: MatchResult | null = null;
   private nextPieceId = 0;
@@ -456,6 +519,8 @@ export class Match {
       }
     }
     if (opts.breakdowns) this.scheduleBreakdowns(opts.breakdownExempt ?? []);
+    const referee = new Referee(this);
+    this.referee = referee.active ? referee : null;
     this.rulesCtx = this.makeRulesContext();
     def.rules?.onInit?.(this.rulesCtx);
   }
@@ -582,12 +647,15 @@ export class Match {
             eulerToQuat({ roll: Math.PI / 2 }),
           );
           break;
-        case 'hull':
+        case 'hull': {
           // Vertices in physics axes (with the element's rotation applied), so the body isn't rotated.
+          const verts = e.shape.vertices.map((v) => rotateVec(q, v));
+          const shape = e.nav === 'ramp' ? sinkRampBase(verts, e.position.z) : verts;
           desc = RAPIER.ColliderDesc.convexHull(
-            new Float32Array(e.shape.vertices.flatMap((v) => xyz(this.physics.vector(rotateVec(q, v))))),
+            new Float32Array(shape.flatMap((v) => xyz(this.physics.vector(v)))),
           );
           break;
+        }
       }
       if (!desc) throw new Error(`Element '${e.id}' produced no collider (degenerate hull?)`);
       desc.setFriction(e.friction ?? 0.5).setRestitution(e.restitution ?? 0.2);
@@ -797,6 +865,7 @@ export class Match {
     this.trackTouches();
     this.checkApertures();
     this.processRecycle();
+    this.referee?.tick(dt);
     this.def.rules?.onTick?.(this.rulesCtx, dt);
   }
 
@@ -824,7 +893,7 @@ export class Match {
       dvx *= maxDv / dv;
       dvy *= maxDv / dv;
     }
-    const m = r.body.mass();
+    const m = r.mass;
     r.body.applyImpulse(this.physics.vector({ x: m * dvx, y: m * dvy, z: 0 }), true);
 
     let targetOmega = locked ? 0 : clamp(cmd.omega, -1, 1) * a.drive.maxOmega;
@@ -896,23 +965,40 @@ export class Match {
       act.remaining -= dt;
       if (act.remaining <= 0) {
         r.action = null;
-        r.endgameDone = { actionId: ga.id, zoneIndex: act.zoneIndex };
+        const done = this.endgameOutcome(r, ga);
+        if (!done) return;
+        r.endgameDone = { actionId: done.id, zoneIndex: act.zoneIndex };
         r.endgameInAuto = this.scoringPeriod === 'auto';
         r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
         r.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         r.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
         const inAuto = this.scoringPeriod === 'auto';
-        const pts = inAuto ? (ga.autoPoints ?? ga.points) : ga.points;
+        const pts = inAuto ? (done.autoPoints ?? done.points) : done.points;
         this.ledger.add({
           time: this.time,
           alliance: r.alliance,
           category: inAuto ? 'auto' : 'endgame',
           points: pts,
-          source: ga.id,
+          source: done.id,
           robotId: r.id,
         });
       }
     }
+  }
+
+  /**
+   * What a finished endgame attempt counts as: the action itself, or, when it fails
+   * (`RobotArchetype.endgameSuccess`), its fallback or nothing. Rolls only when success isn't certain.
+   */
+  private endgameOutcome(r: Robot, ga: XEndgame): XEndgame | null {
+    const chance = r.archetype.endgameSuccess?.[ga.baseId] ?? 1;
+    if (chance >= 1 || this.random() < chance) return ga;
+    const fallback = ga.fallback
+      ? this.game.endgame.find((e) => e.baseId === ga.fallback && e.alliance === ga.alliance)
+      : undefined;
+    const name = `${r.alliance === 'blue' ? 'Blue' : 'Red'} ${r.station + 1}`;
+    this.announce(`${name}: ${ga.name} failed${fallback ? ` (${fallback.name})` : ''}`, r.alliance);
+    return fallback ?? null;
   }
 
   /** Endgame actions this robot could start right now, best first. */
@@ -1010,6 +1096,38 @@ export class Match {
     }
   }
 
+  /**
+   * Piece types this robot could ask for at its alliance's stations that offer a `choice` (it can
+   * intake and hold them), in station order.
+   */
+  choiceTypes(r: Robot): string[] {
+    const out: string[] = [];
+    for (const st of this.game.stations) {
+      if (!st.choice || (st.alliance && st.alliance !== r.alliance)) continue;
+      for (const t of st.pieceTypes)
+        if (
+          !out.includes(t) &&
+          (r.archetype.capacity[t] ?? 0) > 0 &&
+          r.archetype.intake?.pieceTypes.includes(t)
+        )
+          out.push(t);
+    }
+    return out;
+  }
+
+  /**
+   * The game's declared contact rules that would call a foul on this robot if it touched an
+   * opponent now (it is in an opponent's protected zone, or a nearby opponent is in its own).
+   */
+  contactWarnings(r: Robot): ContactWarning[] {
+    return this.referee?.contactWarnings(r) ?? [];
+  }
+
+  /** Pins in progress this robot is part of (pinning or pinned), with the referee's count. */
+  pinCounts(r: Robot): PinCount[] {
+    return this.referee?.pinCounts(r) ?? [];
+  }
+
   /** Stations whose zone the robot is in and that could feed it a piece. */
   stationsFor(r: Robot): XStation[] {
     if (r.mechDown) return [];
@@ -1030,7 +1148,11 @@ export class Match {
       if ((this.stationCooldown.get(key) ?? 0) > 0) continue;
       const used = this.stationUsed.get(key) ?? 0;
       if (st.supply !== undefined && used >= st.supply) continue;
-      const type = st.pieceTypes.find((t) => r.canHold(t))!;
+      const want = r.command.pieceType;
+      const type =
+        st.choice && want !== undefined && st.pieceTypes.includes(want) && r.canHold(want)
+          ? want
+          : st.pieceTypes.find((t) => r.canHold(t))!;
       if (st.mode === 'direct') {
         if (r.intakeCooldown > 0 || !r.archetype.intake) continue;
         if (st.handoffSec) {
@@ -1051,7 +1173,8 @@ export class Match {
     }
   }
 
-  private canUseTarget(r: Robot, ts: TargetState): boolean {
+  /** A target is open to this robot now: enabled, not full, and its alliance's (or a scorer-credit one). */
+  canUseTarget(r: Robot, ts: TargetState): boolean {
     const t = ts.target;
     if (!ts.enabled) return false;
     if (t.alliance && (t.creditTo ?? 'owner') === 'owner' && t.alliance !== r.alliance) return false;
@@ -1097,24 +1220,36 @@ export class Match {
   }
 
   /** Aperture targets this robot could shoot at from here, best first (ignores heading). */
-  shotOptions(r: Robot): Array<{ target: XTarget; pieceType: string; distance: number }> {
+  shotOptions(r: Robot): ShotOption[] {
     const sh = r.archetype.shooter;
     if (!sh || r.mechDown) return [];
-    const out: Array<{ target: XTarget; pieceType: string; distance: number }> = [];
+    const out: ShotOption[] = [];
     for (const ts of this.targets.values()) {
-      const t = ts.target;
-      if (!t.aperture || !this.canUseTarget(r, ts)) continue;
-      if (sh.tags && !sh.tags.some((tag) => t.tags?.includes(tag) || t.baseId === tag)) continue;
-      const pieceType = r.held.find((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h));
-      if (!pieceType) continue;
-      const aim = t.aimPoint ?? t.aperture.center;
-      const d = Math.hypot(aim.x - r.x, aim.y - r.y);
-      if (d > sh.maxRange) continue;
-      if (this.shotPitch(r, t, d, aim.z - sh.height) === null) continue;
-      out.push({ target: t, pieceType, distance: d });
+      const o = this.shotOption(r, sh, ts);
+      if (o) out.push(o);
     }
     const per = this.scoringPeriod;
     return out.sort((a, b) => b.target.points[per] - a.target.points[per] || a.distance - b.distance);
+  }
+
+  /** Whether this robot could shoot at one target from here (`shotOptions`, for one target). */
+  canShootAt(r: Robot, targetId: string): boolean {
+    const sh = r.archetype.shooter;
+    const ts = this.targets.get(targetId);
+    return !!sh && !r.mechDown && !!ts && this.shotOption(r, sh, ts) !== null;
+  }
+
+  private shotOption(r: Robot, sh: Shooter, ts: TargetState): ShotOption | null {
+    const t = ts.target;
+    if (!t.aperture || !this.canUseTarget(r, ts)) return null;
+    if (sh.tags && !sh.tags.some((tag) => t.tags?.includes(tag) || t.baseId === tag)) return null;
+    const pieceType = r.held.find((h) => sh.pieceTypes.includes(h) && t.accepts.includes(h));
+    if (!pieceType) return null;
+    const aim = t.aimPoint ?? t.aperture.center;
+    const d = Math.hypot(aim.x - r.x, aim.y - r.y);
+    if (d > sh.maxRange) return null;
+    if (this.shotPitch(r, t, d, aim.z - sh.height) === null) return null;
+    return { target: t, pieceType, distance: d };
   }
 
   private shotPitch(r: Robot, t: XTarget, d: number, h: number): ShotSolution | null {
@@ -1203,17 +1338,19 @@ export class Match {
   private trackTouches(): void {
     // Piece by piece (each position read once); robots in id order, so the last robot touching a
     // piece still gets the touch, as when the loops were the other way around.
-    const reach = this.robots.map(
+    const reach = (this.touchReach ??= this.robots.map(
       (r) => Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.05,
-    );
+    ));
     for (const p of this.pieces) {
       if (p.status !== 'field') continue;
       const pos = p.position;
       for (const r of this.robots) {
-        if (
-          Math.hypot(pos.x - r.x, pos.y - r.y) < reach[r.id]! + p.radius &&
-          pos.z < r.archetype.frame.height + 0.3
-        ) {
+        const lim = reach[r.id]! + p.radius;
+        const dx = pos.x - r.x;
+        const dy = pos.y - r.y;
+        // Math.hypot is never below the larger leg, so this only skips pairs the test below rejects.
+        if (Math.abs(dx) >= lim || Math.abs(dy) >= lim) continue;
+        if (Math.hypot(dx, dy) < lim && pos.z < r.archetype.frame.height + 0.3) {
           p.lastTouch = r.id;
           p.lastTouchAlliance = r.alliance;
         }
@@ -1222,12 +1359,15 @@ export class Match {
   }
 
   private checkApertures(): void {
+    // Only targets with an aperture, in the same order as `targets` (none in a place-only game).
+    const targets = (this.apertureTargets ??= [...this.targets.values()].filter((ts) => ts.target.aperture));
+    if (!targets.length) return;
     for (const p of this.pieces) {
       if (p.status !== 'field') continue;
       const pos = p.position;
-      for (const ts of this.targets.values()) {
-        const ap = ts.target.aperture;
-        if (!ap || !ts.enabled || !ts.target.accepts.includes(p.type.id)) continue;
+      for (const ts of targets) {
+        const ap = ts.target.aperture!;
+        if (!ts.enabled || !ts.target.accepts.includes(p.type.id)) continue;
         const dx = pos.x - ap.center.x;
         const dy = pos.y - ap.center.y;
         let trig = this.apertureTrig.get(ap);
@@ -1304,7 +1444,7 @@ export class Match {
       )
         continue;
       const corners = footprint(r.x, r.y, r.yaw, r.archetype.frame.length, r.archetype.frame.width);
-      if (corners.every((c) => !pointInRegion(c, aw.zone))) r.leftZones.add(aw.id);
+      if (!footprintOverlaps(corners, aw.zone)) r.leftZones.add(aw.id);
     }
   }
 
@@ -1346,8 +1486,15 @@ export class Match {
     this.def.rules?.onMatchEnd?.(this.rulesCtx);
   }
 
-  addFoul(against: Alliance, severity: 'minor' | 'major', reason: string): void {
+  /**
+   * Call a foul on `against`: the other alliance gets the points. `reason` names the rule and what
+   * it was for (it is the ledger source and the results' tally); `detail` only goes in the
+   * announcement (e.g. how long a pin lasted).
+   */
+  addFoul(against: Alliance, severity: 'minor' | 'major', reason: string, detail?: string): void {
     this.fouls[against][severity]++;
+    const calls = this.foulCalls[against];
+    calls[reason] = (calls[reason] ?? 0) + 1;
     this.ledger.add({
       time: this.time,
       alliance: other(against),
@@ -1356,7 +1503,10 @@ export class Match {
       source: `foul:${reason}`,
       robotId: null,
     });
-    this.announce(`${severity.toUpperCase()} FOUL on ${against}: ${reason}`, against);
+    this.announce(
+      `${severity.toUpperCase()} FOUL on ${against}: ${reason}${detail ? ` (${detail})` : ''}`,
+      against,
+    );
   }
 
   announce(text: string, alliance?: Alliance): void {
@@ -1387,6 +1537,7 @@ export class Match {
       endgame,
       sources: this.ledger.bySource(alliance),
       fouls: { ...this.fouls[alliance] },
+      foulCalls: { ...this.foulCalls[alliance] },
     };
   }
 
@@ -1401,6 +1552,22 @@ export class Match {
       const tagOk = tags?.some((tag) => t.tags?.includes(tag)) ?? false;
       const idOk = ids?.includes(t.baseId) ?? false;
       if ((!tags && !ids) || tagOk || idOk) n++;
+    }
+    return n;
+  }
+
+  /** Points an alliance got from these ledger sources (base ids) and categories (no fouls by default). */
+  private pointsFor(
+    alliance: Alliance,
+    sources?: readonly string[],
+    categories?: readonly ScoreCategory[],
+  ): number {
+    const cats = categories ?? SCORING_CATEGORIES;
+    let n = 0;
+    for (const e of this.ledger.entries) {
+      if (e.alliance !== alliance || !cats.includes(e.category)) continue;
+      if (sources && !sources.includes(sourceBase(e.source))) continue;
+      n += e.points;
     }
     return n;
   }
@@ -1427,6 +1594,9 @@ export class Match {
             break;
           case 'endgamePointsAtLeast':
             ok = own.breakdown.endgame >= b.points;
+            break;
+          case 'pointsAtLeast':
+            ok = this.pointsFor(own.alliance, b.sources, b.categories) >= b.points;
             break;
           case 'custom':
             ok = b.check(own, opp);

@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "sim": "tsx tools/sim.ts",
     "bench": "tsx tools/bench.ts",
+    "plausibility": "tsx tools/plausibility.ts",
     "calibrate": "NODE_USE_ENV_PROXY=1 tsx tools/calibrate.ts",
     "test:e2e": "npm run build && node tests/e2e/smoke.cjs"
   },

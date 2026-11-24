@@ -27,6 +27,15 @@ describe('menu tuning', () => {
     expect(fail.get(kit)).toBeCloseTo(faultRates(kit).mechFailChance * 100, 5);
   });
 
+  it('tunes the chance an endgame attempt succeeds (default 100 %)', () => {
+    const elevator = arch(cu, 'elevator');
+    const field = robotFields(cu, elevator).find((f) => f.key === 'endgameSuccess:engage')!;
+    expect(field.get(elevator)).toBe(100);
+    const tuned = applyTuning(cu, { robots: { elevator: { 'endgameSuccess:engage': 70 } } });
+    expect(arch(tuned, 'elevator').endgameSuccess).toEqual({ engage: 0.7 });
+    expect(elevator.endgameSuccess).toBeUndefined();
+  });
+
   it('applies overrides to a copy and leaves the game untouched', () => {
     const tuned = applyTuning(cu, {
       robots: {
