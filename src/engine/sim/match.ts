@@ -352,12 +352,6 @@ export interface Announcement {
   alliance?: Alliance;
 }
 
-export interface RobotSlot {
-  alliance: Alliance;
-  station: number;
-  archetype?: string;
-}
-
 export interface MatchOptions {
   seed?: number;
   /**

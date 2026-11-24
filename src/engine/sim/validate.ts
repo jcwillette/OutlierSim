@@ -1,4 +1,5 @@
 import { expandDefinition } from './expand.ts';
+import { CATEGORIES } from './ledger.ts';
 import { regionOutline } from './math.ts';
 import type { GameDefinition, Region2D, Vec2 } from './types.ts';
 
@@ -166,8 +167,7 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     const path = `rankingPoints.bonuses[${i}] ${b.id}`;
     if (b.id === 'win' || b.id === 'tie') err(path, "'win' and 'tie' are reserved ids");
     if (b.kind === 'pointsAtLeast') {
-      for (const c of b.categories ?? [])
-        if (!['auto', 'teleop', 'endgame', 'penalty'].includes(c)) err(path, `unknown category '${c}'`);
+      for (const c of b.categories ?? []) if (!CATEGORIES.includes(c)) err(path, `unknown category '${c}'`);
       // Sources may also be names a game's rules.ts passes to addPoints, so unknown ones are only
       // an error when there is no rules.ts.
       const unknown = (b.sources ?? []).filter((s) => !sourceIds.has(s));
