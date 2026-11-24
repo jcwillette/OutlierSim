@@ -299,7 +299,10 @@ export interface AllianceSummary {
   endgame: Record<string, number>;
   /** Points per ledger source (expanded target / action / award id, or a rules source string). */
   sources: Record<string, number>;
+  /** Fouls called on this alliance. */
   fouls: { minor: number; major: number };
+  /** Fouls called on this alliance, by reason (rule id and what it was for, e.g. 'G202 pinning'). */
+  foulCalls: Record<string, number>;
 }
 
 export type RankingPointRule =

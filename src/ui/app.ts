@@ -873,6 +873,7 @@ export class App {
         ),
         row('Ranking points', result.blue.rp, result.red.rp),
       ),
+      foulList(result),
       h('h2', {}, 'Robots'),
       h(
         'table',
@@ -915,6 +916,23 @@ export class App {
 }
 
 // ------------------------------------------------------------------ win probability screen
+
+/** The fouls each alliance was called for, by rule, so students see which rules cost points. */
+function foulList(result: MatchResult): HTMLElement | null {
+  const lines = (['blue', 'red'] as const).flatMap((a) =>
+    Object.entries(result[a].foulCalls).map(([reason, n]) =>
+      h('li', { class: a }, `${a === 'blue' ? 'Blue' : 'Red'}: ${reason}${n > 1 ? ` ×${n}` : ''}`),
+    ),
+  );
+  return lines.length
+    ? h(
+        'div',
+        {},
+        h('h2', {}, 'Fouls called (the points go to the other alliance)'),
+        h('ul', { class: 'fouls' }, ...lines),
+      )
+    : null;
+}
 
 const pct0 = (x: number) => `${Math.round(x * 100)}%`;
 const pct1 = (x: number) => `${(x * 100).toFixed(1)}%`;

@@ -145,7 +145,7 @@ export class Referee {
       if (periods > p.called) {
         p.called = periods;
         const severity = periods === 1 ? (rule.severity ?? 'minor') : (rule.repeatSeverity ?? 'major');
-        this.m.addFoul(attacker.alliance, severity, `${rule.id} pinning for ${periods * count} s`);
+        this.m.addFoul(attacker.alliance, severity, `${rule.id} pinning`, `${periods * count} s`);
       }
     } else if (gap >= (rule.releaseGap ?? DEFAULT_PIN_RELEASE_GAP)) this.pins.delete(key);
   }

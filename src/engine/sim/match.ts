@@ -455,6 +455,8 @@ export class Match {
     blue: { minor: 0, major: 0 },
     red: { minor: 0, major: 0 },
   };
+  /** Fouls called on each alliance, by reason. */
+  readonly foulCalls: Record<Alliance, Record<string, number>> = { blue: {}, red: {} };
   readonly random: () => number;
   /**
    * Where Rapier's world sits on the field: centered, and in every other match flipped
@@ -1476,8 +1478,15 @@ export class Match {
     this.def.rules?.onMatchEnd?.(this.rulesCtx);
   }
 
-  addFoul(against: Alliance, severity: 'minor' | 'major', reason: string): void {
+  /**
+   * Call a foul on `against`: the other alliance gets the points. `reason` names the rule and what
+   * it was for (it is the ledger source and the results' tally); `detail` only goes in the
+   * announcement (e.g. how long a pin lasted).
+   */
+  addFoul(against: Alliance, severity: 'minor' | 'major', reason: string, detail?: string): void {
     this.fouls[against][severity]++;
+    const calls = this.foulCalls[against];
+    calls[reason] = (calls[reason] ?? 0) + 1;
     this.ledger.add({
       time: this.time,
       alliance: other(against),
@@ -1486,7 +1495,10 @@ export class Match {
       source: `foul:${reason}`,
       robotId: null,
     });
-    this.announce(`${severity.toUpperCase()} FOUL on ${against}: ${reason}`, against);
+    this.announce(
+      `${severity.toUpperCase()} FOUL on ${against}: ${reason}${detail ? ` (${detail})` : ''}`,
+      against,
+    );
   }
 
   announce(text: string, alliance?: Alliance): void {
@@ -1517,6 +1529,7 @@ export class Match {
       endgame,
       sources: this.ledger.bySource(alliance),
       fouls: { ...this.fouls[alliance] },
+      foulCalls: { ...this.foulCalls[alliance] },
     };
   }
 

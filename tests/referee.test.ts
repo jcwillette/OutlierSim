@@ -199,10 +199,15 @@ describe('pinning', () => {
   };
   it('is a minor foul at 5 s, then a major foul every further 5 s', () => {
     expect(fouls(pin(4.5))).toEqual([]);
-    expect(fouls(pin(5.5))).toEqual(['foul:G2 pinning for 5 s']);
+    expect(fouls(pin(5.5))).toEqual(['foul:G2 pinning']);
     const m = pin(10.5);
-    expect(fouls(m)).toEqual(['foul:G2 pinning for 5 s', 'foul:G2 pinning for 10 s']);
+    expect(fouls(m)).toEqual(['foul:G2 pinning', 'foul:G2 pinning']);
     expect(m.fouls.blue).toEqual({ minor: 1, major: 1 });
+    expect(m.summary('blue').foulCalls).toEqual({ 'G2 pinning': 2 });
+    expect(m.announcements.map((a) => a.text).filter((t) => t.includes('FOUL'))).toEqual([
+      'MINOR FOUL on blue: G2 pinning (5 s)',
+      'MAJOR FOUL on blue: G2 pinning (10 s)',
+    ]);
     expect(m.fouls.red).toEqual({ minor: 0, major: 0 });
   });
   it("isn't a pin when the pressed robot isn't trying to move", () => {
@@ -215,7 +220,7 @@ describe('pinning', () => {
     stepFor(m, 0.3);
     blue.controller = ctl(() => ({ vy: -1 })); // ...and pin again: the count goes on from 3 s
     stepFor(m, 3);
-    expect(fouls(m)).toEqual(['foul:G2 pinning for 5 s']);
+    expect(fouls(m)).toEqual(['foul:G2 pinning']);
     put(blue, 4, 0.45 + 0.8 + 1.9); // 1.9 m apart: the pin is over
     blue.controller = ctl(() => ({}));
     stepFor(m, 0.2);
