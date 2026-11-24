@@ -87,7 +87,12 @@ function expandSided<T extends { id: string; side: Side }>(
   return out;
 }
 
-function flipElement(e: FieldElement, sym: Symmetry, f: FieldDims): FieldElement {
+/** A field element's copy on the other half of the field (authored or expanded form alike). */
+export function flipElement<E extends Pick<FieldElement, 'shape' | 'position' | 'rotation'>>(
+  e: E,
+  sym: Symmetry,
+  f: FieldDims,
+): E {
   if (e.shape.kind === 'hull') {
     const q = eulerToQuat(e.rotation);
     const world = e.shape.vertices.map((v) => {
@@ -142,6 +147,20 @@ function flipStation(s: HumanPlayerStation, sym: Symmetry, f: FieldDims): HumanP
     zone: flipRegion(s.zone, sym, f),
     ...(s.dropPoint ? { dropPoint: flipVec3(s.dropPoint, sym, f) } : {}),
     ...(s.dropVelocity ? { dropVelocity: flipDir3(s.dropVelocity, sym) } : {}),
+  };
+}
+
+/**
+ * The field's elements seen from the red alliance wall, i.e. each one moved to its mirror / rotation
+ * image. Sided elements come in exact pairs (the red copy is the blue one's image), so from the red
+ * wall the two copies just trade places and the set is unchanged, bit for bit. Only neutral elements
+ * move. Bots plan in their own alliance's frame on it (`AllianceNav`).
+ */
+export function fieldFromRed(game: ExpandedGame): ExpandedGame {
+  const field = game.def.field;
+  return {
+    ...game,
+    elements: game.elements.map((e) => (e.alliance === null ? flipElement(e, field.symmetry, field) : e)),
   };
 }
 

@@ -341,10 +341,11 @@ export class FieldView {
   sync(match: Match): void {
     for (const r of match.robots) {
       const v = this.robotVisual(r);
-      const t = r.body.translation();
-      const q = r.body.rotation();
+      // Field pose (Rapier's world is centered, and flipped in every other match). Robots only turn
+      // about z, and their front matters, so draw them from the field heading.
+      const t = { x: r.x, y: r.y, z: r.z };
       v.group.position.set(t.x, t.y, t.z);
-      v.group.quaternion.set(q.x, q.y, q.z, q.w);
+      v.group.rotation.set(0, 0, r.yaw);
       // Show "climbed" for robots still on the floor (a robot on a ramp or platform already looks it).
       if (r.endgameDone && t.z < r.archetype.frame.height / 2 + 0.05) v.group.position.z += 0.35;
 
@@ -391,8 +392,8 @@ export class FieldView {
       }
       m.visible = p.status === 'field';
       if (!m.visible) continue;
-      const t = p.body.translation();
-      const q = p.body.rotation();
+      const t = p.position;
+      const q = match.physics.quat(p.body.rotation());
       m.position.set(t.x, t.y, t.z);
       m.quaternion.set(q.x, q.y, q.z, q.w);
     }

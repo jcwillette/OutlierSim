@@ -1,6 +1,6 @@
-import type { ExpandedGame } from '../sim/expand.ts';
-import { eulerToQuat, pointInRegion, rotateVec } from '../sim/math.ts';
-import type { Region2D, Vec2 } from '../sim/types.ts';
+import { fieldFromRed, type ExpandedGame } from '../sim/expand.ts';
+import { eulerToQuat, flipRegion, pointInRegion, rotateVec } from '../sim/math.ts';
+import type { Alliance, Region2D, Vec2 } from '../sim/types.ts';
 
 /** Elements whose top is below this are drivable (ramps, bumps). */
 const DRIVABLE_HEIGHT = 0.2;
@@ -385,6 +385,85 @@ export class NavGrid {
       k = j + 1;
     }
     return out;
+  }
+}
+
+/**
+ * One alliance's navigation: a NavGrid laid out from that alliance's own wall.
+ *
+ * A grid starts at a corner of the field, and its cells rarely fit the field exactly (2023's 0.12 m
+ * cells leave the red half 1.8 cm off-grid). A* and `nearestFree` also break ties in fixed
+ * directions. One shared grid would therefore make red's half a slightly different maze from blue's:
+ * other paths, other spots, other tie-breaks. Red plans instead on a grid of the field seen from the
+ * red wall (`fieldFromRed`), and every query point and answer goes through the field's mirror /
+ * rotation. On a symmetric field both alliances get exact mirror images of each other's paths and
+ * spots (ADR 0007). Blue's grid is the plain field, so blue plans exactly as before.
+ */
+export class AllianceNav {
+  readonly grid: NavGrid;
+  /** Field point to this alliance's frame and back (its own inverse). Null for blue. */
+  private readonly flip: ((p: Vec2) => Vec2) | null;
+  private readonly flipZone: ((r: Region2D) => Region2D) | null;
+  /** Penalty regions moved into this alliance's frame, by penalty key. */
+  private readonly flippedPenalties = new Map<string, Region2D[]>();
+
+  constructor(
+    game: ExpandedGame,
+    inflate: number,
+    readonly alliance: Alliance,
+  ) {
+    const field = game.def.field;
+    if (alliance === 'blue') {
+      this.flip = null;
+      this.flipZone = null;
+      this.grid = new NavGrid(game, inflate);
+    } else {
+      const { length: L, width: W, symmetry } = field;
+      this.flip =
+        symmetry === 'rotational' ? (p) => ({ x: L - p.x, y: W - p.y }) : (p) => ({ x: L - p.x, y: p.y });
+      this.flipZone = (r) => flipRegion(r, symmetry, field);
+      this.grid = new NavGrid(fieldFromRed(game), inflate);
+    }
+  }
+
+  isFree(p: Vec2): boolean {
+    return this.grid.isFree(this.flip ? this.flip(p) : p);
+  }
+
+  isSlow(p: Vec2): boolean {
+    return this.grid.isSlow(this.flip ? this.flip(p) : p);
+  }
+
+  /** Nearest free point to `p`, or `p` itself if free. */
+  nearestFree(p: Vec2): Vec2 {
+    if (!this.flip) return this.grid.nearestFree(p);
+    const q = this.flip(p);
+    const free = this.grid.nearestFree(q);
+    return free === q ? p : this.flip(free);
+  }
+
+  /** `NavGrid.findPath` in this alliance's frame. */
+  findPath(
+    a: Vec2,
+    b: Vec2,
+    avoid: readonly DynamicObstacle[] = [],
+    penalty?: { key: string; regions: readonly Region2D[] },
+  ): Vec2[] {
+    const flip = this.flip;
+    if (!flip) return this.grid.findPath(a, b, avoid, penalty);
+    let regions: Region2D[] | undefined;
+    if (penalty) {
+      regions = this.flippedPenalties.get(penalty.key);
+      if (!regions) this.flippedPenalties.set(penalty.key, (regions = penalty.regions.map(this.flipZone!)));
+    }
+    return this.grid
+      .findPath(
+        flip(a),
+        flip(b),
+        avoid.map((o) => ({ ...flip(o), radius: o.radius })),
+        penalty && { key: penalty.key, regions: regions! },
+      )
+      .map(flip);
   }
 }
 

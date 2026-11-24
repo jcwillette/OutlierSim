@@ -38,9 +38,10 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
 - `src/engine/sim/`: the headless, deterministic core.
   - Rapier physics at a fixed 60 Hz step, match clock and phases, scoring sensors, and a score ledger with a TBA-style breakdown.
   - Step the physics with `stepWorld(world)` (`bodyState.ts`), not `world.step()`; it skips Rapier's per-step soft-body bookkeeping. `Robot` pose / velocity getters and `Piece.position` are cached per `bodyEpoch`, which advances on every step and every `RigidBody` mutator call (wrapped once in `bodyState.ts`), so setting a body directly (tests do) is always seen.
+  - Rapier's world is not the field frame (`PhysicsFrame` in `frame.ts`, ADR 0007). It is centered on the field, so float32 rounds both halves alike, and on even seeds it is the field's mirror / rotation image (`MatchOptions.flipPhysics`), so Rapier's handedness favors neither end over a run. Read poses through `Robot` / `Piece` getters and move bodies with `setPosition` / `setVelocity` (field coordinates). Raw `body` calls see physics coordinates; go through `match.physics` if you must use them.
   - **Must never import Three.js, the DOM, `ui/`, `input/` or `render/`.** ESLint `no-restricted-imports` enforces this for `sim/`, `ai/` and `games/`. That rule is what lets full matches run in Node for tests and calibration.
 - `src/engine/ai/`: the generic bot AI. It is headless and drives robots only through `RobotCommand`, the same as the player, so it never cheats.
-  - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m. Nav grids and shot spots (`PointIndex`, exact nearest-spot queries) are cached per `GameDefinition` object and shared by every match of it, so never mutate a definition: `applyTuning` returns a copy.
+  - `NavGrid` is an inflated occupancy grid with A* and string-pull smoothing, built from solid elements taller than 0.2 m. Bots use it through `AllianceNav`: each alliance plans on a grid laid out from its own wall, so red's half is never a slightly different maze (cell alignment, tie-breaks). Fixed turn or side preferences go through `handedness()`. Both are ADR 0007. Nav grids and shot spots (`PointIndex`, exact nearest-spot queries) are cached per `GameDefinition` object and shared by every match of it, so never mutate a definition: `applyTuning` returns a copy.
   - `BotBrain` is a utility planner. Each option is scored as points per second over the whole cycle (fetch, travel to score, action time), with hysteresis.
   - It picks shot spots precomputed with `solveShot`, uses approach headings so intakes can reach pieces, makes time-boxed endgame decisions, and plays defense when `botHints.defenseShare` > 0.
   - Teammates coordinate like an alliance on a radio:
@@ -82,7 +83,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
 
 ### Conventions that span files
 
-- **Coordinates**: everything uses WPILib field coordinates: meters, seconds, radians, Z-up, origin at the blue alliance wall corner, +X toward red, +Y left as seen from the blue drivers. The Three.js scene uses the same Z-up frame (cameras set `up = (0,0,1)`), so Rapier poses copy straight across. Cylinders need `rotateX(π/2)` in Three and a roll of π/2 in Rapier. Manual drawings and WPILib's AprilTag layout JSON map directly onto this frame.
+- **Coordinates**: everything uses WPILib field coordinates: meters, seconds, radians, Z-up, origin at the blue alliance wall corner, +X toward red, +Y left as seen from the blue drivers. The Three.js scene uses the same Z-up frame (cameras set `up = (0,0,1)`). Rapier's world is centered and sometimes flipped (`match.physics`), so draw from the `Robot` / `Piece` getters, robots from their field `yaw`. Cylinders need `rotateX(π/2)` in Three and a roll of π/2 in Rapier. Manual drawings and WPILib's AprilTag layout JSON map directly onto this frame.
 - **Mechanisms are abstracted** (ADR 0003).
   - Intake is a sensor volume at the front of the robot.
   - Placing and climbing are timed actions inside a target or zone.
@@ -94,6 +95,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - When a new game needs something the schema can't express, put it in that game's `rules.ts` first. Promote it into the engine only when a second game needs it.
 - **Rapier**: call `await RAPIER.init()` before creating a world (browser and Node).
 - **Speed-ups never change results** (ADR 0006): the same seed must give the same match, bit for bit. Run `npm run bench -- --json before.json` first and `npm run bench -- --compare before.json` after, and keep `tests/speed.test.ts` passing. Changes that alter matches (Rapier SIMD build, lower physics rate, sparser re-planning) are model changes, not speed-ups.
+- **Blue and red play the same game** (ADR 0007): identical alliances must give identical result distributions. `tests/symmetry.test.ts` checks it: red's nav answers are exact images of blue's, and with fixed randomness red's bots mirror blue's decisions and moves. Anything with a fixed direction preference (left first, +x first, a scan order) must go through the alliance's frame. To check a change statistically, run identical alliances and compare blue with red, including spread and bonus-RP rates, not just win rates.
 - **IP hygiene**: field and robots use generic primitives and alliance colors, with no _FIRST_ logos or copied assets. The UI says the game is unofficial. Manuals and videos go in the git-ignored `work/` directory and are never committed.
 
 ## Checking the client in a browser

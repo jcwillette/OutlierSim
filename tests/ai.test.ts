@@ -74,8 +74,10 @@ describe('NavGrid: ramps, parked robots and penalty zones', () => {
 describe('bot teamwork and defense on 2023 Charged Up', () => {
   const cu = findGame('2023-chargedup')!;
   it('teammates rarely push each other, and nobody is credited an endgame off the station', () => {
+    // Contact varies a lot from match to match (about 2-22 s), so judge the mean of several.
+    const seeds = [1, 2, 3, 4, 5, 6, 7, 8];
     let teamContact = 0;
-    for (const seed of [3, 4]) {
+    for (const seed of seeds) {
       const m = new Match(cu, {
         seed,
         archetypes: { 0: 'elevator', 1: 'arm', 2: 'kitbot', 3: 'cubebot', 4: 'elevator', 5: 'arm' },
@@ -97,7 +99,7 @@ describe('bot teamwork and defense on 2023 Charged Up', () => {
       }
     }
     // Before teammate coordination this was ~27 s per match.
-    expect(teamContact / 2).toBeLessThan(15);
+    expect(teamContact / seeds.length).toBeLessThan(15);
   });
   it('an empty-handed bot blocks a nearby opponent carrying a piece, but not inside its protected zone', () => {
     const m = new Match(cu, { seed: 1, archetypes: { 0: 'kitbot' } });
@@ -107,8 +109,8 @@ describe('bot teamwork and defense on 2023 Charged Up', () => {
     const me = m.robots[0]!;
     const opp = m.robots[4]!; // red, heading home (+x) with a piece
     const put = (r: typeof me, x: number, y: number) => {
-      r.body.setTranslation({ x, y, z: r.archetype.frame.height / 2 + 0.01 }, true);
-      r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      r.setPosition({ x, y, z: r.archetype.frame.height / 2 + 0.01 });
+      r.setVelocity({ x: 0, y: 0, z: 0 });
     };
     for (const r of m.robots)
       if (r !== me && r !== opp) put(r, r.alliance === 'blue' ? 1.95 : 14.6, r.station * 2 + 0.6);
@@ -116,7 +118,7 @@ describe('bot teamwork and defense on 2023 Charged Up', () => {
     put(me, 8.2, 6.6);
     put(opp, 7.4, 6.6);
     opp.action = null; // it may have been mid-placement when we moved it
-    opp.body.setLinvel({ x: 2.5, y: 0, z: 0 }, true);
+    opp.setVelocity({ x: 2.5, y: 0, z: 0 });
     if (!opp.held.length) opp.held.push('cube');
     const brain = bots.get(0)!;
     (brain as unknown as { decide: (m: Match, r: typeof me) => void }).decide(m, me);
@@ -124,7 +126,7 @@ describe('bot teamwork and defense on 2023 Charged Up', () => {
     // The same opponent inside its own loading zone (red's is at the blue end) is off limits.
     put(opp, 2.0, 7.0);
     opp.action = null;
-    opp.body.setLinvel({ x: 2.5, y: 0, z: 0 }, true);
+    opp.setVelocity({ x: 2.5, y: 0, z: 0 });
     put(me, 2.8, 7.0);
     (brain as unknown as { decide: (m: Match, r: typeof me) => void }).decide(m, me);
     expect(brain.currentPlan.kind).not.toBe('defend');
@@ -152,11 +154,8 @@ describe('clean defense on 2023 Charged Up', () => {
     while (m.phase !== 'teleop') m.step();
     // Park everyone mid-field, clear of protected zones.
     m.robots.forEach((r, i) => {
-      r.body.setTranslation(
-        { x: 7 + (i % 3), y: 3 + Math.floor(i / 3) * 2, z: r.archetype.frame.height / 2 + 0.01 },
-        true,
-      );
-      r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      r.setPosition({ x: 7 + (i % 3), y: 3 + Math.floor(i / 3) * 2, z: r.archetype.frame.height / 2 + 0.01 });
+      r.setVelocity({ x: 0, y: 0, z: 0 });
     });
     return { m, me: m.robots[0]!, brain: bots.get(0)! as unknown as Brainish };
   };
@@ -176,24 +175,12 @@ describe('clean defense on 2023 Charged Up', () => {
     const endgameOnly = { ...cu, botHints: { ...cu.botHints, protectedZones: [] } };
     const { m, me, brain } = setup({}, endgameOnly);
     const o = m.robots[4]!;
-    o.body.setTranslation(
-      { x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 },
-      true,
-    );
-    me.body.setTranslation(
-      { x: cu.field.length - 6.2, y: 2.745, z: me.archetype.frame.height / 2 + 0.01 },
-      true,
-    );
+    o.setPosition({ x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 });
+    me.setPosition({ x: cu.field.length - 6.2, y: 2.745, z: me.archetype.frame.height / 2 + 0.01 });
     expect(brain.worthDefending(m, me, o)).toBe(true); // not endgame yet
     while (!m.isEndgame) m.step();
-    o.body.setTranslation(
-      { x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 },
-      true,
-    );
-    me.body.setTranslation(
-      { x: cu.field.length - 6.2, y: 2.745, z: me.archetype.frame.height / 2 + 0.01 },
-      true,
-    );
+    o.setPosition({ x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 });
+    me.setPosition({ x: cu.field.length - 6.2, y: 2.745, z: me.archetype.frame.height / 2 + 0.01 });
     expect(brain.worthDefending(m, me, o)).toBe(false);
   });
 });

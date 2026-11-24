@@ -32,8 +32,8 @@ const stepFor = (m: Match, seconds: number) => {
   for (let i = 0; i < Math.round(seconds * 60); i++) m.step();
 };
 const teleport = (r: Robot, x: number, y: number, z = r.archetype.frame.height / 2 + 0.01) => {
-  r.body.setTranslation({ x, y, z }, true);
-  r.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  r.setPosition({ x, y, z });
+  r.setVelocity({ x: 0, y: 0, z: 0 });
 };
 
 describe('2023 Charged Up: layout helpers', () => {
@@ -63,7 +63,7 @@ describe('2023 Charged Up: engine features it relies on', () => {
     m.start();
     stepFor(m, 15);
     expect(r.endgameDone?.actionId).toBe('auto-engage.blue');
-    expect(r.body.translation().z).toBeGreaterThan(r.archetype.frame.height / 2 + 0.1); // on top
+    expect(r.z).toBeGreaterThan(r.archetype.frame.height / 2 + 0.1); // on top
     expect(m.ledger.bySource('blue')['auto-engage.blue']).toBe(12);
     stepFor(m, 3.5); // into teleop
     expect(r.endgameDone).toBeNull();
