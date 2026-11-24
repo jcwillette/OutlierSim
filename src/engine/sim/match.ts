@@ -208,16 +208,6 @@ export class Robot {
     if (this.poseAt !== bodyEpoch) this.readPose();
     return this.px;
   }
-
-  /** Broken down or in a short outage at match time `t`: no driving, no mechanisms. */
-  isOut(t: number): boolean {
-    return this.brokenDown || t < this.stalledUntil;
-  }
-
-  /** Can intake, place and shoot at match time `t` (not out, mechanisms working). */
-  canHandlePieces(t: number): boolean {
-    return !this.mechDown && !this.isOut(t);
-  }
   get y(): number {
     if (this.poseAt !== bodyEpoch) this.readPose();
     return this.py;
@@ -245,6 +235,16 @@ export class Robot {
     if (this.velAt !== bodyEpoch) this.readVel();
     return Math.hypot(this.pvx, this.pvy);
   }
+  /** Broken down or in a short outage at match time `t`: no driving, no mechanisms. */
+  isOut(t: number): boolean {
+    return this.brokenDown || t < this.stalledUntil;
+  }
+
+  /** Can intake, place and shoot at match time `t` (not out, mechanisms working). */
+  canHandlePieces(t: number): boolean {
+    return !this.mechDown && !this.isOut(t);
+  }
+
   private bodyMass: number | undefined;
   /** Rapier's mass for the chassis (constant: it comes from the one collider's density). */
   get mass(): number {
@@ -1138,7 +1138,8 @@ export class Match {
     }
   }
 
-  private canUseTarget(r: Robot, ts: TargetState): boolean {
+  /** A target is open to this robot now: enabled, not full, and its alliance's (or a scorer-credit one). */
+  canUseTarget(r: Robot, ts: TargetState): boolean {
     const t = ts.target;
     if (!ts.enabled) return false;
     if (t.alliance && (t.creditTo ?? 'owner') === 'owner' && t.alliance !== r.alliance) return false;

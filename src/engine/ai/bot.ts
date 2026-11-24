@@ -399,8 +399,9 @@ export class BotBrain implements RobotController {
     }
   }
 
-  private travelTime(m: Match, r: Robot, p: Vec2): number {
-    return (Math.hypot(p.x - r.x, p.y - r.y) * 1.25) / (r.archetype.drive.maxSpeed * this.skill.speed) + 0.3;
+  /** Estimated seconds to drive from where the robot is to `p` (path overhead and settling included). */
+  private travelTime(_m: Match, r: Robot, p: Vec2): number {
+    return this.travelBetween(r, r, p);
   }
 
   private period(m: Match): 'auto' | 'teleop' {
@@ -411,12 +412,9 @@ export class BotBrain implements RobotController {
     return m.def.botHints?.targetWeights?.[t.baseId] ?? 1;
   }
 
+  /** The robot could score in `t` now (open, not full, its alliance's) and the game wants it to. */
   private usableTarget(m: Match, r: Robot, t: XTarget): boolean {
-    const ts = m.targets.get(t.id)!;
-    if (!ts.enabled) return false;
-    if (t.alliance && (t.creditTo ?? 'owner') === 'owner' && t.alliance !== r.alliance) return false;
-    if (t.capacity !== undefined && ts.count >= t.capacity) return false;
-    return this.weight(m, t) > 0;
+    return m.canUseTarget(r, m.targets.get(t.id)!) && this.weight(m, t) > 0;
   }
 
   /**
@@ -428,6 +426,7 @@ export class BotBrain implements RobotController {
     return approachHeading(gridFor(m, r), r.archetype.frame.length, r, pos, handedness(m, r));
   }
 
+  /** Estimated seconds for this robot to drive from `a` to `b`. */
   private travelBetween(r: Robot, a: Vec2, b: Vec2): number {
     return (Math.hypot(b.x - a.x, b.y - a.y) * 1.25) / (r.archetype.drive.maxSpeed * this.skill.speed) + 0.3;
   }
@@ -541,9 +540,9 @@ export class BotBrain implements RobotController {
         if (time !== null) {
           const point = gridFor(m, r).nearestFree(regionCenter(t.place.zone));
           if (pointInRegion(point, t.place.zone) && !this.spotTaken(m, r, point)) {
-            // Soft claim: a teammate already headed here means waiting for them.
+            // Soft claim: a teammate already headed here (or next door, which blocks us) means
+            // waiting for them.
             const claim = `place:${t.id}`;
-            // A teammate already headed here (or next door, which blocks us) means waiting for them.
             const wait =
               (this.claimedByOther(m, r, claim) ? time + 2 : 0) +
               (this.teammateHeadedTo(m, r, point) ? 3 : 0);
@@ -961,7 +960,43 @@ export class BotBrain implements RobotController {
       dx = dx * 0.35 + (sideX / n) * 0.6 * this.skill.speed;
       dy = dy * 0.35 + (sideY / n) * 0.6 * this.skill.speed;
     }
+    const room = this.makeRoom(m, r);
+    if (room) {
+      dx = dx * 0.35 + room.x * 0.8 * this.skill.speed;
+      dy = dy * 0.35 + room.y * 0.8 * this.skill.speed;
+    }
     return { vx: dx, vy: dy, dist };
+  }
+
+  /**
+   * Standing on the spot a higher-priority teammate announced it's headed for (an endgame zone, a
+   * scoring spot): step out of its approach lane, to the open side, so the two don't each block the
+   * other's goal. A unit direction, or null.
+   */
+  private makeRoom(m: Match, r: Robot): Vec2 | null {
+    if (this.lapsing) return null;
+    for (const [id, q] of aiFor(m).intents[r.alliance]) {
+      if (id === r.id) continue;
+      const o = m.robots[id]!;
+      if (o.endgameDone || Math.hypot(q.x - r.x, q.y - r.y) > halfSize(r) + halfSize(o) * 0.5) continue;
+      if (yieldPriority(m, r, o) >= yieldPriority(m, o, r)) continue;
+      const ax = q.x - o.x;
+      const ay = q.y - o.y;
+      const an = Math.hypot(ax, ay);
+      if (an < 0.3) continue; // it's there already
+      const ux = ax / an;
+      const uy = ay / an;
+      // Our side of its approach line first (dead on it: left, in this alliance's frame), then the
+      // other side, whichever has open floor.
+      const lat = ux * (r.y - o.y) - uy * (r.x - o.x);
+      const first = lat > 0 ? 1 : lat < 0 ? -1 : handedness(m, r);
+      const grid = gridFor(m, r);
+      for (const side of [first, -first]) {
+        const dir = { x: -uy * side, y: ux * side };
+        if (grid.isFree({ x: r.x + dir.x * 0.9, y: r.y + dir.y * 0.9 })) return dir;
+      }
+    }
+    return null;
   }
 
   /** Robots stopped on the field (placing, loading, docked): plan paths around them. */

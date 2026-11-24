@@ -8,7 +8,7 @@ describe('plausibility tool helpers', () => {
   it("plays the game's lineup presets, or its default robot three times", () => {
     expect(lineupsFor(cu).map((l) => l.id)).toEqual(cu.lineups!.map((l) => l.id));
     expect(lineupsFor(cu, ['shutdown'])[0]!.roles).toEqual([undefined, undefined, 'defense']);
-    expect(lineupsFor(ref)).toEqual([
+    expect(lineupsFor({ ...ref, lineups: [] })).toEqual([
       expect.objectContaining({ id: 'default', archetypes: ['allround', 'allround', 'allround'] }),
     ]);
     expect(() => lineupsFor(cu, ['nope'])).toThrow(/Unknown lineup 'nope'/);
