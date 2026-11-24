@@ -141,7 +141,7 @@ Environment notes:
 - `www.thebluealliance.com` is proxy-authenticated in the cloud container, so no key is needed. Elsewhere, set `TBA_KEY`. Use it only for an owner-requested comparison.
 - Node's `fetch` only uses the proxy with `NODE_USE_ENV_PROXY=1`. The `calibrate` script sets it.
 - TBA responses are cached in `work/tba-cache/`.
-- YouTube is blocked by the network policy, so ask the user to upload reveal videos.
+- YouTube: even when the network allows its pages, YouTube's own bot check refuses video downloads from the cloud container ("Sign in to confirm you're not a bot", every yt-dlp client, 2026-11). Ask the user to upload reveal or match videos.
 - FIRST's manual blob storage (`firstfrc.blob.core.windows.net`) is reachable.
 
 ## Workflow and project memory

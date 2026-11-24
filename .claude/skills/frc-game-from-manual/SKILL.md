@@ -19,7 +19,7 @@ Read `CLAUDE.md` first if it isn't already in context. The schema source of trut
 
 - **Manual PDF** (required). If the user gives a URL, `curl -L -o work/<id>/manual.pdf <url>`. FIRST's blob storage is reachable from the cloud container.
 - **Archive what you built from.** FIRST replaces the file behind the manual URL with each revision (the 2023 URL now serves the April copy, so the January build can't be re-checked). Record the revision and date from the manual's footer and the SHA-256 (`work/<id>/manual/meta.txt` after ingest) in `SOURCES.md`, and the Team Updates you read. `work/` is git-ignored, so tell the owner to keep a copy of the kickoff PDF.
-- **Reveal or animation video** (strongly recommended). YouTube is normally **blocked** in cloud sessions, so ask the user to upload the video file. Don't try to work around the network policy. If the user says the host is allowed, `pip install yt-dlp` and pass the URL.
+- **Reveal or animation video** (strongly recommended). YouTube is normally **blocked** in cloud sessions, so ask the user to upload the video file. Don't try to work around the network policy. If the user says the host is allowed, `pip install yt-dlp` and try the URL once. YouTube's bot check has refused downloads from the cloud container even then (2026-11), so fall back to an upload.
 - Optional: WPILib's AprilTag field layout JSON for the season (exact field size and element poses), and the official field drawings PDF.
 - **Never commit manuals, videos or frames** (copyright, size).
 
