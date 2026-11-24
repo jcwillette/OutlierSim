@@ -79,8 +79,11 @@ export const definition: GameDefinition = {
     //   // Weighed robot in lb (manual's weight rule); drive limits from COTS hardware, see drivetrain.ts.
     //   mass: onFieldMass(120),
     //   drive: driveFor(swerve(MOTORS.krakenX60, GEARINGS.mk4L2, 120), 9),
+    //   // Mechanism times (hardware). The drive team's per-tier line-up, auto routine, endgame
+    //   // success and reliability: start from the skill's robot-baselines.md (2023-calibrated tiers).
     //   capacity: { piece: 1 }, intake: { pieceTypes: ['piece'], timeSec: 0.3 },
-    //   place: { L1: 0.6 }, endgame: { climb: 5 }, reliability: 0.95,
+    //   place: { L1: 0.6 }, alignSec: 2.6, auto: { pieces: 2, success: 0.85 },
+    //   endgame: { climb: 5 }, endgameSuccess: { climb: 0.9 }, reliability: 0.97,
     // },
   ],
   defaultArchetype: 'allround',

@@ -231,8 +231,9 @@ export interface HumanPlayerStation {
    */
   handoffHeight?: number;
   /**
-   * 'direct' mode: seconds a robot must stay in the zone intaking before the piece is in it (lining
-   * up on a shelf, grabbing). Default 0 (instant).
+   * 'direct' mode: seconds a robot must stay in the zone intaking before the human player's piece
+   * reaches its intake (lining up on a shelf, the hand-over). Default 0 (instant). The robot then
+   * takes its own `intake.timeSec` to grab it.
    */
   handoffSec?: number;
   source?: Citation;
@@ -464,15 +465,26 @@ export interface RobotArchetype {
   totalCapacity?: number;
   intake?: {
     pieceTypes: string[];
-    /** Seconds per piece. */
+    /**
+     * Seconds the robot stops to get a piece into the robot once it's in reach: on the floor, or
+     * after lining up at a station's hand-off (`HumanPlayerStation.handoffSec`). Also the least time
+     * between two pieces.
+     */
     timeSec: number;
     /** Depth of the intake region in front of the bumper, meters. Default 0.15. */
     reach?: number;
     /** Highest piece-center height the intake can grab, meters. Default 0.3. */
     maxHeight?: number;
   };
-  /** Target tag -> seconds to place one piece. */
+  /** Target tag -> seconds to place one piece (the mechanism; see `alignSec` for the drive team). */
   place?: Record<string, number>;
+  /**
+   * Bots only: seconds this robot's typical drive team spends lining up each teleop pickup and
+   * placement before the mechanism starts (fine adjustments, misses and retries). The bot waits at
+   * the piece, station or target, and can still break off (e.g. for the endgame). A programmed auto
+   * routine doesn't need it, and a player drives their own robot. Default 0.
+   */
+  alignSec?: number;
   shooter?: {
     pieceTypes: string[];
     /** Maximum exit speed, m/s. The engine picks speed and hood angle per shot. */
@@ -510,9 +522,31 @@ export interface RobotArchetype {
   reliability?: number;
   /** Explicit per-match fault rates, overriding the ones derived from `reliability` (menu tuning). */
   faults?: Partial<FaultRates>;
+  /** What its autonomous routine does when a bot runs it. Omit for the planner's best effort. */
+  auto?: AutoRoutine;
   /** What a bot driving this robot does by default: score, or play defense all teleop. */
   defaultRole?: RobotRole;
   source?: Citation;
+}
+
+/**
+ * A robot's autonomous routine, as a bot runs it (and the player's "auto routine" option). Real autos
+ * do far less than the planner's best effort: many robots score only their preload, some only drive
+ * out of the starting zone, some do nothing.
+ */
+export interface AutoRoutine {
+  /** Most game pieces the routine scores, preload included. Omit for no limit. */
+  pieces?: number;
+  /**
+   * Once its pieces are scored, drive out of the starting zone (the game's `leaveZoneInAuto` awards)
+   * if it hasn't already. Default true. Fetching a piece can take it out anyway.
+   */
+  leave?: boolean;
+  /**
+   * Chance (0..1) the routine runs in a match. Otherwise the robot sits still until teleop (a dead or
+   * missing auto). Default 1. The player's own auto routine always runs.
+   */
+  success?: number;
 }
 
 export type RobotRole = 'score' | 'defense';
@@ -610,6 +644,12 @@ export interface GameRules {
   onScore?(ctx: RulesContext, event: ScoreEvent): number | void;
   onPhaseChange?(ctx: RulesContext, phase: MatchPhase): void;
   onMatchEnd?(ctx: RulesContext): void;
+  /**
+   * Extra points the bots should count for scoring a piece in `targetId` (expanded id) for
+   * `alliance` now, such as a bonus that piece would complete (2023: a LINK). Bots only: it never
+   * changes the score. Called often while bots plan, so keep it cheap.
+   */
+  botValue?(ctx: RulesContext, alliance: Alliance, targetId: string): number;
 }
 
 /** Optional strategy hints for the generic bot AI. */

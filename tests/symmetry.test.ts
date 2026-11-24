@@ -110,14 +110,22 @@ describe.each(GAMES.map((g) => [g.definition.id, g.definition] as const))(
 );
 
 describe('alliance symmetry of a whole match (2023 Charged Up)', () => {
-  const def = findGame('2023-chargedup')!;
+  const base = findGame('2023-chargedup')!;
+  // A two-piece auto for the cube robot, so it fetches a staged cube early (the approach heading);
+  // the cone robot's one-piece routine then drives out of the community (the leave point).
+  const def = {
+    ...base,
+    archetypes: base.archetypes.map((a) =>
+      a.id === 'cubebot' ? { ...a, auto: { ...a.auto, pieces: 2 } } : a,
+    ),
+  };
   const flip = flipper(def);
   const archetypes = {
     0: 'elevator',
-    1: 'elevator',
+    1: 'cone',
     2: 'cubebot',
     3: 'elevator',
-    4: 'elevator',
+    4: 'cone',
     5: 'cubebot',
   };
   /** A bot match where both alliances get the same "random" numbers (no noise, jitter or lapses). */
@@ -151,6 +159,7 @@ describe('alliance symmetry of a whole match (2023 Charged Up)', () => {
       /** Pieces to fetch and approach headings: they come from where Rapier has the piece resting. */
       let maxPiece = 0;
       let acquires = 0;
+      let leaves = 0;
       // Preload placements and the first trips out, until just before the first staged piece is
       // picked up (from then on Rapier's contact solver, which isn't mirror-exact, has a say).
       while (m.time < 2.5) {
@@ -172,6 +181,7 @@ describe('alliance symmetry of a whole match (2023 Charged Up)', () => {
             if (acquire) maxPiece = Math.max(maxPiece, d);
             else maxSpot = Math.max(maxSpot, d);
           }
+          if (pb.kind === 'leave') leaves++;
           if (acquire) {
             acquires++;
             const turn = wrapAngle((pr.approachYaw as number) - (pb.approachYaw as number));
@@ -188,6 +198,7 @@ describe('alliance symmetry of a whole match (2023 Charged Up)', () => {
       expect(maxPos).toBeLessThan(1e-7);
       expect(maxYaw).toBeLessThan(1e-4);
       expect(acquires).toBeGreaterThan(0); // the approach-heading choice was exercised
+      expect(leaves).toBeGreaterThan(0); // and an auto routine's leave point
       const placed = (a: string) => m.ledger.entries.filter((e) => e.alliance === a).length;
       expect(placed('blue')).toBeGreaterThan(0);
       expect(placed('red')).toBe(placed('blue'));

@@ -100,6 +100,14 @@ export function countLinks(filled: boolean[][]): number {
   return links;
 }
 
+/**
+ * SUSTAINABILITY BONUS: LINKS needed for the ranking point, one fewer with the COOPERTITION BONUS.
+ * The April 2023 manual (V4) says 6 (5): that was the Championship's threshold. Real 2023 results
+ * (The Blue Alliance, weeks 1-6 and every district championship) award it at 5 (4), the in-season
+ * rule this game plays. Found in the owner-requested comparison with real matches (CALIBRATION.md).
+ */
+export const SUSTAINABILITY_LINKS = 5;
+
 /** Pieces on the CO-OP GRID (columns 4-6, all rows). */
 export function coopPieces(filled: boolean[][]): number {
   let n = 0;

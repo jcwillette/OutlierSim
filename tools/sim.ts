@@ -4,6 +4,7 @@
  *   npm run sim -- --game 0000-reference --matches 20 [--seed 1] [--difficulty normal] [--json out.json]
  *   [--archetypes allround,turret,stacker]  (blue 1-3, mirrored for red)
  *   [--lineups blueId,redId]               (the game's `lineups` presets; overrides --archetypes)
+ *   [--random]                               (deal robot types like the menu's random preset, every match)
  *   [--strategy balanced|max-cycles|early-endgame|aggressive]  (both alliances, unless a preset sets one)
  *   [--perfect]                              (no breakdowns or power losses)
  *   [--tuning tuning.json]                   (robot / station overrides, the menu's GameTuning format)
@@ -19,6 +20,8 @@ import {
   type RobotRole,
 } from '../src/engine/sim/index.ts';
 import { GAMES, findGame } from '../src/games/index.ts';
+import { defaultLineup, resolveLineup } from '../src/ui/lineup.ts';
+import { dealRng } from '../src/ui/montecarlo.ts';
 import { applyTuning } from '../src/ui/tuning.ts';
 
 function arg(name: string, fallback?: string): string | undefined {
@@ -67,6 +70,11 @@ export async function runSims(
     archetypes?: string[];
     /** Lineup preset ids [blue, red] from the game's `lineups`. */
     lineups?: [string, string];
+    /**
+     * Deal each alliance three different robot types every match, like the menu's random preset
+     * (`dealRng(seed)`, so a match replays in the app). Overrides `archetypes` and `lineups`.
+     */
+    random?: boolean;
     strategy?: AllianceStrategy;
     /** Robots can break down / lose power (default true). */
     breakdowns?: boolean;
@@ -100,8 +108,14 @@ export async function runSims(
       });
       if (lineup.strategy) strategies[side === 0 ? 'blue' : 'red'] = lineup.strategy;
     });
+    const seed = (opts.seed ?? 1) + i;
+    if (opts.random) {
+      const dealt = resolveLineup(def, defaultLineup(), null, dealRng(seed));
+      Object.assign(archetypes, dealt.archetypes);
+      Object.assign(roles, dealt.roles);
+    }
     for (const a of ['blue', 'red'] as const) strategies[a] ??= opts.strategy ?? 'balanced';
-    const m = new Match(def, { seed: (opts.seed ?? 1) + i, archetypes, breakdowns: opts.breakdowns ?? true });
+    const m = new Match(def, { seed, archetypes, breakdowns: opts.breakdowns ?? true });
     attachBots(m, { partners: difficulty, opponents: difficulty, playerId: null, roles, strategies });
     results.push(m.runToEnd());
   }
@@ -186,6 +200,7 @@ async function main() {
     difficulty: (arg('difficulty', 'normal') as Difficulty) ?? 'normal',
     ...(arg('archetypes') ? { archetypes: arg('archetypes')!.split(',') } : {}),
     ...(arg('lineups') ? { lineups: arg('lineups')!.split(',') as [string, string] } : {}),
+    random: process.argv.includes('--random'),
     ...(arg('strategy') ? { strategy: arg('strategy') as AllianceStrategy } : {}),
     breakdowns: !process.argv.includes('--perfect'),
     ...(arg('tuning') ? { tuning: JSON.parse(readFileSync(arg('tuning')!, 'utf8')) as unknown } : {}),

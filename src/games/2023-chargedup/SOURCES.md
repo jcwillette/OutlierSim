@@ -4,6 +4,14 @@ Generated from the **2023 FRC Game Manual** served at `firstfrc.blob.core.window
 
 This is an unofficial simulation for team practice. **Confidence**: high (stated), med (derived from drawings), low (estimated or assumed). "p.N" = manual page.
 
+**Calibrated since 24 Nov 2026.** At the owner's request the build was compared with every real 2023 qualification match on The Blue Alliance and tuned to the season's average match (ADR 0009, `CALIBRATION.md`). Three things changed:
+
+- Each robot type's drive-team line-up, auto routine, Charge Station times and success chances, and reliability. Drivetrains and mechanism times are still the blind estimates below.
+- The Sustainability threshold, to the in-season rule.
+- The bots' sense of which node completes a link.
+
+Everything else on this page is the blind build, and the plausibility tables are re-run with the calibrated robots.
+
 ## Values
 
 | Value                                   | Used in sim                                                                                                                                     | Source                                     | Confidence |
@@ -36,7 +44,7 @@ This is an unofficial simulation for team practice. **Confidence**: high (stated
 | SUPERCHARGED node                       | 3 (teleop), only once all 27 nodes hold a piece                                                                                                 | p.46, Table 6-2                            | high       |
 | DOCKED / ENGAGED                        | auto 8 / 12 (1 robot max), teleop 6 / 10 each                                                                                                   | p.47 §6.4.2, Table 6-2                     | high       |
 | PARK                                    | 2 (in community, not docked)                                                                                                                    | Table 6-2, TU04 glossary                   | high       |
-| RPs                                     | Win 2, Tie 1, SUSTAINABILITY ≥ 6 links (5 if both alliances have ≥ 3 pieces on their CO-OP GRID), ACTIVATION ≥ 26 Charge Station pts            | Table 6-2 (p.47–48)                        | high       |
+| RPs                                     | Win 2, Tie 1, SUSTAINABILITY ≥ 5 links (4 if both alliances have ≥ 3 pieces on their CO-OP GRID), ACTIVATION ≥ 26 Charge Station pts            | Table 6-2 (p.47–48); see note              | high       |
 | Fouls                                   | FOUL 5, TECH FOUL 12                                                                                                                            | p.48 Table 6-3                             | high       |
 | Robot limits                            | frame perimeter ≤ 120 in, start height ≤ 4 ft 6 in, 48 in extension, 125 lb, 1 piece at a time                                                  | R103, R104, G106, G107, G403               | high       |
 | Double substation supply split          | cone shelf 16, cube shelf 14, single chute 12 (= the 42 pieces left after default preload and staging)                                          | p.43 §6.1.1 C; split assumed               | low        |
@@ -45,11 +53,13 @@ This is an unofficial simulation for team practice. **Confidence**: high (stated
 
 ## Simplifications
 
-- **Nodes are placement targets.** The robot's center must be in a 0.56 m lane in front of a column, facing the grid. Place times include the driver lining up on a 4 cm pole or a walled shelf. Nobody launches cubes; the cube specialist's fast placement stands in for it. Scored pieces are drawn in their nodes.
+- **Nodes are placement targets.** The robot's center must be in a 0.56 m lane in front of a column, facing the grid. Place times are the mechanism's. In teleop the drive team's line-up (`alignSec`: lining up on a 4 cm pole or a walled shelf, misses and retries) is added, calibrated per robot type; a programmed auto and the student's own robot don't pay it. Nobody launches cubes; the cube specialist's fast placement stands in for it. Scored pieces are drawn in their nodes.
+- **Sustainability threshold**: the April manual (V4, p.47) says 6 LINKS, 5 with coopertition. Real 2023 results show every week-1-6 event and district championship awarded it at 5 (4), and only the Championship at 6 (5). The sim plays the in-season 5 (4), `SUSTAINABILITY_LINKS` in `layout.ts`.
+- **Links are a bot goal**: real alliances build links on purpose. `rules.ts` tells the bots (`botValue`) that a node completing a link is worth 5 more, a pair that a third piece can finish 1.5 more, and one of the first three co-op nodes 0.25 more. It never changes the score.
 - **Charge Station** is a static ramp at its real height (9⅛ in). It doesn't tilt. It is a `hull` with `nav: 'ramp'`: the bots drive over it slowly, and in physics its ramps continue 3 cm below the floor so the box-shaped robots can drive up from any speed (the first build lowered the top to 0.18 m for the bots' navigation, and robots could only get on at speed). Guards on the short edges are modeled 0.20 m tall (`nav: 'wall'`) and set just outside the top, so robots (and bots) only climb on over the ramps, and three robots can overhang the short edges. Docking and engaging are timed actions on three robot-sized slots. The engage time stands in for balancing skill.
   - Robots get on **one at a time**: no one can start while a teammate is still settling.
   - At the end the station is **LEVEL only if the last robot to get on was one that balances** (an "engage" robot). Then every docked partner is engaged too (manual 6.4.2). If a dock-only robot climbs on last, the station tips and nobody is engaged.
-  - Balancing never fails outright by default. A real auto or endgame balance attempt sometimes does, and this is the main reason the Activation RP rate below is high. The menu's robot tuning has an engage success chance per robot type (`endgameSuccess`); a failed engage still docks (`fallback`). With every engage at 75 %, Typical vs Typical (40 matches, normal) goes from 90 % to 58 % Activation and loses about 4 points.
+  - Balancing fails sometimes: each robot type has a calibrated engage success chance (`endgameSuccess`, 70-90 %), and a failed engage still docks (`fallback`). The kitbot's dock works on 40 % of its tries, and the defender doesn't dock. The menu's robot tuning can change all of these.
   - Auto Charge Station scoring is limited to one robot per alliance. A robot that docked in auto is released at the start of teleop.
 - **Substations**:
   - In reality the two double substation shelves each take either piece. In the sim, the guardrail-side shelf hands out cones and the grid-side shelf hands out cubes, so students and bots choose a piece by where they go.
@@ -68,7 +78,7 @@ This is an unofficial simulation for team practice. **Confidence**: high (stated
 
 ## Archetype rationale
 
-All numbers are engineering estimates from the manual's constraints and typical 2020s FRC mechanisms. None comes from match results.
+The drivetrains and mechanism times below are engineering estimates from the manual's constraints and typical 2020s FRC mechanisms, as built blind. The calibration added, per robot type, the drive team's teleop line-up (`alignSec`), an auto routine, calibrated Charge Station times and success chances, and new reliability values. Each type stands for one seventh of real 2023 robots, top to bottom: elevator, cone, cube, Charge Station specialist, arm, kitbot, defender. `CALIBRATION.md` lists every value with its blind value.
 
 **Drive and weight** come from each robot's assumed 2023-era COTS drivetrain through `src/engine/sim/drivetrain.ts`:
 
@@ -96,25 +106,27 @@ Motor specs at 12 V:
 
 Low-geared tank drives launch hardest off the line, but they top out early. Swerve robots win any sprint longer than a couple of meters. Turn rates (`maxOmega`, 5-9 rad/s) are driver comfort, not hardware.
 
-- **Elevator all-rounder** (default): swerve (see the drive table; a tall robot can't accelerate as hard). An angled elevator and claw reach the top pole, which is 1.01 m behind the grid face and 1.17 m up; the 48 in extension limit (G107) allows it. Place times: hybrid 0.8 s, mid cube 1.3 s, mid cone 2.0 s, top cube 1.6 s, top cone 2.8 s. Cones are slower because the driver must line the cone up over a 4 cm pole. Floor and shelf intake 0.35 s. Engages in 4 s.
-- **Mid-level arm**: NEO swerve, a bit slower. A single-jointed arm reaches the mid pole (0.58 m deep) but not the top one. Shelf and floor intake. Engages in 5.5 s.
-- **Cube specialist**: fast L3 swerve, cubes only. A low intake can't reach the 0.95 m shelf, so it uses the single substation and the floor. Cube nodes are walled shelves and the cube weighs 71 g, so placing (or launching in the community, G404) is quick: hybrid 0.6 s, mid 1.0 s, top 1.3 s. Engages in 3.5 s.
-- **Kitbot**: Kit of Parts tank drive (10 ft/s), roller intake (floor only), bottom row only (1.2 s). It can drive up the ramp and dock but not balance. This is what a rookie builds.
-- **Cone specialist**: an elevator with a cone-only claw and a funnel that self-centers on the 1.66 in pole, so top cones take 2.0 s instead of the all-rounder's 2.8 s. Loads upright cones off the shelf. No cubes, no auto balance.
-- **Charge Station specialist**: light (about 100 lb) low swerve with a gyro auto-balance. It engages in 2.5 s (3 s in auto), because a light, low robot settles the ±15° station fastest. It scores only low: hybrid nodes, plus mid cubes with a simple flipper.
-- **Defender**: max-weight, max-frame six-wheel tank with high-grip treads (traction 1.35). It defends by default (`defaultRole: 'defense'`) and stays out of the opponent's protected zones. It can push a piece into the bottom row and dock.
+- **Elevator all-rounder** (default): swerve (see the drive table; a tall robot can't accelerate as hard). An angled elevator and claw reach the top pole, which is 1.01 m behind the grid face and 1.17 m up; the 48 in extension limit (G107) allows it. Place times: hybrid 0.8 s, mid cube 1.3 s, mid cone 2.0 s, top cube 1.6 s, top cone 2.8 s. Cones are slower because the driver must line the cone up over a 4 cm pole. Floor and shelf intake 0.35 s. Line-up 2.6 s per teleop pickup and placement. Two-piece auto. Engages in 6 s (90 %), and in auto in 5 s (85 %).
+- **Mid-level arm**: NEO swerve, a bit slower. A single-jointed arm reaches the mid pole (0.58 m deep) but not the top one. Shelf and floor intake. Line-up 12.1 s. One-piece auto that runs 65 % of the time. Engages in 8 s (70 %, else docked); no auto dock.
+- **Cube specialist**: fast L3 swerve, cubes only. A low intake can't reach the 0.95 m shelf, so it uses the single substation and the floor. Cube nodes are walled shelves and the cube weighs 71 g, so placing (or launching in the community, G404) is quick: hybrid 0.6 s, mid 1.0 s, top 1.3 s. Line-up 8.9 s. One-piece auto, then it engages in auto in 5 s (80 %). Engages in 6 s (85 %).
+- **Kitbot**: Kit of Parts tank drive (10 ft/s), roller intake (floor only), bottom row only (1.2 s). Line-up 16.8 s. Its auto (one piece) runs 45 % of the time. Docking takes 8 s and works on 40 % of its tries; it can't balance. This is what a rookie builds.
+- **Cone specialist**: an elevator with a cone-only claw and a funnel that self-centers on the 1.66 in pole, so top cones take 2.0 s instead of the all-rounder's 2.8 s. Loads upright cones off the shelf. Line-up 4.6 s. One-piece auto, no auto balance. Engages in 7 s (85 %).
+- **Charge Station specialist**: light (about 100 lb) low swerve with a gyro auto-balance. It engages in 4 s (90 %; 85 % in auto), because a light, low robot settles the ±15° station fastest. Its auto scores the preload and drives straight onto the station (no MOBILITY). It scores only low and slowly (line-up 13.6 s): hybrid nodes, plus mid cubes with a simple flipper.
+- **Defender**: max-weight, max-frame six-wheel tank with high-grip treads (traction 1.35). It defends by default (`defaultRole: 'defense'`) and stays out of the opponent's protected zones. It rarely scores (line-up 20.2 s), its auto only leaves the community (30 % of the time), and it parks instead of docking.
 
 ### Reliability (breakdowns)
 
-With breakdowns on (the app's default for bots, and `npm run sim` unless `--perfect`), a robot with reliability R has about a 0.6 × (1 − R) chance to break down (dead), which clears 10–35 s later with chance 0.7 − 3 × (1 − R). It has about a 1.5 × (1 − R) chance of a mechanism failure, where it still drives and can do the endgame but can't handle pieces; that clears 5–25 s later with chance 0.85 − 3 × (1 − R). It also loses power or comms about 5 × (1 − R) times per match, for 2–6 s each. The menu's tuning section can override any of these per robot type. As a bot, it has tunnel-vision lapses, where it ignores teammates' calls and right of way, for a share of the match of about 1.5 × (1 − R) plus a difficulty term (easy 20%, normal 8%, hard 2%). These are engineering estimates of how often FRC robots die or brown out, not data.
+With breakdowns on (the app's default for bots, and `npm run sim` unless `--perfect`), a robot with reliability R has about a 0.6 × (1 − R) chance to break down (dead), which clears 10–35 s later with chance 0.7 − 3 × (1 − R). It has about a 1.5 × (1 − R) chance of a mechanism failure, where it still drives and can do the endgame but can't handle pieces; that clears 5–25 s later with chance 0.85 − 3 × (1 − R). It also loses power or comms about 5 × (1 − R) times per match, for 2–6 s each. The menu's tuning section can override any of these per robot type. As a bot, it has tunnel-vision lapses, where it ignores teammates' calls and right of way, for a share of the match of about 1.5 × (1 − R) plus a difficulty term (easy 20%, normal 8%, hard 2%). The model is an engineering estimate. The reliability values were chosen in the calibration, falling with each type's tier; real 2023 robots did nothing measurable in 1 % (top seventh) to 25 % (bottom seventh) of their matches.
 
-| Robot                                   | Reliability | Breaks down (comes back) | Mechanism failure (fixed) | Power losses (per match) | Why                                 |
-| --------------------------------------- | ----------- | ------------------------ | ------------------------- | ------------------------ | ----------------------------------- |
-| Elevator all-rounder                    | 0.97        | ~2% (61%)                | ~5% (76%)                 | ~0.15                    | top-tier team, practiced and robust |
-| Cone / Cube / Charge Station specialist | 0.95        | ~3% (55%)                | ~8% (70%)                 | ~0.25                    | simpler single-purpose mechanisms   |
-| Defender                                | 0.93        | ~4% (49%)                | ~11% (64%)                | ~0.35                    | simple, but takes and gives hits    |
-| Mid-level arm                           | 0.92        | ~5% (46%)                | ~12% (61%)                | ~0.4                     | mid-tier team                       |
-| Kitbot                                  | 0.85        | ~9% (25%)                | ~23% (40%)                | ~0.75                    | rookie wiring and brownouts         |
+| Robot                     | Reliability | Breaks down (comes back) | Mechanism failure (fixed) | Power losses (per match) | Why                           |
+| ------------------------- | ----------- | ------------------------ | ------------------------- | ------------------------ | ----------------------------- |
+| Elevator all-rounder      | 0.97        | ~2% (61%)                | ~5% (76%)                 | ~0.15                    | top seventh of 2023 robots    |
+| Cone specialist           | 0.95        | ~3% (55%)                | ~8% (70%)                 | ~0.25                    | sixth seventh                 |
+| Cube specialist           | 0.92        | ~5% (46%)                | ~12% (61%)                | ~0.4                     | fifth seventh                 |
+| Charge Station specialist | 0.90        | ~6% (40%)                | ~15% (55%)                | ~0.5                     | fourth seventh                |
+| Mid-level arm             | 0.88        | ~7% (34%)                | ~18% (49%)                | ~0.6                     | third seventh                 |
+| Kitbot                    | 0.78        | ~13% (5%)                | ~33% (19%)                | ~1.1                     | second seventh: rookie wiring |
+| Defender                  | 0.75        | ~15% (5%)                | ~38% (10%)                | ~1.25                    | bottom seventh                |
 
 ### Alliance presets and strategies
 
@@ -130,85 +142,85 @@ The menu offers these compositions (`lineups` in `definition.ts`), plus a strate
 
 Bots board the Charge Station dock-only robots first and the balancer last (`botHints.endgameOrder`), because the station is LEVEL only if a balancer gets on last.
 
-Head-to-head against a _Typical_ alliance (`npm run plausibility -- --game 2023-chargedup --against typical --matches 32 --difficulties normal`, breakdowns on):
+Head-to-head against a _Typical_ alliance (`npm run plausibility -- --game 2023-chargedup --against typical --matches 32 --difficulties normal`, breakdowns on), calibrated robots:
 
 | Blue lineup                    | Difficulty | Blue score | Red score | Blue wins | Blue sustainability RP | Blue activation RP | Red teleop | Fouls on blue / red |
 | ------------------------------ | ---------- | ---------- | --------- | --------- | ---------------------- | ------------------ | ---------- | ------------------- |
-| Powerhouse                     | normal     | 187        | 166       | 88%       | 97%                    | 88%                | 91         | 2.4 / 1.3           |
-| Typical qualification alliance | normal     | 161        | 160       | 53%       | 94%                    | 88%                | 91         | 1.3 / 1.3           |
-| Specialists                    | normal     | 173        | 154       | 81%       | 97%                    | 97%                | 85         | 1.2 / 1.7           |
-| Link race                      | normal     | 187        | 164       | 94%       | 100%                   | 97%                | 92         | 1.2 / 1.3           |
-| Shutdown defense               | normal     | 173        | 158       | 75%       | 97%                    | 84%                | 85         | 2.3 / 4.2           |
-| Activation first               | normal     | 108        | 159       | 0%        | 25%                    | 88%                | 90         | 1.1 / 0.8           |
-| Rookie alliance                | normal     | 74         | 157       | 0%        | 0%                     | 66%                | 91         | 0.4 / 0.5           |
+| Powerhouse                     | normal     | 150        | 85        | 100%      | 100%                   | 56%                | 47         | 0.5 / 0.6           |
+| Typical qualification alliance | normal     | 83         | 88        | 44%       | 13%                    | 13%                | 50         | 0.4 / 0.0           |
+| Specialists                    | normal     | 111        | 90        | 91%       | 16%                    | 91%                | 52         | 0.2 / 0.2           |
+| Link race                      | normal     | 139        | 86        | 100%      | 100%                   | 84%                | 49         | 0.4 / 0.5           |
+| Shutdown defense               | normal     | 115        | 86        | 94%       | 22%                    | 69%                | 50         | 0.4 / 1.7           |
+| Activation first               | normal     | 55         | 87        | 3%        | 0%                     | 31%                | 52         | 0.3 / 0.3           |
+| Rookie alliance                | normal     | 35         | 88        | 0%        | 0%                     | 0%                 | 52         | 0.1 / 0.2           |
 
-Typical vs Typical comes out 53 % here. The defender costs the Typical alliance about 6 teleop points (85 against Shutdown vs 90-92 against most others; Specialists also hold it to 85 by sharing the substations). Against Shutdown the Typical alliance draws 4.2 G207 fouls per match: the defended robots get pushed partly into the defender's own zones, which G201's blue box says is still a foul (its example b: a robot cutting in front of the opponent's loading zone to reach its community, bumped in by a defender, is "standard gameplay"). Fouls the defended robot clearly forced aren't called (`forgiveForced`). Where they happen (511 G207 calls in 80 Shutdown vs Typical matches, both alliances): 59 % in a loading zone and 41 % in a community; most often a robot on its way to its grid touching the defender at the edge of the defender's loading zone, which sits next to that grid's community. Bots keep their whole body out of protected zones but don't steer wider when a defender is near (see `docs/ROADMAP.md`).
+Typical vs Typical comes out 44 % (88 : 83 points, within noise of even over 32 matches). With calibrated robots a defender hardly slows a Typical alliance: its teleop is 50 against Shutdown and 47-52 against the others, because real-paced robots cycle little enough that blocking them pays off less. The blind build, whose bots cycled about 1.7 times as fast, lost 6 teleop points to one. Contact fouls fell with the traffic: the Typical alliance draws 1.7 G207 fouls per match against Shutdown (4.2 blind) and under 1 against the rest. The blind analysis still holds for where they happen: mostly a robot on its way to its grid touching the defender at the edge of the defender's loading zone.
 
-## Plausibility (blind, manual-derived)
+## Plausibility (calibrated)
 
 `npm run plausibility -- --game 2023-chargedup --matches 16`: every lineup preset against itself (so each match gives two alliance samples), easy / normal / hard bots, breakdowns on; validation and the bots' geometry audit are clean. Means per alliance per match:
 
 | Lineup                         | Difficulty | Total | Auto | Teleop | Endgame | Fouls drawn | Pieces | sustainability RP | activation RP | Broke down | Mech failed |
 | ------------------------------ | ---------- | ----- | ---- | ------ | ------- | ----------- | ------ | ----------------- | ------------- | ---------- | ----------- |
-| Powerhouse                     | easy       | 154   | 39   | 89     | 22      | 3           | 22.7   | 94%               | 81%           | 2%         | 4%          |
-| Powerhouse                     | normal     | 189   | 50   | 108    | 23      | 8           | 27.3   | 100%              | 91%           | 2%         | 6%          |
-| Powerhouse                     | hard       | 199   | 53   | 114    | 22      | 10          | 29.7   | 100%              | 78%           | 1%         | 4%          |
-| Typical qualification alliance | easy       | 129   | 34   | 69     | 23      | 2           | 19.4   | 19%               | 84%           | 5%         | 9%          |
-| Typical qualification alliance | normal     | 163   | 39   | 94     | 23      | 7           | 23.3   | 100%              | 84%           | 1%         | 9%          |
-| Typical qualification alliance | hard       | 169   | 43   | 94     | 25      | 7           | 24.0   | 97%               | 88%           | 4%         | 10%         |
-| Specialists                    | easy       | 154   | 40   | 82     | 25      | 6           | 21.2   | 72%               | 97%           | 3%         | 9%          |
-| Specialists                    | normal     | 176   | 52   | 90     | 26      | 8           | 24.0   | 100%              | 100%          | 2%         | 5%          |
-| Specialists                    | hard       | 177   | 52   | 94     | 24      | 7           | 24.7   | 97%               | 100%          | 3%         | 3%          |
-| Link race                      | easy       | 160   | 42   | 94     | 22      | 3           | 23.1   | 94%               | 84%           | 3%         | 4%          |
-| Link race                      | normal     | 189   | 53   | 107    | 21      | 8           | 27.4   | 100%              | 88%           | 2%         | 8%          |
-| Link race                      | hard       | 196   | 56   | 110    | 21      | 9           | 29.0   | 100%              | 78%           | 3%         | 6%          |
-| Shutdown defense               | easy       | 135   | 36   | 68     | 20      | 11          | 19.0   | 34%               | 56%           | 2%         | 5%          |
-| Shutdown defense               | normal     | 157   | 47   | 77     | 21      | 12          | 21.1   | 72%               | 69%           | 2%         | 6%          |
-| Shutdown defense               | hard       | 167   | 51   | 79     | 23      | 15          | 21.8   | 88%               | 81%           | 7%         | 7%          |
-| Activation first               | easy       | 104   | 33   | 42     | 27      | 2           | 14.3   | 3%                | 91%           | 1%         | 8%          |
-| Activation first               | normal     | 109   | 39   | 41     | 25      | 4           | 14.9   | 25%               | 94%           | 5%         | 11%         |
-| Activation first               | hard       | 112   | 40   | 43     | 27      | 2           | 15.2   | 44%               | 97%           | 5%         | 13%         |
-| Rookie alliance                | easy       | 69    | 27   | 24     | 17      | 1           | 8.8    | 0%                | 66%           | 7%         | 16%         |
-| Rookie alliance                | normal     | 76    | 32   | 22     | 16      | 6           | 9.0    | 0%                | 41%           | 10%        | 16%         |
-| Rookie alliance                | hard       | 74    | 35   | 20     | 17      | 1           | 9.0    | 0%                | 56%           | 7%         | 21%         |
+| Powerhouse                     | easy       | 128   | 34   | 68     | 24      | 2           | 16.0   | 81%               | 78%           | 2%         | 4%          |
+| Powerhouse                     | normal     | 150   | 40   | 84     | 24      | 2           | 21.1   | 100%              | 63%           | 2%         | 6%          |
+| Powerhouse                     | hard       | 172   | 40   | 101    | 25      | 6           | 25.1   | 100%              | 69%           | 1%         | 4%          |
+| Typical qualification alliance | easy       | 72    | 22   | 36     | 14      | 1           | 9.4    | 0%                | 16%           | 5%         | 25%         |
+| Typical qualification alliance | normal     | 86    | 20   | 50     | 15      | 1           | 12.9   | 3%                | 13%           | 2%         | 18%         |
+| Typical qualification alliance | hard       | 114   | 27   | 72     | 13      | 2           | 18.1   | 94%               | 19%           | 7%         | 15%         |
+| Specialists                    | easy       | 89    | 27   | 36     | 26      | 0           | 9.2    | 0%                | 88%           | 4%         | 19%         |
+| Specialists                    | normal     | 109   | 27   | 55     | 24      | 1           | 12.6   | 9%                | 91%           | 3%         | 11%         |
+| Specialists                    | hard       | 140   | 29   | 82     | 26      | 3           | 19.2   | 94%               | 97%           | 3%         | 5%          |
+| Link race                      | easy       | 115   | 37   | 54     | 23      | 0           | 12.6   | 25%               | 88%           | 3%         | 5%          |
+| Link race                      | normal     | 134   | 35   | 74     | 23      | 2           | 16.6   | 94%               | 75%           | 3%         | 8%          |
+| Link race                      | hard       | 166   | 39   | 98     | 24      | 5           | 22.6   | 100%              | 81%           | 2%         | 6%          |
+| Shutdown defense               | easy       | 91    | 28   | 39     | 19      | 6           | 9.7    | 0%                | 59%           | 9%         | 18%         |
+| Shutdown defense               | normal     | 108   | 30   | 54     | 20      | 4           | 13.2   | 16%               | 63%           | 7%         | 21%         |
+| Shutdown defense               | hard       | 136   | 30   | 73     | 19      | 13          | 17.8   | 91%               | 72%           | 11%        | 22%         |
+| Activation first               | easy       | 47    | 20   | 11     | 16      | 0           | 5.6    | 0%                | 31%           | 4%         | 20%         |
+| Activation first               | normal     | 58    | 18   | 23     | 17      | 0           | 7.8    | 0%                | 34%           | 8%         | 17%         |
+| Activation first               | hard       | 71    | 18   | 39     | 13      | 2           | 12.1   | 3%                | 19%           | 9%         | 19%         |
+| Rookie alliance                | easy       | 29    | 9    | 11     | 9       | 0           | 4.8    | 0%                | 0%            | 9%         | 28%         |
+| Rookie alliance                | normal     | 36    | 8    | 19     | 10      | 1           | 6.4    | 0%                | 0%            | 13%        | 30%         |
+| Rookie alliance                | hard       | 45    | 7    | 29     | 9       | 0           | 8.7    | 0%                | 0%            | 13%        | 40%         |
 
-"Fouls drawn" is penalty points awarded to the alliance (the opponents' G207 and G202 fouls). Endgame actions completed per alliance per match (more than one auto action can happen, but only one robot's counts):
+"Fouls drawn" is penalty points awarded to the alliance (the opponents' G207 and G202 fouls). Endgame actions completed per alliance per match (more than one auto action can happen, but only one robot's counts; an `auto-dock` here is a failed auto engage):
 
 | Lineup                         | Difficulty | auto-engage | auto-dock | engage | dock |
 | ------------------------------ | ---------- | ----------- | --------- | ------ | ---- |
-| Powerhouse                     | easy       | 0.66        | 0.16      | 2.13   | 0.00 |
-| Powerhouse                     | normal     | 0.56        | 0.38      | 2.13   | 0.00 |
-| Powerhouse                     | hard       | 0.50        | 0.34      | 2.03   | 0.00 |
-| Typical qualification alliance | easy       | 0.56        | 0.38      | 1.41   | 0.91 |
-| Typical qualification alliance | normal     | 0.47        | 0.38      | 1.16   | 1.00 |
-| Typical qualification alliance | hard       | 0.50        | 0.38      | 1.53   | 0.91 |
-| Specialists                    | easy       | 0.56        | 0.38      | 2.47   | 0.00 |
-| Specialists                    | normal     | 0.94        | 0.06      | 2.53   | 0.00 |
-| Specialists                    | hard       | 0.88        | 0.09      | 2.34   | 0.00 |
-| Link race                      | easy       | 0.63        | 0.34      | 2.00   | 0.00 |
-| Link race                      | normal     | 0.81        | 0.09      | 1.97   | 0.00 |
-| Link race                      | hard       | 0.88        | 0.00      | 1.97   | 0.00 |
-| Shutdown defense               | easy       | 0.56        | 0.28      | 1.34   | 0.91 |
-| Shutdown defense               | normal     | 0.63        | 0.31      | 1.31   | 0.91 |
-| Shutdown defense               | hard       | 0.84        | 0.13      | 1.38   | 0.88 |
-| Activation first               | easy       | 0.69        | 0.28      | 1.75   | 0.97 |
-| Activation first               | normal     | 0.44        | 0.56      | 1.66   | 0.81 |
-| Activation first               | hard       | 0.53        | 0.47      | 1.84   | 0.81 |
-| Rookie alliance                | easy       | 0.00        | 0.88      | 0.00   | 2.75 |
-| Rookie alliance                | normal     | 0.00        | 0.72      | 0.00   | 2.59 |
-| Rookie alliance                | hard       | 0.00        | 0.91      | 0.00   | 2.66 |
+| Powerhouse                     | easy       | 0.59        | 0.16      | 2.19   | 0.28 |
+| Powerhouse                     | normal     | 0.47        | 0.06      | 2.06   | 0.31 |
+| Powerhouse                     | hard       | 0.41        | 0.03      | 2.09   | 0.38 |
+| Typical qualification alliance | easy       | 0.63        | 0.03      | 0.72   | 0.47 |
+| Typical qualification alliance | normal     | 0.19        | 0.03      | 0.69   | 0.66 |
+| Typical qualification alliance | hard       | 0.53        | 0.19      | 0.56   | 0.47 |
+| Specialists                    | easy       | 0.84        | 0.16      | 2.22   | 0.38 |
+| Specialists                    | normal     | 0.78        | 0.13      | 2.16   | 0.34 |
+| Specialists                    | hard       | 0.91        | 0.09      | 2.41   | 0.28 |
+| Link race                      | easy       | 0.75        | 0.25      | 1.94   | 0.41 |
+| Link race                      | normal     | 0.69        | 0.13      | 1.88   | 0.41 |
+| Link race                      | hard       | 0.72        | 0.19      | 2.03   | 0.41 |
+| Shutdown defense               | easy       | 0.75        | 0.16      | 1.44   | 0.44 |
+| Shutdown defense               | normal     | 0.69        | 0.19      | 1.63   | 0.28 |
+| Shutdown defense               | hard       | 0.75        | 0.22      | 1.59   | 0.25 |
+| Activation first               | easy       | 0.56        | 0.19      | 0.84   | 0.47 |
+| Activation first               | normal     | 0.75        | 0.06      | 0.97   | 0.63 |
+| Activation first               | hard       | 0.72        | 0.06      | 0.66   | 0.50 |
+| Rookie alliance                | easy       | 0.00        | 0.00      | 0.00   | 0.78 |
+| Rookie alliance                | normal     | 0.00        | 0.00      | 0.00   | 0.94 |
+| Rookie alliance                | hard       | 0.00        | 0.00      | 0.00   | 0.81 |
 
-- **Ceiling**: 27 nodes plus supercharge per alliance; the most an alliance can score in pieces is the 49 it owns (3 preloaded, 4 staged, 42 from its human players), or 53 if it also takes the opponent's staged pieces. The best alliance-match scored 33 pieces; an all-elevator alliance fills the grid (27-29 pieces) and starts supercharging on hard.
-- **Cycle math**: grid to double substation is about 13.7 m. At 4.27 m/s (14 ft/s) × 0.85 (normal) plus path overhead that's ~4.5 s each way, plus 1.5 s handoff and 1.3–2.8 s placing, so ~11–13 s per cycle and ~9–10 pieces per elevator robot in teleop before the endgame. The bots score 8–11. A kitbot at 3.05 m/s (10 ft/s) with a ~17 s cycle manages 5–7.
-- **Difficulty ordering**: easy < normal < hard for every lineup except the rookie alliance (69 / 76 / 74), whose total hardly depends on the driver: three kitbots are limited by the robot, and the order flips within noise.
-- **Blue vs red** with identical setups: 161 : 160 wins of 336 (z 0.1). Two separate 2,000-match mirrored Powerhouse runs during this work: 998 : 966 (z 0.7) and, after the last bot change, 1003 : 943 (z 1.4) with non-foul scores of 180.3 vs 180.3.
-- **Design intent**: the bonus RPs are meant as stretch goals. Here **Sustainability is reached in nearly every normal match by any alliance with an elevator robot, and Activation in 69-100 % of matches (41-66 % for three kitbots, which need all three docked plus an auto dock).** So the sim is optimistic. Robots break down and lose power and bots have lapses, but bots still drive near-perfect paths, defense is mostly opportunistic, every balance attempt that isn't interrupted succeeds (unless the menu lowers the success chance), and tipped cones cost nothing. Archetype speeds were not tuned down to hit a target rate, because that target would come from knowledge of the real season. Treat sim scores as an upper bound for well-driven robots.
+- **Ceiling**: 27 nodes plus supercharge per alliance; the most an alliance can score in pieces is the 49 it owns (3 preloaded, 4 staged, 42 from its human players), or 53 if it also takes the opponent's staged pieces. The best alliance-match scored 29 pieces (Powerhouse, hard); three elevators at normal place about 21.
+- **Cycle math**: grid to double substation is about 13.7 m. At 4.27 m/s (14 ft/s) × 0.85 (normal) plus path overhead that's ~4.5 s each way, plus the 1.5 s handoff, a 0.35 s grab, 0.8-2.8 s placing and the elevator's 2.6 s line-up twice: ~17 s per cycle, or about 6 pieces in the ~100 s before the endgame. The bots place 6.0, the real top seventh of 2023 robots 6.1. A kitbot (10 ft/s, floor pickups, 16.8 s line-ups) needs about a minute per piece: sim 1.6, real second-to-bottom seventh 1.6.
+- **Difficulty ordering**: easy < normal < hard for every lineup. Difficulty now scales the drive teams' line-up (`SKILL.align`), so even three kitbots gain with better drivers (29 / 36 / 45).
+- **Blue vs red** with identical setups: 153 : 176 wins of 336 (z 1.3), non-foul scores 99.4 : 100.2.
+- **Design intent**: the bonus RPs are stretch goals. With calibrated robots, ordinary lineups at normal reach Sustainability in 3-16 % of matches. Lineups with two or three top-seventh robots reach it almost always (94-100 %), as real district championship alliances often did (69 %). Activation depends on having an auto-docking robot: 13 % for Typical, whose only auto-capable robot runs a two-piece auto, and 91 % for Specialists. The real 2023 season: Sustainability 24 % and Activation 57 % (in-season events 14 % and 52 %). The random preset gives 18 % and 48 % (`CALIBRATION.md`).
 
 ## Open questions
 
-- The manual at the given URL is the April revision. A January-era value that changed in a later Team Update would be wrong here, and I can't detect that without reading post-January material. The scoring table and RP thresholds aren't touched by TU01–07.
+- The manual at the given URL is the April revision. A January-era value that changed in a later Team Update would be wrong here, and I can't detect that without reading post-January material. The scoring table and RP thresholds aren't touched by TU01–07. The real-match comparison found one: the Sustainability threshold (see Simplifications); every point value matched real breakdowns.
 - Single substation chute position (read off Fig 6-1) and the loading zone / community step positions (Fig 5-6) are medium/low confidence. WPILib's 2023 AprilTag layout or the official field drawings would pin them down.
-- Real auto and endgame balance success rates: should 2023 default to a success chance below 100 %? The knob exists now (menu tuning, `endgameSuccess`, a failed engage still docks); 75 % takes a Typical alliance's Activation rate from 90 % to 58 %.
+- ~~Real auto and endgame balance success rates~~: calibrated (70-90 % per robot type; `CALIBRATION.md`).
 - G207 is called "regardless of who initiates contact" (G201 excuses only deliberate forcing), but the sim still doesn't call contact the zone's owner clearly drove into (`forgiveForced` on the G207 rule). Turn it off to follow the manual more strictly; expect more fouls on robots defended near the zones.
 - Should some bots play dedicated defense (`defenseShare`)? Bots only defend opportunistically now, outside the protected zones.
 - Should both double substation shelves hand out either piece (`choice: true`), as the real shelves do? This build splits them into a cone shelf and a cube shelf (it predates `choice`). Measured with both shelves offering either piece, 15 each (40 matches per lineup at normal, both alliances): Typical 160 → 166 total (teleop 88 → 95), Powerhouse 187 → 191, Specialists unchanged (172 → 171; their cube robot can't reach the shelf). `supply` counts a station's pieces, not each type's, so the 16-cone / 14-cube split would become 15 per shelf.

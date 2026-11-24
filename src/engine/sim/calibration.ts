@@ -15,6 +15,11 @@ export interface CalibrationMetric {
 export interface CalibrationSpec {
   /** TBA event keys to compare against, e.g. a strong district event and a championship division. */
   events: string[];
+  /**
+   * Instead of `events`: every official event of this season on TBA (regionals, district events,
+   * district championships and the Championship), for the average match of the season.
+   */
+  season?: number;
   /** TBA comp levels to include. Default ['qm']. */
   compLevels?: string[];
   metrics: CalibrationMetric[];

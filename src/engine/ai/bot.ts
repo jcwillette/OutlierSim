@@ -55,12 +55,19 @@ interface Skill {
    * right of way, so robots get in each other's way. Low robot reliability adds to it.
    */
   lapse: number;
+  /**
+   * Multiplies the robot type's drive-team line-up time (`RobotArchetype.alignSec`, calibrated as
+   * the season's average team = 1). Fitted to real 2023 qualification matches (CALIBRATION.md):
+   * easy plays like week-1 events, normal like the season's average match, hard like a district
+   * championship. No effect on robot types without `alignSec`.
+   */
+  align: number;
 }
 
 export const SKILL: Record<Difficulty, Skill> = {
-  easy: { speed: 0.65, think: 0.9, noise: 0.6, dwell: 0.7, lapse: 0.2 },
-  normal: { speed: 0.85, think: 0.4, noise: 0.25, dwell: 0.25, lapse: 0.08 },
-  hard: { speed: 1, think: 0.15, noise: 0.05, dwell: 0.05, lapse: 0.02 },
+  easy: { speed: 0.65, think: 0.9, noise: 0.6, dwell: 0.7, lapse: 0.2, align: 1.6 },
+  normal: { speed: 0.85, think: 0.4, noise: 0.25, dwell: 0.25, lapse: 0.08, align: 1 },
+  hard: { speed: 1, think: 0.15, noise: 0.05, dwell: 0.05, lapse: 0.02, align: 0.35 },
 };
 
 type Plan =
@@ -71,6 +78,8 @@ type Plan =
   | { kind: 'shoot'; targetId: string; point: Vec2; aim: Vec2 }
   | { kind: 'endgame'; actionId: string; zoneIndex: number; point: Vec2 }
   | { kind: 'park'; point: Vec2 }
+  /** Auto routine: drive out of the starting zone (`leaveZoneInAuto` awards). */
+  | { kind: 'leave'; point: Vec2 }
   /** `until`: opportunistic blocking is time-boxed (match time); the defense role has no limit. */
   | { kind: 'defend'; opponentId: number; point: Vec2; until?: number }
   | { kind: 'idle' };
@@ -242,6 +251,11 @@ export interface BotOptions {
   difficulty?: Difficulty;
   role?: RobotRole;
   strategy?: AllianceStrategy;
+  /**
+   * Roll `RobotArchetype.auto.success` each match (default true). The player's own auto routine
+   * passes false: it always runs.
+   */
+  autoCanFail?: boolean;
 }
 
 /** Seconds a tunnel-vision lapse lasts (uniform in this range). */
@@ -277,11 +291,35 @@ export class BotBrain implements RobotController {
   private now = 0;
   private wasOut = false;
   private wasMechDown = false;
+  private readonly autoCanFail: boolean;
+  /**
+   * The archetype's auto routine this match (`RobotArchetype.auto`), set on the first auto tick:
+   * whether it runs, and the robot's intake count and held pieces then, to count pieces it let go.
+   */
+  private autoRun: { runs: boolean; intakes: number; held: number } | null = null;
 
   constructor(opts: BotOptions = {}) {
     this.skill = SKILL[opts.difficulty ?? 'normal'];
     this.role = opts.role ?? 'score';
     this.strategy = opts.strategy ?? 'balanced';
+    this.autoCanFail = opts.autoCanFail ?? true;
+  }
+
+  /**
+   * In auto, with an auto routine: whether it runs this match (rolled once, from the match's random
+   * stream, only when it can fail) and how many more pieces it may score. Null otherwise.
+   */
+  private routine(m: Match, r: Robot): { runs: boolean; piecesLeft: number } | null {
+    const auto = r.archetype.auto;
+    if (!auto || m.phase !== 'auto') return null;
+    if (!this.autoRun) {
+      const chance = auto.success ?? 1;
+      const runs = !this.autoCanFail || chance >= 1 || m.random() < chance;
+      this.autoRun = { runs, intakes: r.stats.intakes, held: r.held.length };
+    }
+    // Pieces that left the robot since auto started (scored, shot or dropped).
+    const used = r.stats.intakes - this.autoRun.intakes + this.autoRun.held - r.held.length;
+    return { runs: this.autoRun.runs, piecesLeft: (auto.pieces ?? Infinity) - used };
   }
 
   /** In a tunnel-vision lapse right now (ignoring teammates' calls and right of way). */
@@ -317,6 +355,8 @@ export class BotBrain implements RobotController {
       return IDLE;
     }
     this.wasOut = false;
+    // A dead auto routine: the robot sits still until teleop.
+    if (this.routine(m, r)?.runs === false) return IDLE;
     if (r.mechDown !== this.wasMechDown) {
       // Mechanism failed (piece plans are now invalid) or works again: re-plan right away.
       this.wasMechDown = r.mechDown;
@@ -394,6 +434,8 @@ export class BotBrain implements RobotController {
         const ts = m.targets.get(p.targetId);
         return !!ts && ts.enabled && r.held.some((h) => ts.target.accepts.includes(h));
       }
+      case 'leave':
+        return m.phase === 'auto' && stillToLeave(m, r);
       case 'defend': {
         const o = m.robots[p.opponentId]!;
         if ((this.harassCooldown.get(o.id) ?? 0) > m.time) return false; // broke off (pin count)
@@ -454,10 +496,10 @@ export class BotBrain implements RobotController {
     };
     for (const t of m.game.targets) {
       if (!t.accepts.includes(type) || !this.usableTarget(m, r, t)) continue;
-      const pts = t.points[per] * this.weight(m, t);
+      const pts = (t.points[per] + m.botValue(r.alliance, t.id)) * this.weight(m, t);
       const placeTime = t.place ? r.placeTime(t) : null;
       if (t.place && placeTime !== null)
-        consider(pts, this.travelBetween(r, from, regionCenter(t.place.zone)) + placeTime);
+        consider(pts, this.travelBetween(r, from, regionCenter(t.place.zone)) + placeTime + m.alignSec(r));
       const sh = r.archetype.shooter;
       if (t.aperture && sh?.pieceTypes.includes(type)) {
         const spot = shotSpots(m, r, t).nearest(from);
@@ -502,11 +544,12 @@ export class BotBrain implements RobotController {
     const intake = r.archetype.intake;
     let best = Infinity;
     if (intake) {
+      const grab = intake.timeSec + m.alignSec(r);
       for (const p of m.pieces) {
         if (p.status !== 'field' || !intake.pieceTypes.includes(p.type.id)) continue;
         if (p.position.z > (intake.maxHeight ?? 0.3) + 0.2) continue;
         if (this.claimedByOther(m, r, `piece:${p.id}`)) continue;
-        best = Math.min(best, this.travelBetween(r, from, p.position) + intake.timeSec + 0.8);
+        best = Math.min(best, this.travelBetween(r, from, p.position) + grab + 0.8);
       }
       if (m.phase !== 'auto')
         for (const st of m.game.stations) {
@@ -517,7 +560,7 @@ export class BotBrain implements RobotController {
           const c = regionCenter(st.zone);
           best = Math.min(
             best,
-            this.travelBetween(r, from, c) + st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + 0.8,
+            this.travelBetween(r, from, c) + st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + grab + 0.8,
           );
         }
     }
@@ -542,11 +585,12 @@ export class BotBrain implements RobotController {
     const per = this.period(m);
     for (const t of m.game.targets) {
       if (!this.usableTarget(m, r, t)) continue;
-      const pts = t.points[per] * this.weight(m, t);
+      const pts = (t.points[per] + m.botValue(r.alliance, t.id)) * this.weight(m, t);
       if (pts <= 0) continue;
       if ((this.spotBlacklist.get(t.id) ?? 0) > m.time) continue;
       if (t.place && r.held.some((h) => t.accepts.includes(h))) {
-        const time = r.placeTime(t);
+        const mech = r.placeTime(t);
+        const time = mech === null ? null : mech + m.alignSec(r);
         if (time !== null) {
           const point = gridFor(m, r).nearestFree(regionCenter(t.place.zone));
           if (pointInRegion(point, t.place.zone) && !this.spotTaken(m, r, point)) {
@@ -599,6 +643,8 @@ export class BotBrain implements RobotController {
     const intake = r.archetype.intake;
     if (!intake) return out;
     const grid = gridFor(m, r);
+    // Getting a piece in once it's in reach: the mechanism plus the drive team's line-up (teleop).
+    const grab = intake.timeSec + m.alignSec(r);
     for (const p of m.pieces) {
       if (p.status !== 'field' || !intake.pieceTypes.includes(p.type.id) || !r.canHold(p.type.id)) continue;
       const pos = p.position;
@@ -620,7 +666,7 @@ export class BotBrain implements RobotController {
       }
       out.push({
         plan: { kind: 'acquire', pieceId: p.id, point, approachYaw },
-        utility: this.fetchUtility(m, r, point, p.type.id, intake.timeSec + 0.8) * this.noise(m),
+        utility: this.fetchUtility(m, r, point, p.type.id, grab + 0.8) * this.noise(m),
         claim,
       });
     }
@@ -650,7 +696,7 @@ export class BotBrain implements RobotController {
               r,
               point,
               type,
-              st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + 0.8 + wait,
+              st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + grab + 0.8 + wait,
             ) * this.noise(m),
           claim,
         });
@@ -659,20 +705,70 @@ export class BotBrain implements RobotController {
     return out;
   }
 
+  /** Seconds of margin before the end a bot keeps for its endgame action (by strategy). */
+  private endgameLead(m: Match): number {
+    const baseLead = m.def.botHints?.endgameLeadSec ?? 3;
+    if (m.phase === 'auto' || this.strategy === 'max-cycles') return 0.5;
+    return this.strategy === 'early-endgame' ? baseLead + 15 : baseLead;
+  }
+
+  /**
+   * Teleop: what this bot must keep in hand for its endgame action, the most valuable one it does
+   * (the game's preference first): where it is, and the seconds it takes there (action, margin,
+   * teammates boarding first, a moment to react). Null without one.
+   */
+  private endgameReserve(m: Match, r: Robot): { point: Vec2; sec: number } | null {
+    if (!r.archetype.endgame || m.phase !== 'teleop') return null;
+    const pref = m.def.botHints?.endgamePreference;
+    let best: { point: Vec2; sec: number; rank: number } | null = null;
+    for (const a of m.game.endgame) {
+      if (a.alliance && a.alliance !== r.alliance) continue;
+      if ((a.availableAtRemainingSec ?? 0) < 0) continue;
+      const dur = r.archetype.endgame[a.baseId];
+      if (dur === undefined) continue;
+      const rank = pref ? pref.indexOf(a.baseId) : -a.points;
+      if (pref && rank < 0) continue;
+      if (best && rank >= best.rank) continue;
+      const queue = a.oneAtATime ? this.endgameQueue(m, r) * dur : 0;
+      const point = spotPoint(gridFor(m, r), endgameSpots(a)[0]!);
+      best = { point, sec: dur + this.endgameLead(m) + queue + this.skill.think, rank };
+    }
+    return best;
+  }
+
+  /**
+   * Seconds an option would keep the robot busy: driving there plus the pickup or placement (the
+   * mechanism and the drive team's line-up).
+   */
+  private busyTime(m: Match, r: Robot, p: Plan): number {
+    if (!('point' in p)) return 0;
+    const drive = this.travelTime(m, r, p.point);
+    const grab = (r.archetype.intake?.timeSec ?? 0) + m.alignSec(r);
+    switch (p.kind) {
+      case 'place': {
+        const t = m.targets.get(p.targetId)?.target;
+        return drive + (t ? (r.placeTime(t) ?? 0) : 0) + m.alignSec(r);
+      }
+      case 'station': {
+        const st = m.game.stations.find((x) => x.id === p.stationId);
+        return drive + (st ? st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) : 0) + grab;
+      }
+      case 'acquire':
+        return drive + grab;
+      case 'shoot':
+        return drive + (r.archetype.shooter?.reloadSec ?? 0);
+      default:
+        return drive;
+    }
+  }
+
   /** `force`: ignore timing (an idle robot pre-positions and waits for the action to open). */
   private endgameOption(m: Match, r: Robot, force = false): Option | null {
     if (!r.archetype.endgame) return null;
     const auto = m.phase === 'auto';
     if (!auto && m.phase !== 'teleop') return null;
     const pref = m.def.botHints?.endgamePreference;
-    const baseLead = m.def.botHints?.endgameLeadSec ?? 3;
-    const lead = auto
-      ? 0.5
-      : this.strategy === 'max-cycles'
-        ? 0.5
-        : this.strategy === 'early-endgame'
-          ? baseLead + 15
-          : baseLead;
+    const lead = this.endgameLead(m);
     let best: Option | null = null;
     for (const a of m.game.endgame) {
       if (a.alliance && a.alliance !== r.alliance) continue;
@@ -786,8 +882,9 @@ export class BotBrain implements RobotController {
       // Hysteresis: stick with the current plan unless something is clearly better.
       const current = opts.find((o) => samePlan(this.plan, o.plan));
       if (current && choice && choice.utility < current.utility * 1.3) choice = current;
-      // Nothing to score or fetch (e.g. every reachable target is full): get into endgame position.
-      if (!choice) choice = this.endgameOption(m, r, true);
+      // Nothing to score or fetch (e.g. every reachable target is full, or an auto routine scored
+      // its pieces): leave the starting zone if the routine does, else get into endgame position.
+      if (!choice) choice = this.leaveOption(m, r) ?? this.endgameOption(m, r, true);
     }
     this.adopt(m, r, choice);
   }
@@ -806,11 +903,34 @@ export class BotBrain implements RobotController {
   private cycleOptions(m: Match, r: Robot): Option[] {
     const room = r.held.length < r.totalCapacity;
     const harass = this.harassOption(m, r);
-    return [
-      ...this.scoreOptions(m, r),
-      ...(room ? this.acquireOptions(m, r) : []),
+    // An auto routine scores only its pieces, and fetches only the ones it doesn't hold yet.
+    const routine = this.routine(m, r);
+    const score = !routine || routine.piecesLeft > 0;
+    const fetch = room && (!routine || routine.piecesLeft > r.held.length);
+    const opts = [
+      ...(score ? this.scoreOptions(m, r) : []),
+      ...(fetch ? this.acquireOptions(m, r) : []),
       ...(harass ? [harass] : []),
     ];
+    // Don't start a pickup or placement that would still keep the robot busy when it has to leave
+    // for its endgame action (long line-ups, `alignSec`, would otherwise make it miss it).
+    const reserve = this.endgameReserve(m, r);
+    if (!reserve) return opts;
+    return opts.filter(
+      (o) =>
+        o.plan.kind === 'defend' ||
+        !('point' in o.plan) ||
+        this.busyTime(m, r, o.plan) + this.travelBetween(r, o.plan.point, reserve.point) * 1.4 + reserve.sec <
+          m.remaining,
+    );
+  }
+
+  /** An auto routine with nothing left to score drives out of its starting zone (default). */
+  private leaveOption(m: Match, r: Robot): Option | null {
+    const auto = r.archetype.auto;
+    if (!auto || m.phase !== 'auto' || auto.leave === false) return null;
+    const point = leavePoint(m, r);
+    return point ? { plan: { kind: 'leave', point }, utility: 0 } : null;
   }
 
   /**
@@ -1033,7 +1153,10 @@ export class BotBrain implements RobotController {
 
   private execute(m: Match, r: Robot, dt: number): RobotCommand {
     if (r.action) return IDLE;
-    const cmd: RobotCommand = { ...IDLE, intake: r.held.length < r.totalCapacity };
+    // An auto routine that has all the pieces it will score keeps its intake up.
+    const routine = this.routine(m, r);
+    const wants = !routine || routine.piecesLeft > r.held.length;
+    const cmd: RobotCommand = { ...IDLE, intake: wants && r.held.length < r.totalCapacity };
     if (this.detour) {
       const s = this.steer(m, r, this.detour, true);
       if (s.dist < 0.3) this.detour = null;
@@ -1108,7 +1231,8 @@ export class BotBrain implements RobotController {
           targetId: p.actionId,
         };
       }
-      case 'park': {
+      case 'park':
+      case 'leave': {
         const s = this.steer(m, r, p.point, false);
         return { ...cmd, vx: s.vx, vy: s.vy };
       }
@@ -1201,6 +1325,38 @@ const RAMP_SPEED = 1.5;
 /** Half the larger frame dimension (a robot's "radius" for spacing). */
 function halfSize(r: Robot): number {
   return Math.max(r.archetype.frame.length, r.archetype.frame.width) / 2;
+}
+
+/** The robot's alliance has a `leaveZoneInAuto` zone it hasn't fully left yet. */
+function stillToLeave(m: Match, r: Robot): boolean {
+  return m.game.awards.some(
+    (aw) =>
+      aw.kind === 'leaveZoneInAuto' &&
+      (!aw.alliance || aw.alliance === r.alliance) &&
+      !r.leftZones.has(aw.id),
+  );
+}
+
+/**
+ * Where an auto routine drives to get its whole footprint out of the `leaveZoneInAuto` zones it hasn't
+ * left yet: straight on toward the far end of the field until clear, at the nearest free spot. Both
+ * alliances march away from their own wall, so red's point is blue's mirror or rotation image.
+ */
+function leavePoint(m: Match, r: Robot): Vec2 | null {
+  const L = m.def.field.length;
+  const dir = r.alliance === 'blue' ? 1 : -1;
+  const clear = Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.15;
+  for (const aw of m.game.awards) {
+    if (aw.kind !== 'leaveZoneInAuto' || (aw.alliance && aw.alliance !== r.alliance)) continue;
+    if (r.leftZones.has(aw.id)) continue;
+    const zone = zoneCheck(aw.zone);
+    for (let d = 0; d <= L; d += 0.25) {
+      const p = { x: r.x + dir * d, y: r.y };
+      if (p.x < 0 || p.x > L) break;
+      if (!nearZone(p, zone, clear)) return gridFor(m, r).nearestFree(p);
+    }
+  }
+  return null;
 }
 
 /**
@@ -1368,12 +1524,11 @@ export function attachBots(m: Match, setup: TeamSetup): Map<number, BotBrain> {
     for (const r of bots) {
       const role =
         setup.roles?.[r.id] ?? r.archetype.defaultRole ?? (defenders.has(r.id) ? 'defense' : 'score');
-      const brain = new BotBrain({
-        difficulty: alliance === playerAlliance ? setup.partners : setup.opponents,
-        role,
-        strategy: setup.strategies?.[alliance] ?? 'balanced',
-      });
+      const difficulty = alliance === playerAlliance ? setup.partners : setup.opponents;
+      const brain = new BotBrain({ difficulty, role, strategy: setup.strategies?.[alliance] ?? 'balanced' });
       r.controller = brain;
+      // How long this skill level's drive teams take to line up (the engine applies it).
+      r.alignScale = SKILL[difficulty].align;
       out.set(r.id, brain);
     }
   }

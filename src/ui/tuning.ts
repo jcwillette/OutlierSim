@@ -116,7 +116,7 @@ export function robotFields(def: GameDefinition, a: RobotArchetype): Array<Tunin
   if (a.intake)
     out.push({
       key: 'intakeSec',
-      label: 'Pickup time per piece',
+      label: 'Pickup time per piece (the robot stops to grab it)',
       unit: 's',
       group: 'Game pieces',
       min: 0.05,
@@ -124,6 +124,18 @@ export function robotFields(def: GameDefinition, a: RobotArchetype): Array<Tunin
       step: 0.05,
       get: (x) => x.intake!.timeSec,
       set: (x, v) => (x.intake!.timeSec = v),
+    });
+  if (a.intake || a.place)
+    out.push({
+      key: 'alignSec',
+      label: 'Line-up time per pickup and placement (teleop, drive team)',
+      unit: 's',
+      group: 'Game pieces',
+      min: 0,
+      max: 30,
+      step: 0.1,
+      get: (x) => x.alignSec ?? 0,
+      set: (x, v) => (x.alignSec = v),
     });
   for (const tag of Object.keys(a.place ?? {})) {
     const names = def.targets.filter((t) => t.id === tag || t.tags?.includes(tag)).map((t) => t.name);
@@ -173,6 +185,42 @@ export function robotFields(def: GameDefinition, a: RobotArchetype): Array<Tunin
         step: 0.5,
         get: (x) => x.shooter!.maxRange / FT,
         set: (x, v) => (x.shooter!.maxRange = v * FT),
+      },
+    );
+  if (a.auto)
+    out.push(
+      {
+        key: 'auto:pieces',
+        label: 'Auto routine: pieces it scores (most)',
+        unit: '',
+        group: 'Autonomous',
+        min: 0,
+        max: 20,
+        step: 1,
+        get: (x) => x.auto?.pieces ?? 20,
+        set: (x, v) => (x.auto = { ...x.auto, pieces: Math.round(v) }),
+      },
+      {
+        key: 'auto:leave',
+        label: 'Auto routine: drives out of the starting zone (1 yes, 0 no)',
+        unit: '',
+        group: 'Autonomous',
+        min: 0,
+        max: 1,
+        step: 1,
+        get: (x) => (x.auto?.leave === false ? 0 : 1),
+        set: (x, v) => (x.auto = { ...x.auto, leave: v >= 0.5 }),
+      },
+      {
+        key: 'auto:success',
+        label: 'Auto routine works (bots)',
+        unit: '%',
+        group: 'Autonomous',
+        min: 0,
+        max: 100,
+        step: 1,
+        get: (x) => (x.auto?.success ?? 1) * 100,
+        set: (x, v) => (x.auto = { ...x.auto, success: v / 100 }),
       },
     );
   for (const id of Object.keys(a.endgame ?? {})) {

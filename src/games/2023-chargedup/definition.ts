@@ -16,6 +16,7 @@ import {
   coopPieces,
   countLinks,
   CUBE_COLUMNS,
+  SUSTAINABILITY_LINKS,
   filledNodes,
   nodeId,
 } from './layout.ts';
@@ -521,16 +522,16 @@ export const definition: GameDefinition = {
     bonuses: [
       {
         id: 'sustainability',
-        name: 'Sustainability (6 links, 5 with Coopertition)',
+        name: 'Sustainability (5 links, 4 with Coopertition)',
         rp: 1,
         kind: 'custom',
         check: (own, opp) => {
           const mine = filledNodes(own.targetCounts, own.alliance);
           const theirs = filledNodes(opp.targetCounts, opp.alliance);
           const coop = coopPieces(mine) >= 3 && coopPieces(theirs) >= 3;
-          return countLinks(mine) >= (coop ? 5 : 6);
+          return countLinks(mine) >= (coop ? SUSTAINABILITY_LINKS - 1 : SUSTAINABILITY_LINKS);
         },
-        source: `${SRC_PTS} SUSTAINABILITY + COOPERTITION BONUS`,
+        source: `${SRC_PTS} SUSTAINABILITY + COOPERTITION BONUS; in-season threshold, see SUSTAINABILITY_LINKS`,
       },
       {
         id: 'activation',
@@ -573,12 +574,17 @@ export const definition: GameDefinition = {
     },
     source: M(48, 'Table 6-3 FOUL 5, TECH FOUL 12'),
   },
+  // Calibrated against real 2023 qualification matches at the owner's request (CALIBRATION.md):
+  // mechanism times and drivetrains are the blind build's hardware estimates; the drive team's
+  // line-up (`alignSec`), auto routines, Charge Station times and success chances and reliability
+  // make random alliances of these seven types score like the 2023 season (85 points per alliance).
+  // Each type stands for one seventh of real 2023 robots, ranked by contribution.
   archetypes: [
     {
       id: 'elevator',
       name: 'Elevator all-rounder',
       description:
-        'Swerve with an angled elevator and claw. Floor and shelf pickup, scores cones and cubes on all three rows, balances the Charge Station.',
+        'A top-seventh robot: swerve with an angled elevator and claw. Floor and shelf pickup, scores cones and cubes on all three rows, a two-piece auto, balances the Charge Station.',
       frame: { length: 0.84, width: 0.84, height: 0.7 },
       mass: onFieldMass(125),
       // 14.0 ft/s, 23 ft/s² (tipping-limited)
@@ -587,16 +593,19 @@ export const definition: GameDefinition = {
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.35, reach: 0.2, maxHeight: 1.3 },
       place: { hybrid: 0.8, 'mid-cone': 2.0, 'mid-cube': 1.3, 'high-cone': 2.8, 'high-cube': 1.6 },
-      endgame: { 'auto-engage': 4, 'auto-dock': 2, engage: 4, dock: 2 },
+      alignSec: 2.6,
+      auto: { pieces: 2, success: 0.85 },
+      endgame: { 'auto-engage': 5, engage: 6, dock: 3 },
+      endgameSuccess: { 'auto-engage': 0.85, engage: 0.9 },
       reliability: 0.97,
       source:
-        'engineering estimate: R104 frame + bumpers, G107 48 in reach covers the 1.01 m-deep top pole; MK4i L2 + Falcon 500 swerve, 125 lb (R103)',
+        'mechanism: R104 frame + bumpers, G107 48 in reach covers the 1.01 m-deep top pole; MK4i L2 + Falcon 500 swerve, 125 lb (R103). Drive team, auto, Charge Station and reliability calibrated to the top seventh of 2023 robots (CALIBRATION.md)',
     },
     {
       id: 'arm',
       name: 'Mid-level arm',
       description:
-        'Swerve with a single-jointed arm. Shelf and floor pickup, scores hybrid and middle rows only. Docks and engages, a bit slower.',
+        'A below-average robot: swerve with a single-jointed arm. Shelf and floor pickup, scores hybrid and middle rows only, slowly. Docks and sometimes engages.',
       frame: { length: 0.84, width: 0.84, height: 0.6 },
       mass: onFieldMass(118),
       // 12.5 ft/s, 28 ft/s²
@@ -605,16 +614,19 @@ export const definition: GameDefinition = {
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.4, reach: 0.2, maxHeight: 1.2 },
       place: { hybrid: 0.8, 'mid-cone': 2.4, 'mid-cube': 1.4 },
-      endgame: { 'auto-engage': 5.5, 'auto-dock': 3, engage: 5.5, dock: 2.5 },
-      reliability: 0.92,
+      alignSec: 12.1,
+      auto: { pieces: 1, success: 0.65 },
+      endgame: { engage: 8, dock: 4 },
+      endgameSuccess: { engage: 0.7 },
+      reliability: 0.88,
       source:
-        'engineering estimate: a simpler arm reaches the 0.58 m-deep mid pole but not the 1.01 m top pole; MK4i L2 + NEO swerve, 118 lb',
+        'mechanism: a simpler arm reaches the 0.58 m-deep mid pole but not the 1.01 m top pole; MK4i L2 + NEO swerve, 118 lb. Drive team, auto, Charge Station and reliability calibrated to the third seventh of 2023 robots (CALIBRATION.md)',
     },
     {
       id: 'cubebot',
       name: 'Cube specialist',
       description:
-        'Fast swerve with a low cube intake that flings cubes onto any row. Cubes only, floor pickup only (single substation chute or field).',
+        'An above-average robot: fast swerve with a low cube intake that flings cubes onto any row. Cubes only, floor pickup only (single substation chute or field). Engages in auto.',
       frame: { length: 0.82, width: 0.82, height: 0.5 },
       mass: onFieldMass(105),
       // 15.5 ft/s, 30 ft/s²
@@ -622,16 +634,19 @@ export const definition: GameDefinition = {
       capacity: { cube: 1 },
       intake: { pieceTypes: ['cube'], timeSec: 0.25, reach: 0.2, maxHeight: 0.3 },
       place: { hybrid: 0.6, 'mid-cube': 1.0, 'high-cube': 1.3 },
-      endgame: { 'auto-engage': 3.5, 'auto-dock': 2, engage: 3.5, dock: 2 },
-      reliability: 0.95,
+      alignSec: 8.9,
+      auto: { pieces: 1, success: 0.85 },
+      endgame: { 'auto-engage': 5, engage: 6, dock: 3 },
+      endgameSuccess: { 'auto-engage': 0.8, engage: 0.85 },
+      reliability: 0.92,
       source:
-        'engineering estimate: 71 g cube, walled cube shelves, launching allowed in the community (G404); MK4i L3 + Falcon 500 swerve, 105 lb',
+        'mechanism: 71 g cube, walled cube shelves, launching allowed in the community (G404); MK4i L3 + Falcon 500 swerve, 105 lb. Drive team, auto, Charge Station and reliability calibrated to the fifth seventh of 2023 robots (CALIBRATION.md)',
     },
     {
       id: 'kitbot',
       name: 'Kitbot',
       description:
-        'Tank drive with a simple roller intake. Pushes cones and cubes into the bottom row and drives up onto the Charge Station, but cannot balance it.',
+        'A second-to-bottom robot: tank drive with a simple roller intake. Pushes cones and cubes into the bottom row now and then, and often struggles to get onto the Charge Station.',
       frame: { length: 0.86, width: 0.76, height: 0.45 },
       mass: onFieldMass(90),
       // 10.0 ft/s, 32 ft/s² (low gearing, traction-limited)
@@ -640,16 +655,20 @@ export const definition: GameDefinition = {
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.6, maxHeight: 0.3 },
       place: { hybrid: 1.2 },
-      endgame: { 'auto-dock': 4, dock: 3 },
-      reliability: 0.85,
+      alignSec: 16.8,
+      auto: { pieces: 1, success: 0.45 },
+      endgame: { dock: 8 },
+      // A failed attempt docks nobody; the robot tries again while there's time.
+      endgameSuccess: { dock: 0.4 },
+      reliability: 0.78,
       source:
-        'engineering estimate: Kit of Parts tank, 4 CIM, 10.71:1 Toughbox Mini, 6 in wheels, 90 lb; floor-only roller intake',
+        'mechanism: Kit of Parts tank, 4 CIM, 10.71:1 Toughbox Mini, 6 in wheels, 90 lb; floor-only roller intake. Drive team, auto, Charge Station and reliability calibrated to the second seventh of 2023 robots (CALIBRATION.md)',
     },
     {
       id: 'cone',
       name: 'Cone specialist',
       description:
-        'Elevator with a cone-only claw and a funnel that self-centers on the pole. Loads upright cones off the shelf, fastest on the top cone row. No cubes.',
+        'A second-best robot: elevator with a cone-only claw and a funnel that self-centers on the pole. Loads upright cones off the shelf, fastest on the top cone row. No cubes, no auto balance.',
       frame: { length: 0.84, width: 0.84, height: 0.7 },
       mass: onFieldMass(122),
       // 14.0 ft/s, 23 ft/s² (tipping-limited)
@@ -657,16 +676,19 @@ export const definition: GameDefinition = {
       capacity: { cone: 1 },
       intake: { pieceTypes: ['cone'], timeSec: 0.35, reach: 0.2, maxHeight: 1.3 },
       place: { hybrid: 0.8, 'mid-cone': 1.5, 'high-cone': 2.0 },
-      endgame: { 'auto-dock': 3, engage: 5, dock: 2 },
+      alignSec: 4.6,
+      auto: { pieces: 1, success: 0.85 },
+      endgame: { engage: 7, dock: 3 },
+      endgameSuccess: { engage: 0.85 },
       reliability: 0.95,
       source:
-        'engineering estimate: specializing in one piece lets the claw self-align over the 1.66 in pole (Manual 5.5); MK4i L2 + Falcon 500 swerve, 122 lb',
+        'mechanism: specializing in one piece lets the claw self-align over the 1.66 in pole (Manual 5.5); MK4i L2 + Falcon 500 swerve, 122 lb. Drive team, auto, Charge Station and reliability calibrated to the sixth seventh of 2023 robots (CALIBRATION.md)',
     },
     {
       id: 'balancer',
       name: 'Charge Station specialist',
       description:
-        'Light, quick swerve with a gyro auto-balance. Engages fast in auto and endgame. Scores only low: hybrid nodes and mid cube shelves.',
+        'A mid-pack robot: light, quick swerve with a gyro auto-balance. Engages in auto and in the endgame. Scores only low and slowly: hybrid nodes and mid cube shelves.',
       frame: { length: 0.8, width: 0.8, height: 0.45 },
       mass: onFieldMass(100),
       // 13.4 ft/s, 30 ft/s²
@@ -675,16 +697,20 @@ export const definition: GameDefinition = {
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.4, reach: 0.2, maxHeight: 0.3 },
       place: { hybrid: 0.6, 'mid-cube': 1.0 },
-      endgame: { 'auto-engage': 3, 'auto-dock': 1.5, engage: 2.5, dock: 1.5 },
-      reliability: 0.95,
+      alignSec: 13.6,
+      // Scores its preload, then drives straight onto the station: no MOBILITY.
+      auto: { pieces: 1, leave: false, success: 0.8 },
+      endgame: { 'auto-engage': 4, engage: 4, dock: 2.5 },
+      endgameSuccess: { 'auto-engage': 0.85, engage: 0.9 },
+      reliability: 0.9,
       source:
-        'engineering estimate: a light, low robot settles the +/-15 deg station quickly (Manual 5.4); simple flipper for mid cubes; MAXSwerve 14T + NEO, 100 lb',
+        'mechanism: a light, low robot settles the +/-15 deg station quickly (Manual 5.4); simple flipper for mid cubes; MAXSwerve 14T + NEO, 100 lb. Drive team, auto, Charge Station and reliability calibrated to the fourth seventh of 2023 robots (CALIBRATION.md)',
     },
     {
       id: 'defender',
       name: 'Defender',
       description:
-        'Heavy six-wheel tank with high-grip treads and a wide bumper. Plays defense in the middle of the field by default; can push a piece into the bottom row and dock.',
+        'A bottom-seventh scorer: heavy six-wheel tank with high-grip treads and a wide bumper. Plays defense in the middle of the field by default, rarely scores, and parks instead of docking.',
       frame: { length: 0.94, width: 0.94, height: 0.4 },
       mass: onFieldMass(125, { bumpersLb: 15 }),
       // 12.0 ft/s, 44 ft/s² (six motors, traction-limited)
@@ -696,11 +722,12 @@ export const definition: GameDefinition = {
       totalCapacity: 1,
       intake: { pieceTypes: ['cone', 'cube'], timeSec: 0.5, maxHeight: 0.3 },
       place: { hybrid: 1.0 },
-      endgame: { 'auto-dock': 3, dock: 2 },
-      reliability: 0.93,
+      alignSec: 20.2,
+      auto: { pieces: 0, success: 0.3 },
+      reliability: 0.75,
       defaultRole: 'defense',
       source:
-        'engineering estimate: max-weight (R103), max frame (R104), six Falcon 500s at 10.71:1 on high-traction tread; G207 keeps it out of the opponent loading zone and community',
+        'mechanism: max-weight (R103), max frame (R104), six Falcon 500s at 10.71:1 on high-traction tread; G207 keeps it out of the opponent loading zone and community. Drive team, auto and reliability calibrated to the bottom seventh of 2023 robots (CALIBRATION.md)',
     },
   ],
   defaultArchetype: 'elevator',

@@ -29,11 +29,23 @@ describe('menu tuning', () => {
 
   it('tunes the chance an endgame attempt succeeds (default 100 %)', () => {
     const elevator = arch(cu, 'elevator');
-    const field = robotFields(cu, elevator).find((f) => f.key === 'endgameSuccess:engage')!;
-    expect(field.get(elevator)).toBe(100);
+    const field = (id: string) => robotFields(cu, elevator).find((f) => f.key === `endgameSuccess:${id}`)!;
+    expect(field('dock').get(elevator)).toBe(100); // not set: always counts
+    expect(field('engage').get(elevator)).toBe(90); // calibrated (CALIBRATION.md)
     const tuned = applyTuning(cu, { robots: { elevator: { 'endgameSuccess:engage': 70 } } });
-    expect(arch(tuned, 'elevator').endgameSuccess).toEqual({ engage: 0.7 });
-    expect(elevator.endgameSuccess).toBeUndefined();
+    expect(arch(tuned, 'elevator').endgameSuccess).toEqual({ ...elevator.endgameSuccess, engage: 0.7 });
+    expect(elevator.endgameSuccess?.engage).toBe(0.9); // the game itself is untouched
+  });
+
+  it('tunes the auto routine and the drive team’s line-up time', () => {
+    const kit = arch(cu, 'kitbot');
+    const keys = robotFields(cu, kit).map((f) => f.key);
+    expect(keys).toEqual(expect.arrayContaining(['alignSec', 'auto:pieces', 'auto:leave', 'auto:success']));
+    const tuned = applyTuning(cu, {
+      robots: { kitbot: { alignSec: 3, 'auto:pieces': 0, 'auto:leave': 0, 'auto:success': 100 } },
+    });
+    expect(arch(tuned, 'kitbot').alignSec).toBe(3);
+    expect(arch(tuned, 'kitbot').auto).toEqual({ pieces: 0, leave: false, success: 1 });
   });
 
   it('applies overrides to a copy and leaves the game untouched', () => {

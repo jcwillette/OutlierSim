@@ -126,7 +126,7 @@ describe('2023 Charged Up: engine features it relies on', () => {
     stepFor(m, 0.2);
     expect(a.action?.kind).toBe('endgame');
     expect(m.availableEndgame(b)).toEqual([]); // waiting for the station to settle
-    stepFor(m, 4.5);
+    stepFor(m, a.archetype.endgame!.engage! + 0.3);
     expect(a.endgameDone).not.toBeNull();
     expect(m.availableEndgame(b).length).toBeGreaterThan(0);
   });
