@@ -9,6 +9,16 @@ export function wrapAngle(a: number): number {
   return r;
 }
 
+/**
+ * Signed turn from heading `from` to `to`, the short way round. Half a turn either way is a tie
+ * (within a microradian, so float rounding can't decide it); `tie` picks the side, 1 =
+ * counterclockwise. Pass the alliance's handedness so both alliances break it alike (ADR 0007).
+ */
+export function turnTo(from: number, to: number, tie: 1 | -1 = 1): number {
+  const d = wrapAngle(to - from);
+  return Math.PI - Math.abs(d) < 1e-6 ? tie * Math.PI : d;
+}
+
 export const dist2 = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 
 /** Deterministic PRNG (mulberry32). */

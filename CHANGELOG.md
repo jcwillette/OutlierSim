@@ -4,6 +4,15 @@ Format: newest first. One entry per merged PR.
 
 ## Unreleased
 
+- Blue and red now play the same game (ADR 0007):
+  - Identical 2023 alliances used to give red a wider score spread and fewer bonus RPs than blue. In 2,500 matches: score SD 13.8 vs 12.3, Sustainability 98.4 % vs 99.4 %. Auto showed it most: red's node count varied more, and blue missed Mobility 3× as often.
+  - Cause 1, navigation: the bots' 0.12 m nav grid started at the blue corner, so red's half was 1.8 cm off-grid, and A* broke ties in fixed directions. Red's bots drove a slightly different maze. Now each alliance plans on a grid laid out from its own wall (`AllianceNav`). Fixed left/right preferences (approach headings, which way to step aside) flip for red on a mirrored field.
+  - Cause 2, float32 rounding: Rapier's origin was the blue corner, so red's half was rounded about 8× more coarsely. Rapier's world is now centered on the field.
+  - Cause 3, Rapier's contact solver: it resolves a contact a little differently from its mirror image, which favored one end. Rapier's world is now flipped on even seeds (`PhysicsFrame`, `MatchOptions.flipPhysics`), so consecutive seeds alternate ends and a run favors neither.
+  - Half-turn ties now break the same way for both alliances (`turnTo`). At spawn on the rotational reference game, blue and red used to turn opposite ways.
+  - Result, same setup and seeds (2,500 matches), blue vs red: wins 48.9 % vs 48.1 % (was 47.3 % vs 50.5 %), score 182.4 ± 12.3 vs 181.8 ± 12.2 (was ± 12.3 vs ± 13.8), Sustainability 99.5 % vs 99.5 % (was 99.4 % vs 98.4 %), Activation 80.6 % vs 81.2 % (was 81.5 % vs 79.5 %), Mobility 8.92 vs 8.92 points. In 5,000 auto-only matches, auto points are 54.6 vs 54.7 and Mobility misses 98 vs 91 (was 68 vs 21 per 2,000). Matches are no slower (783 vs 815 ms).
+  - Every match changes (a model change, not a speed-up); the same seed still replays exactly. `Robot.setPosition` / `setVelocity` and `Piece.setPosition` / `setVelocity` take field coordinates; raw `body` calls see Rapier's frame (`match.physics`).
+  - New `tests/symmetry.test.ts`: red's nav answers are exact images of blue's for every game, and with fixed randomness red's bots mirror blue's decisions and moves. It fails on the old code. The teammate-contact test now averages 8 matches instead of 2 (per-match contact ranges from 2 to 22 s).
 - Faster win probability, same results:
   - Each headless match is about 2× faster, and the same seed still plays the exact same match, bit for bit (ADR 0006). Per match, min of 3 runs: 2023 random lineups 1.45 → 0.77 s, 2023 presets 1.28 → 0.63 s, reference game 1.34 → 0.90 s.
     - Robot and piece positions are cached per physics step instead of being read from Rapier each time (about 4 million reads per 2023 match). Any change to a body clears the cache.

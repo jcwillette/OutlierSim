@@ -9,9 +9,10 @@ import {
   type RobotCommand,
   type RobotController,
 } from '../sim/match.ts';
-import { clamp, pointInRegion, regionCenter, regionOutline, wrapAngle } from '../sim/math.ts';
+import { handedness as frameHandedness } from '../sim/frame.ts';
+import { clamp, pointInRegion, regionCenter, regionOutline, turnTo, wrapAngle } from '../sim/math.ts';
 import type { Alliance, AllianceStrategy, GameDefinition, Region2D, RobotRole, Vec2 } from '../sim/types.ts';
-import { NavGrid, type DynamicObstacle } from './navgrid.ts';
+import { AllianceNav, type DynamicObstacle } from './navgrid.ts';
 import { PointIndex } from './spatial.ts';
 
 /**
@@ -84,22 +85,30 @@ function aiFor(m: Match): MatchAI {
 }
 
 /**
- * Nav grids per game definition and robot size. A grid depends only on the field geometry, so
- * every match of the same definition (e.g. a Monte Carlo run) shares one instead of rebuilding it.
+ * Nav grids per game definition, alliance and robot size. Each alliance plans on a grid laid out
+ * from its own wall (`AllianceNav`), so neither half of the field is easier to drive. A grid depends
+ * only on the field geometry, so every match of the same definition (e.g. a Monte Carlo run) shares
+ * one instead of rebuilding it.
  */
-const navGrids = new WeakMap<GameDefinition, Map<number, NavGrid>>();
+const navGrids = new WeakMap<GameDefinition, Map<string, AllianceNav>>();
 
-function gridFor(m: Match, r: Robot): NavGrid {
+function gridFor(m: Match, r: Robot): AllianceNav {
   const inflate =
     Math.round((Math.max(r.archetype.frame.length, r.archetype.frame.width) / 2 + 0.08) * 20) / 20;
   let grids = navGrids.get(m.def);
   if (!grids) navGrids.set(m.def, (grids = new Map()));
-  let g = grids.get(inflate);
+  const key = `${r.alliance}:${inflate}`;
+  let g = grids.get(key);
   if (!g) {
-    g = new NavGrid(m.game, inflate);
-    grids.set(inflate, g);
+    g = new AllianceNav(m.game, inflate, r.alliance);
+    grids.set(key, g);
   }
   return g;
+}
+
+/** This robot's handedness (`frame.ts`): fixed turn and side preferences are multiplied by it. */
+function handedness(m: Match, r: Robot): 1 | -1 {
+  return frameHandedness(r.alliance, m.def.field.symmetry);
 }
 
 /** Shot spots per game definition, by `archetype id|target id` (static geometry, like nav grids). */
@@ -345,8 +354,10 @@ export class BotBrain implements RobotController {
     const grid = gridFor(m, r);
     const back = r.archetype.frame.length / 2 + 0.25;
     const direct = Math.atan2(pos.y - r.y, pos.x - r.x);
+    // Left turns first, in this alliance's frame (red's mirror image of blue's choice).
+    const hand = handedness(m, r);
     for (const off of [0, 0.5, -0.5, 1, -1, 1.6, -1.6, 2.3, -2.3, Math.PI]) {
-      const yaw = direct + off;
+      const yaw = direct + hand * off;
       const stand = { x: pos.x - Math.cos(yaw) * back, y: pos.y - Math.sin(yaw) * back };
       if (grid.isFree(stand)) return yaw;
     }
@@ -873,7 +884,8 @@ export class BotBrain implements RobotController {
         const lateral = ux * -oy - uy * -ox; // > 0: teammate is to our left
         if (ahead > 0 && Math.abs(lateral) < 1.0 && yieldPriority(m, r, o) < yieldPriority(m, o, r)) {
           yieldTo = true;
-          const s = lateral > 0 ? -1 : 1; // step to the side away from them
+          // Step to the side away from them (dead ahead: to our left, in this alliance's frame).
+          const s = lateral > 0 ? -1 : lateral < 0 ? 1 : handedness(m, r);
           sideX += -uy * s;
           sideY += ux * s;
         }
@@ -895,8 +907,9 @@ export class BotBrain implements RobotController {
       .map((o) => ({ x: o.x, y: o.y, radius: halfSize(o) * 0.9 }));
   }
 
-  private faceCmd(r: Robot, yaw: number): number {
-    return clamp(wrapAngle(yaw - r.yaw) * 2.5, -1, 1) * Math.max(0.5, this.skill.speed);
+  private faceCmd(m: Match, r: Robot, yaw: number): number {
+    const turn = turnTo(r.yaw, yaw, handedness(m, r));
+    return clamp(turn * 2.5, -1, 1) * Math.max(0.5, this.skill.speed);
   }
 
   private execute(m: Match, r: Robot, dt: number): RobotCommand {
@@ -927,7 +940,7 @@ export class BotBrain implements RobotController {
         const yaw = d < 2.5 ? Math.atan2(pos.y - r.y, pos.x - r.x) : Math.atan2(s.vy, s.vx);
         const aligned = Math.abs(wrapAngle(yaw - r.yaw)) < 0.5;
         const k = d < 1.5 && !aligned ? 0.3 : 1;
-        return { ...cmd, vx: s.vx * k, vy: s.vy * k, omega: this.faceCmd(r, yaw), intake: true };
+        return { ...cmd, vx: s.vx * k, vy: s.vy * k, omega: this.faceCmd(m, r, yaw), intake: true };
       }
       case 'station': {
         const s = this.steer(m, r, p.point, false);
@@ -940,7 +953,7 @@ export class BotBrain implements RobotController {
         const ts = m.targets.get(p.targetId)!;
         const inside = pointInRegion(r, ts.target.place!.zone);
         const yaw = p.face ? Math.atan2(p.face.y - r.y, p.face.x - r.x) : r.yaw;
-        const omega = s.dist < 2 && p.face ? this.faceCmd(r, yaw) : this.travelFace(r, s);
+        const omega = s.dist < 2 && p.face ? this.faceCmd(m, r, yaw) : this.travelFace(m, r, s);
         if (inside && s.dist < 0.35) this.arrivedFor += dt;
         const ready = this.arrivedFor >= this.skill.dwell;
         return { ...cmd, vx: s.vx, vy: s.vy, omega, score: ready, targetId: p.targetId };
@@ -954,7 +967,7 @@ export class BotBrain implements RobotController {
         const canNow = m.shotOptions(r).some((o) => o.target.id === p.targetId);
         const settled = near && r.speed < 0.25 && this.arrivedFor >= this.skill.dwell;
         const fire = canNow && (settled || (sh.shootOnMove ?? false));
-        const omega = s.dist < 2.5 && !sh.turret ? this.faceCmd(r, yaw) : this.travelFace(r, s);
+        const omega = s.dist < 2.5 && !sh.turret ? this.faceCmd(m, r, yaw) : this.travelFace(m, r, s);
         return { ...cmd, vx: near ? 0 : s.vx, vy: near ? 0 : s.vy, omega, score: fire, targetId: p.targetId };
       }
       case 'endgame': {
@@ -988,14 +1001,14 @@ export class BotBrain implements RobotController {
           return cmd;
         }
         const s = this.steer(m, r, blockPoint(m, o), Math.hypot(o.x - r.x, o.y - r.y) < 3);
-        return { ...cmd, vx: s.vx, vy: s.vy, omega: this.faceCmd(r, Math.atan2(o.y - r.y, o.x - r.x)) };
+        return { ...cmd, vx: s.vx, vy: s.vy, omega: this.faceCmd(m, r, Math.atan2(o.y - r.y, o.x - r.x)) };
       }
     }
   }
 
-  private travelFace(r: Robot, s: { vx: number; vy: number }): number {
+  private travelFace(m: Match, r: Robot, s: { vx: number; vy: number }): number {
     if (Math.hypot(s.vx, s.vy) < 0.2) return 0;
-    return this.faceCmd(r, Math.atan2(s.vy, s.vx)) * 0.6;
+    return this.faceCmd(m, r, Math.atan2(s.vy, s.vx)) * 0.6;
   }
 }
 

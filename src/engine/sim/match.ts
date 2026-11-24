@@ -4,13 +4,16 @@ import { expandDefinition, type ExpandedGame, type XEndgame, type XStation, type
 import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from './faults.ts';
 import { ScoreLedger } from './ledger.ts';
 import { bodyEpoch, stepWorld } from './bodyState.ts';
+import { PhysicsFrame, handedness } from './frame.ts';
 import {
   clamp,
   eulerToQuat,
+  rotateVec,
   footprint,
   gaussian,
   makeRng,
   pointInRegion,
+  turnTo,
   wrapAngle,
   yawFromQuat,
 } from './math.ts';
@@ -57,6 +60,9 @@ export const IDLE: RobotCommand = Object.freeze({
 export interface RobotController {
   command(match: Match, robot: Robot, dt: number): RobotCommand;
 }
+
+/** A vector as Rapier's (x, y, z) arguments. */
+const xyz = (v: Vec3): [number, number, number] => [v.x, v.y, v.z];
 
 export type RobotAction =
   | { kind: 'place'; targetId: string; pieceType: string; remaining: number; total: number }
@@ -125,10 +131,13 @@ export class Robot {
     readonly station: number,
     readonly archetype: RobotArchetype,
     readonly body: RAPIER.RigidBody,
+    /** Where Rapier's world sits on the field (`Match.physics`). */
+    private readonly frame = new PhysicsFrame({ x: 0, y: 0 }),
   ) {}
 
-  // Pose and velocity as Rapier reports them, cached until the physics state can have changed
-  // (`bodyEpoch`, see bodyState.ts). The bots read these thousands of times per step.
+  // Pose and velocity as Rapier reports them (moved to field coordinates), cached until the physics
+  // state can have changed (`bodyEpoch`, see bodyState.ts). The bots read these thousands of times
+  // per step.
   private poseAt = -1;
   private px = 0;
   private py = 0;
@@ -141,13 +150,22 @@ export class Robot {
 
   private readPose(): void {
     const t = this.body.translation();
-    this.px = t.x;
-    this.py = t.y;
+    this.px = this.frame.fieldX(t.x);
+    this.py = this.frame.fieldY(t.y);
     this.pz = t.z;
     this.poseAt = bodyEpoch;
   }
+
+  /** Put the robot at a field position (tests and tools). Velocity and heading are unchanged. */
+  setPosition(p: Vec3): void {
+    this.body.setTranslation(this.frame.toPhysics(p), true);
+  }
+  /** Set the robot's field velocity (tests and tools). */
+  setVelocity(v: Vec3): void {
+    this.body.setLinvel(this.frame.vector(v), true);
+  }
   private readVel(): void {
-    const v = this.body.linvel();
+    const v = this.frame.vector(this.body.linvel());
     this.pvx = v.x;
     this.pvy = v.y;
     this.velAt = bodyEpoch;
@@ -177,7 +195,7 @@ export class Robot {
   }
   get yaw(): number {
     if (this.yawAt !== bodyEpoch) {
-      this.pyaw = yawFromQuat(this.body.rotation());
+      this.pyaw = this.frame.yaw(yawFromQuat(this.body.rotation()));
       this.yawAt = bodyEpoch;
     }
     return this.pyaw;
@@ -238,22 +256,33 @@ export class Piece {
     readonly type: PieceType,
     readonly body: RAPIER.RigidBody,
     readonly radius: number,
+    /** Where Rapier's world sits on the field (`Match.physics`). */
+    private readonly frame = new PhysicsFrame({ x: 0, y: 0 }),
   ) {}
   // Cached like Robot's pose (see bodyState.ts).
   private poseAt = -1;
   private px = 0;
   private py = 0;
   private pz = 0;
-  /** A fresh object each call (callers may keep or change it). */
+  /** Field position. A fresh object each call (callers may keep or change it). */
   get position(): Vec3 {
     if (this.poseAt !== bodyEpoch) {
       const t = this.body.translation();
-      this.px = t.x;
-      this.py = t.y;
+      this.px = this.frame.fieldX(t.x);
+      this.py = this.frame.fieldY(t.y);
       this.pz = t.z;
       this.poseAt = bodyEpoch;
     }
     return { x: this.px, y: this.py, z: this.pz };
+  }
+
+  /** Put the piece at a field position (tests and tools). */
+  setPosition(p: Vec3): void {
+    this.body.setTranslation(this.frame.toPhysics(p), true);
+  }
+  /** Set the piece's field velocity. */
+  setVelocity(v: Vec3): void {
+    this.body.setLinvel(this.frame.vector(v), true);
   }
 }
 
@@ -280,6 +309,12 @@ export interface RobotSlot {
 
 export interface MatchOptions {
   seed?: number;
+  /**
+   * Lay Rapier's world out from the red end (the field's mirror / rotation image), see
+   * `PhysicsFrame`. Default: on even seeds, so consecutive seeds alternate ends and Rapier's
+   * handedness favors neither alliance over a run (ADR 0007).
+   */
+  flipPhysics?: boolean;
   /** Override archetypes per robot id (0-2 blue stations 1-3, 3-5 red stations 1-3). */
   archetypes?: Partial<Record<number, string>>;
   /**
@@ -361,6 +396,12 @@ export class Match {
     red: { minor: 0, major: 0 },
   };
   readonly random: () => number;
+  /**
+   * Where Rapier's world sits on the field: centered, and in every other match flipped
+   * (`PhysicsFrame`, ADR 0007). `Robot` / `Piece` poses, velocities and setters are in field
+   * coordinates; only raw `body` calls see physics coordinates.
+   */
+  readonly physics: PhysicsFrame;
   /** Seconds since auto started. */
   time = 0;
   phase: MatchPhase = 'pre';
@@ -383,6 +424,11 @@ export class Match {
     this.random = makeRng(opts.seed ?? 1);
     this.world = new RAPIER.World({ x: 0, y: 0, z: -GRAVITY });
     this.world.timestep = SIM_DT;
+    this.physics = new PhysicsFrame(
+      { x: def.field.length / 2, y: def.field.width / 2 },
+      opts.flipPhysics ?? ((opts.seed ?? 1) >>> 0) % 2 === 0,
+      def.field.symmetry,
+    );
     this.buildField();
     for (const t of this.game.targets) {
       this.targets.set(t.id, {
@@ -498,9 +544,14 @@ export class Match {
 
   private buildField(): void {
     const { length: L, width: W, wallHeight: H } = this.def.field;
-    const fixed = (x: number, y: number, z: number, q = eulerToQuat(undefined)) =>
-      this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z).setRotation(q));
-    // floor + perimeter
+    /** A fixed body at a field position, with an orientation already in physics axes. */
+    const fixed = (x: number, y: number, z: number, physicsQ = eulerToQuat(undefined)) =>
+      this.world.createRigidBody(
+        RAPIER.RigidBodyDesc.fixed()
+          .setTranslation(...xyz(this.physics.toPhysics({ x, y, z })))
+          .setRotation(physicsQ),
+      );
+    // floor + perimeter (axis-aligned boxes: the same in either frame)
     this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(L, W, 0.5).setFriction(0.8),
       fixed(L / 2, W / 2, -0.5),
@@ -532,14 +583,16 @@ export class Match {
           );
           break;
         case 'hull':
+          // Vertices in physics axes (with the element's rotation applied), so the body isn't rotated.
           desc = RAPIER.ColliderDesc.convexHull(
-            new Float32Array(e.shape.vertices.flatMap((v) => [v.x, v.y, v.z])),
+            new Float32Array(e.shape.vertices.flatMap((v) => xyz(this.physics.vector(rotateVec(q, v))))),
           );
           break;
       }
       if (!desc) throw new Error(`Element '${e.id}' produced no collider (degenerate hull?)`);
       desc.setFriction(e.friction ?? 0.5).setRestitution(e.restitution ?? 0.2);
-      this.world.createCollider(desc, fixed(e.position.x, e.position.y, e.position.z, q));
+      const rot = e.shape.kind === 'hull' ? undefined : this.physics.quat(q);
+      this.world.createCollider(desc, fixed(e.position.x, e.position.y, e.position.z, rot));
     }
   }
 
@@ -548,8 +601,8 @@ export class Match {
     const { length, width, height } = arch.frame;
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(pose.x, pose.y, height / 2 + 0.005)
-        .setRotation(eulerToQuat({ yaw: pose.yaw }))
+        .setTranslation(...xyz(this.physics.toPhysics({ x: pose.x, y: pose.y, z: height / 2 + 0.005 })))
+        .setRotation(eulerToQuat({ yaw: this.physics.yaw(pose.yaw) }))
         .enabledRotations(false, false, true)
         .setLinearDamping(0.05)
         .setAngularDamping(0.5),
@@ -563,7 +616,7 @@ export class Match {
         .setRestitution(0.1),
       body,
     );
-    return new Robot(id, alliance, station, arch, body);
+    return new Robot(id, alliance, station, arch, body, this.physics);
   }
 
   spawnPiece(typeId: string, pos: Vec3, vel?: Vec3): Piece {
@@ -571,12 +624,13 @@ export class Match {
     if (!type) throw new Error(`Unknown piece type '${typeId}'`);
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(pos.x, pos.y, pos.z)
+        .setTranslation(...xyz(this.physics.toPhysics(pos)))
+        .setRotation(this.physics.quat(eulerToQuat(undefined)))
         .setLinearDamping(0.6)
         .setAngularDamping(0.6)
         .setCcdEnabled(true),
     );
-    if (vel) body.setLinvel(vel, true);
+    if (vel) body.setLinvel(this.physics.vector(vel), true);
     const s = type.shape;
     let desc: RAPIER.ColliderDesc;
     let radius: number;
@@ -619,7 +673,7 @@ export class Match {
       .setFriction(type.friction ?? 0.6)
       .setRestitution(type.restitution ?? 0.3);
     this.world.createCollider(desc, body);
-    const piece = new Piece(this.nextPieceId++, type, body, radius);
+    const piece = new Piece(this.nextPieceId++, type, body, radius, this.physics);
     this.pieces.push(piece);
     return piece;
   }
@@ -761,7 +815,7 @@ export class Match {
       tx = cmd.vx * s * a.drive.maxSpeed;
       ty = cmd.vy * s * a.drive.maxSpeed;
     }
-    const v = r.body.linvel();
+    const v = this.physics.vector(r.body.linvel());
     let dvx = tx - v.x;
     let dvy = ty - v.y;
     const maxDv = Math.min(a.drive.maxAccel, (a.drive.traction ?? 1.1) * GRAVITY) * dt;
@@ -771,15 +825,17 @@ export class Match {
       dvy *= maxDv / dv;
     }
     const m = r.body.mass();
-    r.body.applyImpulse({ x: m * dvx, y: m * dvy, z: 0 }, true);
+    r.body.applyImpulse(this.physics.vector({ x: m * dvx, y: m * dvy, z: 0 }), true);
 
     let targetOmega = locked ? 0 : clamp(cmd.omega, -1, 1) * a.drive.maxOmega;
     if (!locked && r.aimYaw !== null) {
-      targetOmega = clamp(wrapAngle(r.aimYaw - r.yaw) * 8, -a.drive.maxOmega, a.drive.maxOmega);
+      const turn = turnTo(r.yaw, r.aimYaw, handedness(r.alliance, this.def.field.symmetry));
+      targetOmega = clamp(turn * 8, -a.drive.maxOmega, a.drive.maxOmega);
     }
-    const w = r.body.angvel().z;
+    const w = this.physics.omega(r.body.angvel().z);
     const maxDw = a.drive.maxOmega * 8 * dt;
-    r.body.setAngvel({ x: 0, y: 0, z: w + clamp(targetOmega - w, -maxDw, maxDw) }, true);
+    const omega = w + clamp(targetOmega - w, -maxDw, maxDw);
+    r.body.setAngvel({ x: 0, y: 0, z: this.physics.omega(omega) }, true);
   }
 
   // ------------------------------------------------------------------ mechanisms
@@ -1111,8 +1167,8 @@ export class Match {
     p.status = 'field';
     p.heldBy = null;
     p.body.setEnabled(true);
-    p.body.setTranslation(pos, true);
-    p.body.setLinvel(vel, true);
+    p.setPosition(pos);
+    p.setVelocity(vel);
     p.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 

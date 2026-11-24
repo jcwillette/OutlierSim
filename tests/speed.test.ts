@@ -23,36 +23,46 @@ const cu = findGame('2023-chargedup')!;
 const ref = findGame('0000-reference')!;
 
 describe('pose cache', () => {
-  it('never returns a stale pose or velocity, whoever moves the body', () => {
-    const m = new Match(cu, { seed: 3 });
-    m.start();
-    for (let i = 0; i < 30; i++) m.step();
-    const r = m.robots[2]!;
-    const p = m.pieces.find((x) => x.status === 'field')!;
-    // What Rapier reports right now, read past the cache.
-    const live = () => {
-      const t = r.body.translation();
-      const v = r.body.linvel();
-      return [t.x, t.y, t.z, v.x, v.y, Math.hypot(v.x, v.y), yawFromQuat(r.body.rotation())];
-    };
-    const cached = () => [r.x, r.y, r.z, r.vx, r.vy, r.speed, r.yaw];
-    expect(cached()).toEqual(live());
-    r.body.setTranslation({ x: 5.25, y: 3.5, z: 0.375 }, true);
-    expect([r.x, r.y, r.z]).toEqual([5.25, 3.5, 0.375]);
-    expect(cached()).toEqual(live());
-    r.body.setRotation({ x: 0, y: 0, z: Math.sin(0.3), w: Math.cos(0.3) }, true);
-    expect(r.yaw).toBeCloseTo(0.6, 6);
-    expect(cached()).toEqual(live());
-    r.body.setLinvel({ x: 1.5, y: -0.5, z: 0 }, true);
-    expect([r.vx, r.vy]).toEqual([1.5, -0.5]);
-    r.body.applyImpulse({ x: r.body.mass(), y: 0, z: 0 }, true);
-    expect(cached()).toEqual(live());
-    p.body.setTranslation({ x: 8, y: 4, z: 0.25 }, true);
-    expect(p.position).toEqual({ x: 8, y: 4, z: 0.25 });
-    m.step();
-    expect(cached()).toEqual(live());
-    expect(p.position).toEqual({ ...p.body.translation() });
-  });
+  it.each([false, true])(
+    'never returns a stale pose or velocity, whoever moves the body (flipped physics: %s)',
+    (flipPhysics) => {
+      const m = new Match(cu, { seed: 3, flipPhysics });
+      m.start();
+      for (let i = 0; i < 30; i++) m.step();
+      const r = m.robots[2]!;
+      const p = m.pieces.find((x) => x.status === 'field')!;
+      // What Rapier reports right now, read past the cache and moved to field coordinates.
+      const f = m.physics;
+      const live = () => {
+        const t = r.body.translation();
+        const v = f.vector(r.body.linvel());
+        const yaw = f.yaw(yawFromQuat(r.body.rotation()));
+        return [f.fieldX(t.x), f.fieldY(t.y), t.z, v.x, v.y, Math.hypot(v.x, v.y), yaw];
+      };
+      const cached = () => [r.x, r.y, r.z, r.vx, r.vy, r.speed, r.yaw];
+      expect(cached()).toEqual(live());
+      r.body.setTranslation({ x: -3, y: 0.5, z: 0.375 }, true); // a raw Rapier write
+      expect(cached()).toEqual(live());
+      r.setPosition({ x: 6.5, y: 2.25, z: 0.375 });
+      expect(r.x).toBeCloseTo(6.5, 5);
+      expect(r.y).toBeCloseTo(2.25, 5);
+      expect(cached()).toEqual(live());
+      r.body.setRotation({ x: 0, y: 0, z: Math.sin(0.3), w: Math.cos(0.3) }, true);
+      expect(r.yaw).toBeCloseTo(f.yaw(0.6), 6);
+      expect(cached()).toEqual(live());
+      r.setVelocity({ x: 1.5, y: -0.5, z: 0 });
+      expect([r.vx, r.vy]).toEqual([1.5, -0.5]);
+      r.body.applyImpulse({ x: r.body.mass(), y: 0, z: 0 }, true);
+      expect(cached()).toEqual(live());
+      p.setPosition({ x: 8, y: 4, z: 0.25 });
+      expect(p.position.x).toBeCloseTo(8, 5);
+      expect(p.position.y).toBeCloseTo(4, 5);
+      m.step();
+      expect(cached()).toEqual(live());
+      const t = p.body.translation();
+      expect(p.position).toEqual({ x: f.fieldX(t.x), y: f.fieldY(t.y), z: t.z });
+    },
+  );
 });
 
 describe('stepWorld', () => {
