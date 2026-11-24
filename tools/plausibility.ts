@@ -22,7 +22,13 @@ import { availableParallelism } from 'node:os';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { auditDefinition } from '../src/engine/ai/audit.ts';
 import { attachBots, type Difficulty } from '../src/engine/ai/bot.ts';
-import { Match, initPhysics, validateDefinition, type MatchResult } from '../src/engine/sim/index.ts';
+import {
+  Match,
+  initPhysics,
+  sourceBase,
+  validateDefinition,
+  type MatchResult,
+} from '../src/engine/sim/index.ts';
 import type { AllianceStrategy, GameDefinition, RobotRole } from '../src/engine/sim/types.ts';
 import { GAMES, findGame } from '../src/games/index.ts';
 
@@ -126,7 +132,9 @@ function summarizeMatch(job: Job, seed: number, m: Match, r: MatchResult): Sampl
         bonuses: Object.keys(s.rpBreakdown).filter((k) => k !== 'win' && k !== 'tie'),
         won: s.won,
         targets,
-        endgameActions: { ...s.endgame },
+        // From the ledger: auto actions (an auto dock) are released at teleop, so the end-of-match
+        // counts in `s.endgame` only have the teleop ones.
+        endgameActions: endgameCounts(m, a),
       };
     }),
     robots: r.robots.map((x) => ({
@@ -136,6 +144,17 @@ function summarizeMatch(job: Job, seed: number, m: Match, r: MatchResult): Sampl
       mechFailed: x.mechFailedAt !== null,
     })),
   };
+}
+
+/** Endgame actions an alliance completed (auto and teleop), by base id, from the score ledger. */
+function endgameCounts(m: Match, alliance: 'blue' | 'red'): Record<string, number> {
+  const ids = new Set(m.def.endgame.map((e) => e.id));
+  const out: Record<string, number> = {};
+  for (const e of m.ledger.entries) {
+    const base = sourceBase(e.source);
+    if (e.alliance === alliance && e.robotId !== null && ids.has(base)) out[base] = (out[base] ?? 0) + 1;
+  }
+  return out;
 }
 
 async function runJob(job: Job): Promise<Sample[]> {
@@ -266,6 +285,23 @@ function report(
       out(`| ${row.join(' | ')} |`);
     }
   out();
+
+  // Endgame actions per alliance per match.
+  const egIds = def.endgame.map((e) => e.id);
+  if (egIds.length) {
+    out('Endgame actions completed per alliance per match:');
+    out();
+    out(`| Lineup | Difficulty | ${egIds.join(' | ')} |`);
+    out(`| --- | --- | ${egIds.map(() => '---').join(' | ')} |`);
+    for (const l of lineups)
+      for (const d of difficulties) {
+        const ss = sides(byCell.get(`${l.id}|${d}`) ?? []);
+        out(
+          `| ${l.name} | ${d} | ${egIds.map((id) => mean(ss.map((x) => x.endgameActions[id] ?? 0)).toFixed(2)).join(' | ')} |`,
+        );
+      }
+    out();
+  }
 
   // Difficulty ordering.
   if (difficulties.length > 1)
