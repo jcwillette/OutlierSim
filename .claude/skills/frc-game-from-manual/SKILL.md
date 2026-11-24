@@ -16,7 +16,7 @@ Read `CLAUDE.md` first if it isn't already in context. The schema source of trut
 ## Inputs
 
 - **Manual PDF** (required). If the user gives a URL, `curl -L -o work/<id>/manual.pdf <url>`. FIRST's blob storage is reachable from the cloud container.
-- **Archive what you built from.** FIRST replaces the file behind the manual URL with each revision (the 2023 URL now serves the April copy, so the January build can't be re-checked). Record the revision and date from the manual's footer and `sha256sum work/<id>/manual.pdf` in `SOURCES.md`, and the Team Updates you read. `work/` is git-ignored, so tell the owner to keep a copy of the kickoff PDF.
+- **Archive what you built from.** FIRST replaces the file behind the manual URL with each revision (the 2023 URL now serves the April copy, so the January build can't be re-checked). Record the revision and date from the manual's footer and the SHA-256 (`work/<id>/manual/meta.txt` after ingest) in `SOURCES.md`, and the Team Updates you read. `work/` is git-ignored, so tell the owner to keep a copy of the kickoff PDF.
 - **Reveal or animation video** (strongly recommended). YouTube is normally **blocked** in cloud sessions, so ask the user to upload the video file. Don't try to work around the network policy. If the user says the host is allowed, `pip install yt-dlp` and pass the URL.
 - Optional: WPILib's AprilTag field layout JSON for the season (exact field size and element poses), and the official field drawings PDF.
 - **Never commit manuals, videos or frames** (copyright, size).
@@ -32,7 +32,7 @@ tools/ingest-video.sh work/<id>/video.mp4 <id> 3
 
 Then **read, don't skim**:
 
-1. `work/<id>/manual/headings.txt` and `index.md` map out the manual.
+1. `work/<id>/manual/headings.txt` and `index.md` map out the manual; `rules.md` lists every rule (G/H/R/...) with its page and first line; `meta.txt` has the SHA-256 and dates for `SOURCES.md`.
 2. Read in full the text pages for: Game Overview, Arena/Field (every element), Game Pieces, Match timing and periods, Scoring (the points table), Ranking Points, Human Player rules, the robot construction limits that affect play (frame perimeter, height, extension, weight, motors), and the **robot-to-robot G-rules** (pinning, protected zones, "right of way", endgame protection). The exact wording of those rules decides the model ("any part of", "regardless of who initiates", "fully contained", how far apart ends a pin), so quote it in `SOURCES.md`.
 3. Look at the contact sheets in `manual/sheets/`, then the high-res figure pages in `manual/hi/`. Dimensioned field drawings matter most. Render any page in more detail with `tools/ingest-manual.sh <pdf> <id> --page N`.
 4. Look at the video sheets in `video/sheets/` for layout, element shapes, and how pieces move and get scored. Use `captions.txt` if present. **The manual wins every conflict with the video.**
