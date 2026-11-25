@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { NavGrid, attachBots } from '../src/engine/ai/index.ts';
 import { Match, expandDefinition, initPhysics } from '../src/engine/sim/index.ts';
+import { distToRegion } from '../src/engine/sim/math.ts';
 import { findGame } from '../src/games/index.ts';
 
 beforeAll(async () => {
@@ -161,6 +162,9 @@ describe('clean defense on 2023 Charged Up', () => {
   };
   it('never marks an opposing defender', () => {
     const { m, me, brain } = setup({});
+    // Every red robot carries a piece home; we stand between them and their grid.
+    for (const id of [3, 4, 5]) if (!m.robots[id]!.held.length) m.robots[id]!.held.push('cube');
+    me.setPosition({ x: 10, y: 4.5, z: me.archetype.frame.height / 2 + 0.01 });
     const opt = brain.defenseOption(m, me);
     expect(opt?.plan.kind).toBe('defend');
     expect(opt!.plan.opponentId).not.toBe(3); // red 1 is a defender
@@ -169,10 +173,48 @@ describe('clean defense on 2023 Charged Up', () => {
     const { m, me, brain } = setup({ 4: 'defense', 5: 'defense' });
     expect(brain.defenseOption(m, me)).toBeNull();
   });
+  it("with nobody to mark, waits at the goal end of the opponents' lane, clear of their zones", () => {
+    const { m, me, brain } = setup({});
+    // Both red scorers deep in their own community: off limits.
+    m.robots[4]!.setPosition({ x: 15, y: 1, z: 0.4 });
+    m.robots[5]!.setPosition({ x: 15, y: 4, z: 0.4 });
+    const opt = brain.defenseOption(m, me) as { plan: { kind: string; point?: { x: number; y: number } } };
+    expect(opt.plan.kind).toBe('guard');
+    const post = opt.plan.point!;
+    // Between mid-field and red's community, outside it (it starts at x 11.6, or 13.2 above y 4).
+    expect(post.x).toBeGreaterThan(cu.field.length / 2);
+    const community = m.game.zones.find((z) => z.baseId === 'community' && z.alliance === 'red')!;
+    expect(distToRegion(post, community.region)).toBeGreaterThan(1);
+  });
+  it('marks the carrier it can get in front of, and drives into it from goal-side', () => {
+    const { m, me, brain } = setup({});
+    const o = m.robots[4]!;
+    const put = (r: typeof me, x: number, y: number) => {
+      r.setPosition({ x, y, z: r.archetype.frame.height / 2 + 0.01 });
+      r.setVelocity({ x: 0, y: 0, z: 0 });
+    };
+    put(m.robots[5]!, 15, 4); // the other scorer out of the way, in its community
+    put(o, 7, 4.5); // red, carrying a cube toward its grid (+x)
+    o.action = null;
+    if (!o.held.length) o.held.push('cube');
+    put(me, 8.4, 4.2); // already between it and its grid
+    const opt = brain.defenseOption(m, me);
+    expect(opt?.plan).toMatchObject({ kind: 'defend', opponentId: 4 });
+    const press = (
+      brain as unknown as { press: (m: Match, r: unknown, o: unknown) => { x: number; y: number } }
+    ).press(m, me, o);
+    // Toward the carrier (back toward the red loading zone, -x), at full effort.
+    expect(press.x).toBeLessThan(-0.5);
+  });
   it('leaves robots near their Charge Station alone in the endgame (endgameProtectedZones)', () => {
-    // In 2023 the station is inside the always-protected community; switch that off to isolate
-    // the endgame-only protection (G209), which matters in games where the climb is elsewhere.
-    const endgameOnly = { ...cu, botHints: { ...cu.botHints, protectedZones: [] } };
+    // In 2023 the station is inside the always-protected community; switch that off (the bots'
+    // zones and the declared G207 that defenders read) to isolate the endgame-only protection
+    // (G209), which matters in games where the climb is elsewhere.
+    const endgameOnly = {
+      ...cu,
+      fouls: { ...cu.fouls, contact: [] },
+      botHints: { ...cu.botHints, protectedZones: [] },
+    };
     const { m, me, brain } = setup({}, endgameOnly);
     const o = m.robots[4]!;
     o.setPosition({ x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 });
@@ -182,6 +224,57 @@ describe('clean defense on 2023 Charged Up', () => {
     o.setPosition({ x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 });
     me.setPosition({ x: cu.field.length - 6.2, y: 2.745, z: me.archetype.frame.height / 2 + 0.01 });
     expect(brain.worthDefending(m, me, o)).toBe(false);
+  });
+});
+
+describe('defense on 2024 Crescendo', () => {
+  const cr = findGame('2024-crescendo')!;
+  it('waits where shooters shoot from in teleop, and is out of the STAGE ZONE before its last 20 s', () => {
+    const m = new Match(cr, {
+      seed: 1,
+      archetypes: {
+        0: 'allround',
+        1: 'allround',
+        2: 'defender',
+        3: 'allround',
+        4: 'allround',
+        5: 'allround',
+      },
+    });
+    const bots = attachBots(m, {
+      partners: 'normal',
+      opponents: 'normal',
+      playerId: null,
+      roles: { 2: 'defense' },
+    });
+    const brain = bots.get(2)! as unknown as {
+      defenseOption: (
+        m: Match,
+        r: unknown,
+      ) => { plan: { kind: string; point?: { x: number; y: number } } } | null;
+    };
+    const me = m.robots[2]!;
+    const stage = m.game.zones.find((z) => z.baseId === 'stage-zone' && z.alliance === 'red')!.region;
+    // Red's scorers parked in their SOURCE ZONE: off limits, so the defender guards.
+    const park = () => {
+      for (const id of [3, 4, 5]) {
+        const o = m.robots[id]!;
+        o.setPosition({ x: 0.8 + (id - 3) * 0.4, y: 0.6, z: o.archetype.frame.height / 2 + 0.01 });
+        o.setVelocity({ x: 0, y: 0, z: 0 });
+      }
+    };
+    m.start();
+    while (m.phase !== 'teleop') m.step();
+    park();
+    const teleop = brain.defenseOption(m, me)!.plan;
+    expect(teleop.kind).toBe('guard');
+    // Within red's shooting range of its SPEAKER (x > 11), where STAGE contact is still legal.
+    expect(teleop.point!.x).toBeGreaterThan(11);
+    while (m.remaining > cr.timing.endgameSec + 3) m.step();
+    park();
+    const late = brain.defenseOption(m, me)!.plan;
+    expect(late.kind).toBe('guard');
+    expect(distToRegion(late.point!, stage)).toBeGreaterThan(1);
   });
 });
 
