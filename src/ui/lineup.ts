@@ -30,6 +30,11 @@ export const STRATEGIES: ReadonlyArray<readonly [AllianceStrategy, string, strin
   ['max-cycles', 'Max cycles', 'Keep scoring as late as possible and never stop to defend.'],
   ['early-endgame', 'Early endgame', 'Head for the endgame about 15 s early to make sure of it.'],
   ['aggressive', 'Aggressive', 'Get in the way of opponents carrying pieces about three times as readily.'],
+  [
+    'close-out',
+    'Close out',
+    'Balanced, but once the lead is safe, head for the endgame about 15 s early to make sure of it.',
+  ],
 ];
 
 const randomSlots = (): AllianceChoice['slots'] => [

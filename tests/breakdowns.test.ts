@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { attachBots } from '../src/engine/ai/index.ts';
+import { attachBots, safeLead } from '../src/engine/ai/index.ts';
 import { IDLE, Match, initPhysics } from '../src/engine/sim/index.ts';
 import { findGame } from '../src/games/index.ts';
 import { applyPreset, defaultLineup, resolveLineup, sanitizeLineup } from '../src/ui/lineup.ts';
@@ -211,6 +211,23 @@ describe('roles and strategies', () => {
     expect(bots.get(2)!.role).toBe('defense'); // explicit
     expect(bots.get(0)!.strategy).toBe('aggressive');
     expect(bots.get(3)!.strategy).toBe('balanced');
+  });
+
+  it("close-out reads the scoreboard: a lead is safe when the opponents can't catch up at twice their rate", () => {
+    const m = new Match(findGame('2024-crescendo')!, { seed: 1 });
+    m.start();
+    while (m.phase !== 'teleop') m.step();
+    m.advance(60 - m.time);
+    const add = (alliance: 'blue' | 'red', points: number) =>
+      m.ledger.add({ time: m.time, alliance, category: 'teleop', points, source: 'test', robotId: null });
+    add('red', 20);
+    // What red could still add at twice its rate so far.
+    const reach = (2 * 20 * m.remaining) / m.time;
+    add('blue', 20 + Math.floor(reach) - 2);
+    expect(safeLead(m, 'blue')).toBe(false);
+    add('blue', 4);
+    expect(safeLead(m, 'blue')).toBe(true);
+    expect(safeLead(m, 'red')).toBe(false);
   });
 });
 

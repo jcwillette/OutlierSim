@@ -586,8 +586,10 @@ export interface SpecialistRole {
  * - 'max-cycles': keep cycling as late as possible, never stop to defend.
  * - 'early-endgame': head for the endgame ~15 s early to make sure of it.
  * - 'aggressive': defend opportunistically about three times as readily.
+ * - 'close-out': balanced, but once the lead is safe (the opponents can't catch up at twice the
+ *   rate they have scored so far), head for the endgame ~15 s early like 'early-endgame'.
  */
-export type AllianceStrategy = 'balanced' | 'max-cycles' | 'early-endgame' | 'aggressive';
+export type AllianceStrategy = 'balanced' | 'max-cycles' | 'early-endgame' | 'aggressive' | 'close-out';
 
 /** A suggested alliance composition shown in the menu. */
 export interface AllianceLineup {
