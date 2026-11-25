@@ -111,6 +111,7 @@ Shooters launch from 0.2 m above their frame. Hood ranges set where a robot can 
 - **Specialists**: SPEAKER shooter, AMP scorer, stage specialist.
 - **Shutdown defense**: all-rounder, SPEAKER shooter and a defender, on _aggressive_.
 - **Ensemble first**: stage specialist, AMP scorer, subwoofer shooter, on _early endgame_.
+- **Monte Carlo pick**: three all-rounders as TRAP specialists, on _close out_ (see "Alliance composition" below).
 - **Rookie alliance**: three kitbots.
 
 ## Plausibility
@@ -229,6 +230,64 @@ The good shooters score 30-45 % more pieces than their 2023 tier, as intended: a
 ### Blue vs red
 
 400 identical Typical-vs-Typical matches with the final robots (`npm run sim -- --lineups typical,typical --matches 400 --seed 5001`): wins 186 : 197 (z -0.6), total 51.2 : 51.5 (z -0.5), auto z -1.5, teleop z +0.7, endgame 5.9 : 6.1 (z -1.0), MELODY 57 % : 56 %, ENSEMBLE 25 % : 24 %. The first build had red's endgame at 8.65 against blue's 7.08 (z -10): HARMONY counted red robots on blue's chain positions. Fixed in `rules.ts` and covered by a test.
+
+## Alliance composition (Monte Carlo)
+
+The owner asked for the ideal alliance with the Monte Carlo match-ups, leaving the robot types and their tuning as they are. New specialist roles and strategies were allowed. `npm run alliances` plays every candidate on the same seeds against an opponent field, with the spectator menu's `runMatchup`: normal bots unless noted, breakdowns on. The candidate plays blue on half the seeds and red on the other half. Two fields:
+
+- **random**: the menu's random preset, three different robot types dealt per match. This stands in for a qualification schedule, so the measure is ranking points (RP) per match.
+- **powerhouse**: three all-rounders on balanced, the strongest alliance the robot types allow. This stands in for a playoff final, so the measure is the win share (ties count half).
+
+**Every composition** (all 84 multisets of the seven robot types, default roles, balanced, 60 matches each vs random, seeds 1-60; `--candidates all`):
+
+| Composition                              | RP / match | Win  | Margin | ENSEMBLE |
+| ---------------------------------------- | ---------- | ---- | ------ | -------- |
+| all-rounder ×3                           | 3.78       | 100% | +56.2  | 78%      |
+| all-rounder ×2, AMP scorer               | 3.68       | 98%  | +40.6  | 72%      |
+| all-rounder ×2, SPEAKER shooter          | 3.62       | 100% | +50.0  | 62%      |
+| all-rounder ×2, stage specialist         | 3.58       | 97%  | +35.5  | 65%      |
+| all-rounder ×2, subwoofer shooter        | 3.55       | 98%  | +34.4  | 60%      |
+| all-rounder, SPEAKER shooter, AMP scorer | 3.53       | 98%  | +31.5  | 57%      |
+| all-rounder, SPEAKER shooter ×2          | 3.50       | 93%  | +39.1  | 63%      |
+| SPEAKER shooter ×3                       | 3.33       | 92%  | +30.6  | 53%      |
+| all-rounder ×2, kitbot                   | 3.22       | 93%  | +30.1  | 37%      |
+| all-rounder ×2, defender (defends)       | 3.18       | 93%  | +27.4  | 33%      |
+| defender ×3                              | 0.00       | 0%   | −53.1  | 0%       |
+
+MELODY is 97-100 % for every composition above but the last, so the RP gaps come from ENSEMBLE and the odd loss. With two all-rounders, the third robot's RP barely depends on its type. Its playoff value does: against Powerhouse (round 2, 200 matches), all-rounder ×2 + SPEAKER shooter wins 39 %, and all-rounder ×2 + AMP scorer 14 %.
+
+**How three all-rounders play**: paired differences from plain three all-rounders on balanced, on the same seeds (z in brackets). Round 2: 200 matches per field, seeds 1001-1200. Round 3, for the new ideas: 300, seeds 2001-2300.
+
+| Setup (all-rounder ×3 unless named)      | Round | vs random: RP | vs random: margin | vs Powerhouse: win | vs Powerhouse: RP |
+| ---------------------------------------- | ----- | ------------- | ----------------- | ------------------ | ----------------- |
+| _early endgame_                          | 3     | +0.12 (3.5)   | −6.7 (−15.7)      | −13.2 % (−5.5)     | −0.17 (−2.6)      |
+| _max cycles_                             | 2     | −0.07 (−1.3)  | +2.8 (3.3)        | +0.0 %             | −0.03 (−0.3)      |
+| _aggressive_                             | 2     | −0.03 (−0.6)  | −0.6 (−0.6)       | +5.2 % (1.5)       | +0.09 (1.0)       |
+| one plays defense                        | 2     | −0.17 (−3.5)  | −12.1 (−12.4)     | −19.8 % (−5.3)     | −0.51 (−5.7)      |
+| new: one AMP specialist                  | 2     | +0.06 (1.3)   | +3.4 (3.5)        | −1.0 % (−0.2)      | −0.08 (−0.8)      |
+| new: one AMP specialist                  | 3     | −0.12 (−2.9)  | −1.4 (−2.0)       | +5.7 % (1.9)       | +0.03 (0.4)       |
+| new: all three SPEAKER only              | 2     | +0.03 (0.6)   | −4.8 (−5.6)       | −23.2 % (−5.7)     | −0.47 (−5.0)      |
+| new: all three TRAP specialists          | 3     | +0.09 (3.9)   | −0.2 (−0.7)       | +1.8 % (1.4)       | +0.07 (1.8)       |
+| new: _close out_                         | 3     | +0.13 (3.9)   | −6.4 (−15.2)      | −0.2 % (−1.0)      | −0.02 (−1.5)      |
+| new: TRAP specialists ×3, _close out_    | 3     | +0.13 (3.9)   | −6.4 (−15.2)      | +2.0 % (1.6)       | +0.06 (1.4)       |
+| new: AMP specialist, TRAP specialists ×2 | 3     | −0.03 (−0.7)  | −0.8 (−1.1)       | +6.0 % (2.0)       | +0.10 (1.3)       |
+
+- **Climbing early** is where the qualification RP is: ENSEMBLE goes from 73 % to 86 % against random alliances. Climbing early regardless (_early endgame_) gives up 13 % of wins against an equal alliance. The new _close out_ strategy climbs early only when the lead is already safe by the scoreboard, so it gets the RP and keeps the wins.
+- **TRAP specialists** add ENSEMBLE in close matches: in the last 20 s a robot holding a NOTE goes for a TRAP (5 points) before it climbs. With a safe lead under _close out_ they are already climbing when the TRAPS open, so they change nothing there.
+- **The AMP specialist** went one way in round 2 and the other in round 3: no reliable effect. The planner already values banking AMP NOTES (`botValue`). Keeping all three robots off the AMP (SPEAKER only) costs 5 points a match against random alliances and 23 % of wins against Powerhouse, so AMPLIFICATION matters. Who feeds the AMP doesn't.
+- Defense never pays here: the two remaining scorers lose more than the defender takes off the opponents.
+
+**Confirmation** on new seeds, TRAP specialists ×3 on _close out_ against plain three all-rounders:
+
+| Field, difficulty                         | RP                  | Win                 | ENSEMBLE  |
+| ----------------------------------------- | ------------------- | ------------------- | --------- |
+| Powerhouse, normal (600, seeds 3001-3600) | 2.79 vs 2.70 (+3.5) | 50 % vs 49 % (+1.1) | 79 vs 71% |
+| random, hard (300, seeds 4001-4300)       | 3.81 vs 3.75 (+2.1) | 100 % vs 100 %      | 82 vs 75% |
+| Powerhouse, hard (300, seeds 4001-4300)   | 2.81 vs 2.66 (+3.1) | 48 % vs 45 % (+2.2) | 84 vs 77% |
+
+**Verdict**: the ideal alliance is **three under-stage all-rounders**, all three as TRAP specialists, on _close out_. It is the menu's _Monte Carlo pick_ preset. The robots are nearly all of it: the best way of playing adds about 0.1 RP a match (one RP over a 10-match event) and no measurable playoff edge over three all-rounders playing balanced. Without three all-rounders, two all-rounders and a SPEAKER shooter is next best. Never pick a defender, and keep someone feeding the AMP.
+
+Reproduce: `npm run alliances -- --game 2024-crescendo --candidates all --vs random --matches 60`, then `--candidates 'allround:trap,allround:trap,allround:trap@close-out;powerhouse' --vs random,powerhouse --matches 300`. About 0.7 s per match per core.
 
 ## Open questions
 

@@ -886,6 +886,18 @@ export const definition: GameDefinition = {
       strategy: 'early-endgame',
     },
     {
+      id: 'ideal',
+      name: 'Monte Carlo pick',
+      description:
+        'The best alliance the Monte Carlo search found: three under-stage all-rounders as TRAP specialists, closing out (climbing early once the lead is safe) for the ENSEMBLE RP.',
+      robots: [
+        { archetype: 'allround', role: 'trap' },
+        { archetype: 'allround', role: 'trap' },
+        { archetype: 'allround', role: 'trap' },
+      ],
+      strategy: 'close-out',
+    },
+    {
       id: 'rookies',
       name: 'Rookie alliance',
       description: 'Three kitbots: SUBWOOFER shots, the AMP, parking, and the occasional breakdown.',
