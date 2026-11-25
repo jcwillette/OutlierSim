@@ -207,9 +207,14 @@ describe('clean defense on 2023 Charged Up', () => {
     expect(press.x).toBeLessThan(-0.5);
   });
   it('leaves robots near their Charge Station alone in the endgame (endgameProtectedZones)', () => {
-    // In 2023 the station is inside the always-protected community; switch that off to isolate
-    // the endgame-only protection (G209), which matters in games where the climb is elsewhere.
-    const endgameOnly = { ...cu, botHints: { ...cu.botHints, protectedZones: [] } };
+    // In 2023 the station is inside the always-protected community; switch that off (the bots'
+    // zones and the declared G207 that defenders read) to isolate the endgame-only protection
+    // (G209), which matters in games where the climb is elsewhere.
+    const endgameOnly = {
+      ...cu,
+      fouls: { ...cu.fouls, contact: [] },
+      botHints: { ...cu.botHints, protectedZones: [] },
+    };
     const { m, me, brain } = setup({}, endgameOnly);
     const o = m.robots[4]!;
     o.setPosition({ x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 });
@@ -219,6 +224,57 @@ describe('clean defense on 2023 Charged Up', () => {
     o.setPosition({ x: cu.field.length - 3.94, y: 2.745, z: o.archetype.frame.height / 2 + 0.2 });
     me.setPosition({ x: cu.field.length - 6.2, y: 2.745, z: me.archetype.frame.height / 2 + 0.01 });
     expect(brain.worthDefending(m, me, o)).toBe(false);
+  });
+});
+
+describe('defense on 2024 Crescendo', () => {
+  const cr = findGame('2024-crescendo')!;
+  it('waits where shooters shoot from in teleop, and is out of the STAGE ZONE before its last 20 s', () => {
+    const m = new Match(cr, {
+      seed: 1,
+      archetypes: {
+        0: 'allround',
+        1: 'allround',
+        2: 'defender',
+        3: 'allround',
+        4: 'allround',
+        5: 'allround',
+      },
+    });
+    const bots = attachBots(m, {
+      partners: 'normal',
+      opponents: 'normal',
+      playerId: null,
+      roles: { 2: 'defense' },
+    });
+    const brain = bots.get(2)! as unknown as {
+      defenseOption: (
+        m: Match,
+        r: unknown,
+      ) => { plan: { kind: string; point?: { x: number; y: number } } } | null;
+    };
+    const me = m.robots[2]!;
+    const stage = m.game.zones.find((z) => z.baseId === 'stage-zone' && z.alliance === 'red')!.region;
+    // Red's scorers parked in their SOURCE ZONE: off limits, so the defender guards.
+    const park = () => {
+      for (const id of [3, 4, 5]) {
+        const o = m.robots[id]!;
+        o.setPosition({ x: 0.8 + (id - 3) * 0.4, y: 0.6, z: o.archetype.frame.height / 2 + 0.01 });
+        o.setVelocity({ x: 0, y: 0, z: 0 });
+      }
+    };
+    m.start();
+    while (m.phase !== 'teleop') m.step();
+    park();
+    const teleop = brain.defenseOption(m, me)!.plan;
+    expect(teleop.kind).toBe('guard');
+    // Within red's shooting range of its SPEAKER (x > 11), where STAGE contact is still legal.
+    expect(teleop.point!.x).toBeGreaterThan(11);
+    while (m.remaining > cr.timing.endgameSec + 3) m.step();
+    park();
+    const late = brain.defenseOption(m, me)!.plan;
+    expect(late.kind).toBe('guard');
+    expect(distToRegion(late.point!, stage)).toBeGreaterThan(1);
   });
 });
 

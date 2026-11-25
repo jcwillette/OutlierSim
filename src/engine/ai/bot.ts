@@ -106,6 +106,15 @@ interface MatchAI {
    * `endgameOnly` contact fouls' zones): static, so collected once per match.
    */
   protected: Record<Alliance, { always: ZoneCheck[]; endgame: ZoneCheck[] }>;
+  /**
+   * Where contact would be a foul, for defenders: the zones of the game's declared contact fouls
+   * (endgame-only ones in the endgame), plus the bot-only `endgameProtectedZones` (rules the referee
+   * can't call, like 2023's G209). Unlike `protected`, not widened by `botHints.protectedZones`,
+   * which keeps bots' paths out of places where contact is still legal (2024's STAGE ZONE).
+   */
+  fouling: Record<Alliance, { always: ZoneCheck[]; endgame: ZoneCheck[] }>;
+  /** The subset of `fouling` where the opponent's bumpers count too (`inside: 'either' | 'protected'`). */
+  bodyFouling: Record<Alliance, { always: ZoneCheck[]; endgame: ZoneCheck[] }>;
   /** Path penalty for each alliance's robots: the opponent's protected zones. */
   penalty: Record<Alliance, { key: string; regions: Region2D[] } | undefined>;
   /** Each alliance's carrying lane (where it fetches and scores), for defenders. */
@@ -153,6 +162,11 @@ function aiFor(m: Match): MatchAI {
       m.game.zones
         .filter((z) => (z.alliance === a || z.alliance === null) && ids.includes(z.baseId))
         .map((z) => zoneCheck(z.region));
+    const foulAlways = rules.filter((c) => !c.endgameOnly).flatMap((c) => c.zones);
+    const foulEndgame = [...rules.flatMap((c) => c.zones), ...(hints?.endgameProtectedZones ?? [])];
+    const body = rules.filter((c) => c.inside !== 'intruder');
+    const bodyAlways = body.filter((c) => !c.endgameOnly).flatMap((c) => c.zones);
+    const bodyEndgame = body.flatMap((c) => c.zones);
     const penalty = (a: Alliance) => {
       if (!always.length) return undefined;
       const opp = other(a);
@@ -165,6 +179,14 @@ function aiFor(m: Match): MatchAI {
       protected: {
         blue: { always: regions('blue', always), endgame: regions('blue', endgame) },
         red: { always: regions('red', always), endgame: regions('red', endgame) },
+      },
+      fouling: {
+        blue: { always: regions('blue', foulAlways), endgame: regions('blue', foulEndgame) },
+        red: { always: regions('red', foulAlways), endgame: regions('red', foulEndgame) },
+      },
+      bodyFouling: {
+        blue: { always: regions('blue', bodyAlways), endgame: regions('blue', bodyEndgame) },
+        red: { always: regions('red', bodyAlways), endgame: regions('red', bodyEndgame) },
       },
       penalty: { blue: penalty('blue'), red: penalty('red') },
       lanes: { blue: laneFor(m, 'blue'), red: laneFor(m, 'red') },
@@ -310,8 +332,8 @@ export class BotBrain implements RobotController {
   private readonly refillCache = new Map<string, number>();
   /** Opponent id -> match time before which this bot won't defend it again. */
   private readonly harassCooldown = new Map<number, number>();
-  /** Where this defender waits for carriers (`guardPost`), worked out once. */
-  private post: Vec2 | null = null;
+  /** Where this defender waits for carriers (`guardPost`), worked out once for teleop and once for the endgame. */
+  private post: { teleop?: Vec2; endgame?: Vec2 } = {};
   /** Match time an opponent got squarely in our way (-1: none is), for `Skill.react`. */
   private blockedSince = -1;
   /** The side (+1 left, -1 right, in our direction of travel) we are slipping round it, until `jukeUntil`. */
@@ -920,7 +942,7 @@ export class BotBrain implements RobotController {
     if (!carrying && !this.nearPost(m, r, o)) return 0;
     const value = carrying ? 1 : EMPTY_MARK_VALUE;
     const vo = Math.max(o.speed, CARRIER_PACE * o.archetype.drive.maxSpeed);
-    const gate = carrying ? this.gate(m, r, o, o.alliance, 0) : null;
+    const gate = carrying ? this.gate(m, r, o, scoringSpot(m, o, o), o.alliance, 0) : null;
     // Still well out: can we be waiting at its gate by the time it gets there? (Soonest arrival first.)
     if (gate && Math.hypot(o.x - gate.x, o.y - gate.y) > STEP_OUT) {
       const tO = Math.hypot(o.x - gate.x, o.y - gate.y) / vo;
@@ -946,25 +968,38 @@ export class BotBrain implements RobotController {
    * the goal a small step sideways covers a wide arc of approaches.
    */
   private guardPost(m: Match, r: Robot): Vec2 {
-    if (this.post) return this.post;
+    const phase = defenseEndgame(m) ? 'endgame' : 'teleop';
+    const cached = this.post[phase];
+    if (cached) return cached;
     const opp = other(r.alliance);
     const lane = aiFor(m).lanes[opp];
     const from = lane.source ?? { x: m.def.field.length / 2, y: m.def.field.width / 2 };
-    this.post = this.gate(m, r, from, opp, GUARD_DEPTH) ?? gridFor(m, r).nearestFree(from);
-    return this.post;
+    // Where the opponents would go to score from there (their shot spots, for shooters).
+    const spots = m.robots.filter((o) => o.alliance === opp).map((o) => scoringSpot(m, o, from));
+    const goal = {
+      x: spots.reduce((t, q) => t + q.x, 0) / spots.length,
+      y: spots.reduce((t, q) => t + q.y, 0) / spots.length,
+    };
+    const post = this.gate(m, r, from, goal, opp, GUARD_DEPTH) ?? gridFor(m, r).nearestFree(from);
+    this.post[phase] = post;
+    return post;
   }
 
   /**
-   * Where a defender meets a robot coming from `from` toward `alliance`'s goal (`Lane.goal`): the
-   * first free spot on that straight line, walking out from the goal, that is clear of the goal's
-   * protected zones with room for the defender, then `depth` m further out. Null if `from` is itself
-   * that close to the goal.
+   * Where a defender meets a robot of `alliance` coming from `from` to score at `goal`
+   * (`scoringSpot`): the first free spot on that straight line, walking out from the goal, that is
+   * clear of the alliance's protected zones with room for the defender, then `depth` m further out.
+   * Null if `from` is itself that close to the goal.
    */
-  private gate(m: Match, r: Robot, from: Vec2, alliance: Alliance, depth: number): Vec2 | null {
-    const goal = aiFor(m).lanes[alliance].goal;
+  private gate(m: Match, r: Robot, from: Vec2, goal: Vec2, alliance: Alliance, depth: number): Vec2 | null {
     const grid = gridFor(m, r);
     const margin = DEFENSE_ZONE_MARGIN + halfSize(r) + 0.2;
-    const clear = (p: Vec2) => !nearProtectedZone(m, p, alliance, margin, m.isEndgame) && grid.isFree(p);
+    // Clear of the opponents' foul zones, and of ours (contact there would count against them).
+    const endgame = defenseEndgame(m);
+    const clear = (p: Vec2) =>
+      !nearFoulZone(m, p, alliance, margin, endgame) &&
+      !nearFoulZone(m, p, other(alliance), margin, endgame) &&
+      grid.isFree(p);
     const len = Math.hypot(from.x - goal.x, from.y - goal.y);
     if (len < 1e-6) return null;
     const ux = (from.x - goal.x) / len;
@@ -1101,15 +1136,19 @@ export class BotBrain implements RobotController {
     if (isDefending(o)) return false;
     if ((this.harassCooldown.get(o.id) ?? 0) > m.time) return false;
     const point = standPoint(m, r, o);
-    const endgame = m.isEndgame;
+    const endgame = defenseEndgame(m);
     return (
-      !nearProtectedZone(m, o, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
-      !nearProtectedZone(m, point, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
+      !nearFoulZone(m, o, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
+      // Where the rule counts either robot, none of the opponent may be (or be about to be) in there.
+      !inBodyFoulZone(m, o) &&
+      !nearFoulZone(m, point, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
       // ...and no part of us is in them (contact rules usually count any part of the robot).
-      !nearProtectedZone(m, r, o.alliance, halfDiag(r) + 0.1, endgame) &&
+      !nearFoulZone(m, r, o.alliance, halfDiag(r) + 0.1, endgame) &&
       // Nor about to be shoved into ours: contact there counts against the opponent, though we
       // forced it (G201).
-      !nearProtectedZone(m, o, r.alliance, halfDiag(o) + OWN_ZONE_MARGIN, endgame)
+      !nearFoulZone(m, o, r.alliance, halfDiag(o) + OWN_ZONE_MARGIN, endgame) &&
+      // ...and nor are we, in our own zones.
+      !nearFoulZone(m, r, r.alliance, halfDiag(r) + 0.1, endgame)
     );
   }
 
@@ -1205,7 +1244,8 @@ export class BotBrain implements RobotController {
       const ox = r.x - o.x;
       const oy = r.y - o.y;
       const od = Math.hypot(ox, oy);
-      const wary = exposed && o.alliance !== r.alliance;
+      // Also, defending, any opponent partly in its own zone where either robot counts.
+      const wary = o.alliance !== r.alliance && (exposed || (marking && inBodyFoulZone(m, o)));
       const range = wary ? WARY_RANGE : 1.4;
       if (od < range && od > 1e-3) {
         const push = ((range - od) / range) * (wary ? WARY_PUSH : 0.6);
@@ -1454,7 +1494,7 @@ export class BotBrain implements RobotController {
     const speed = this.skill.speed;
     let goal: Vec2;
     // Still well out: wait on its line home, just outside its goal's zones, shifting as it moves.
-    const gate = o.held.length > 0 ? this.gate(m, r, o, o.alliance, 0) : null;
+    const gate = o.held.length > 0 ? this.gate(m, r, o, scoringSpot(m, o, o), o.alliance, 0) : null;
     if (gate && Math.hypot(o.x - gate.x, o.y - gate.y) > STEP_OUT) {
       const s = this.steer(m, r, gate, Math.hypot(gate.x - r.x, gate.y - r.y) < PRESS_RANGE);
       return { x: s.vx, y: s.vy };
@@ -1488,14 +1528,14 @@ export class BotBrain implements RobotController {
     vy = (vy / d) * speed;
     // Keep every part of us out of the opponent's protected zones: if this way leads in, take the
     // nearest heading that doesn't (holding our ground against a shove), else back out.
-    const safe = (x: number, y: number) =>
-      !nearProtectedZone(
-        m,
-        { x: r.x + x * 0.4, y: r.y + y * 0.4 },
-        o.alliance,
-        halfDiag(r) + 0.15,
-        m.isEndgame,
+    const safe = (x: number, y: number) => {
+      const p = { x: r.x + x * 0.4, y: r.y + y * 0.4 };
+      const endgame = defenseEndgame(m);
+      return (
+        !nearFoulZone(m, p, o.alliance, halfDiag(r) + 0.15, endgame) &&
+        !nearFoulZone(m, p, r.alliance, halfDiag(r) + 0.15, endgame)
       );
+    };
     if (!safe(vx, vy)) {
       const turns = [Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4, Math.PI];
       const h = handedness(m, r);
@@ -1517,14 +1557,18 @@ export class BotBrain implements RobotController {
       }
       if (!found) return { x: 0, y: 0 };
     }
-    // Teammates in the way: nudge aside as when driving anywhere else.
+    // Teammates in the way: nudge aside as when driving anywhere else. Other opponents partly in
+    // a zone where either robot counts: give them a wide berth.
     for (const t of m.robots) {
-      if (t === r || t.alliance !== r.alliance) continue;
+      if (t === r || t === o) continue;
+      const wary = t.alliance !== r.alliance;
+      if (wary && !inBodyFoulZone(m, t)) continue;
+      const range = wary ? WARY_RANGE : 1.4;
       const ox = r.x - t.x;
       const oy = r.y - t.y;
       const od = Math.hypot(ox, oy);
-      if (od < 1.4 && od > 1e-3) {
-        const push = ((1.4 - od) / 1.4) * 0.6;
+      if (od < range && od > 1e-3) {
+        const push = ((range - od) / range) * (wary ? WARY_PUSH : 0.6);
         vx += (ox / od) * push;
         vy += (oy / od) * push;
       }
@@ -1556,6 +1600,8 @@ function samePlan(a: Plan, b: Plan): boolean {
       return b.kind === 'endgame' && a.actionId === b.actionId && a.zoneIndex === b.zoneIndex;
     case 'defend':
       return b.kind === 'defend' && a.opponentId === b.opponentId;
+    case 'guard':
+      return b.kind === 'guard' && Math.hypot(a.point.x - b.point.x, a.point.y - b.point.y) < 0.3;
     default:
       return a.kind === b.kind;
   }
@@ -1741,8 +1787,13 @@ function expectedEndgamePoints(m: Match, r: Robot, a: XEndgame, auto: boolean): 
  */
 function goalDir(m: Match, o: Robot): Vec2 {
   const lane = aiFor(m).lanes[o.alliance];
-  // Carrying: to its targets. Empty: back to its stations for the next piece.
-  const goal = o.held.length > 0 ? lane.goal : (lane.source ?? lane.goal);
+  // Carrying: to where it scores (its targets, or the nearest spot it can shoot from; once there, its
+  // targets). Empty: back to its stations for the next piece.
+  let goal = lane.source ?? lane.goal;
+  if (o.held.length > 0) {
+    const spot = scoringSpot(m, o, o);
+    goal = Math.hypot(spot.x - o.x, spot.y - o.y) > 0.5 ? spot : lane.goal;
+  }
   let x = goal.x - o.x;
   let y = goal.y - o.y;
   const d = Math.hypot(x, y) || 1;
@@ -1757,6 +1808,31 @@ function goalDir(m: Match, o: Robot): Vec2 {
     y /= n;
   }
   return { x, y };
+}
+
+/**
+ * Where `o` would go from `from` to score: for a shooter, the nearest spot its shooter can score from
+ * (its range, which any scout knows); otherwise its alliance's targets (`Lane.goal`).
+ */
+function scoringSpot(m: Match, o: Robot, from: Vec2): Vec2 {
+  const sh = o.archetype.shooter;
+  let best: Vec2 | null = null;
+  let bestD = Infinity;
+  if (sh) {
+    for (const ts of m.targets.values()) {
+      const t = ts.target;
+      if (!ts.enabled || !t.aperture || (t.alliance && t.alliance !== o.alliance)) continue;
+      if (!t.accepts.some((p) => sh.pieceTypes.includes(p))) continue;
+      const spot = shotSpots(m, o, t).nearest(from);
+      if (!spot) continue;
+      const d = Math.hypot(spot.x - from.x, spot.y - from.y);
+      if (d < bestD) {
+        best = spot;
+        bestD = d;
+      }
+    }
+  }
+  return best ?? aiFor(m).lanes[o.alliance].goal;
 }
 
 /** Where a defender stands to block `o`: bumper to bumper in front of it, on its way home. */
@@ -1779,18 +1855,62 @@ function goalSide(m: Match, r: Robot, o: Robot): boolean {
 /** Metres of open field (outside its protected zones) `o` still has to cross on its way home. */
 function openRun(m: Match, o: Robot): number {
   const g = goalDir(m, o);
-  for (let d = 0; d < OPEN_RUN_MAX; d += 0.25)
+  // A shooter stops to shoot once in range.
+  let max = OPEN_RUN_MAX;
+  if (o.held.length > 0 && o.archetype.shooter) {
+    const spot = scoringSpot(m, o, o);
+    max = Math.min(max, Math.hypot(spot.x - o.x, spot.y - o.y) + 0.5);
+  }
+  for (let d = 0; d < max; d += 0.25)
     if (
-      nearProtectedZone(
+      nearFoulZone(
         m,
         { x: o.x + g.x * d, y: o.y + g.y * d },
         o.alliance,
         DEFENSE_ZONE_MARGIN,
-        m.isEndgame,
+        defenseEndgame(m),
       )
     )
       return d;
-  return OPEN_RUN_MAX;
+  return max;
+}
+
+/** Some of `o` is (nearly) in one of its own zones where contact with either robot is a foul. */
+function inBodyFoulZone(m: Match, o: Robot): boolean {
+  const endgame = defenseEndgame(m);
+  const ahead = { x: o.x + o.vx * BODY_LOOKAHEAD, y: o.y + o.vy * BODY_LOOKAHEAD };
+  const margin = halfDiag(o) + 0.15;
+  return (
+    nearFoulZone(m, o, o.alliance, margin, endgame, true) ||
+    nearFoulZone(m, ahead, o.alliance, margin, endgame, true)
+  );
+}
+
+/** Defenders judge whether an opponent is getting into a zone where either robot counts this far ahead (s). */
+const BODY_LOOKAHEAD = 0.5;
+
+/**
+ * Defenders treat the endgame's foul zones as live this long (s) before the endgame starts, so they
+ * are clear of them when it does (a drive coach calls "get out" in time).
+ */
+const DEFENSE_ENDGAME_LEAD = 5;
+
+function defenseEndgame(m: Match): boolean {
+  return m.phase === 'teleop' && m.remaining <= m.def.timing.endgameSec + DEFENSE_ENDGAME_LEAD;
+}
+
+/** `p` is inside, or within `margin` m of, one of `alliance`'s foul zones (`MatchAI.fouling`). */
+function nearFoulZone(
+  m: Match,
+  p: Vec2,
+  alliance: Alliance,
+  margin: number,
+  endgame: boolean,
+  bodyOnly = false,
+): boolean {
+  const zones = (bodyOnly ? aiFor(m).bodyFouling : aiFor(m).fouling)[alliance];
+  for (const z of endgame ? zones.endgame : zones.always) if (nearZone(p, z, margin)) return true;
+  return false;
 }
 
 /**

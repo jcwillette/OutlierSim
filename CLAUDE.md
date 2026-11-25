@@ -67,15 +67,16 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
     - yielding in lane conflicts (`yieldPriority`), and making room when standing on a higher-priority teammate's announced spot (`makeRoom`)
   - Opponents defend opportunistically (`harassOption`, `botHints.defenseOpportunism`).
   - The defense role plays goal-side (ADR 0010, `defenseOption`, `press`):
-    - each alliance has a `Lane` (its stations' and targets' centroids);
+    - each alliance has a `Lane` (its stations' and targets' centroids); a carrier's goal is `scoringSpot` (a shooter's nearest shot spot, else its targets);
     - with nobody to mark, the defender waits at the opponents' `gate` (a `guard` plan): on the lane, just outside the protected zones at the opponents' goal end;
     - it marks the carrier it can get in front of soonest (`markValue`; empty robots near its post count 0.4) and keeps that mark unless another is worth 1.5× as much;
     - it meets a carrier at that carrier's gate, steps out to intercept within `STEP_OUT` (3.5 m), then drives into it from goal-side; from beside or behind it swings round the side instead.
   - Scorers slip round an opponent squarely in their way (the juke in `steer`), after the driver's reaction time (`SKILL.react`), and never toward the opponent's protected zones.
   - Protected zones come from the declared contact fouls unless `botHints.protectedZones` / `endgameProtectedZones` override them. Bots keep their whole body out of the opponent's (path penalty inflated by the robot size), skip loose pieces there, and steer wider around opponents while partly inside one.
-  - Defense is clean (`worthDefending`, `watchPin`):
+  - Defense is clean (`worthDefending`, `watchPin`). It reads the declared contact fouls (`MatchAI.fouling`, plus the bot-only `endgameProtectedZones`), not the bots' path zones, which `botHints.protectedZones` may widen (2024 keeps paths out of the STAGE ZONE all match). Endgame-only zones count from 5 s before the endgame:
     - it never marks an opposing defender;
-    - it keeps 0.6 m from the opponent's `botHints.protectedZones` (plus `endgameProtectedZones` in the endgame), keeps its corners out of them, and lets go of an opponent about to be pushed into its own alliance's zones (contact there would be the opponent's foul);
+    - it keeps 0.6 m from the opponent's foul zones, keeps its corners out of them, lets go of an opponent whose bumpers are or are about to be in a zone where either robot counts (`inside: 'either' | 'protected'`), and gives other opponents there a wide berth;
+    - it keeps itself, its guard post and the opponents it holds out of its own alliance's foul zones (contact there would be the opponent's foul);
     - it breaks off a pin when the referee's count (`Match.pinCounts`) reaches 3 s (2 s short of a shorter `fouls.pinning.countSec`), backs off past the pin release gap (`releaseGap`, default 6 ft) and waits 4 s (or 1 s past a longer `repinSec`) before re-engaging. Holding a robot up in the open isn't a pin and goes on.
   - Bots have tunnel-vision lapses (`SKILL.lapse` plus robot unreliability), where they ignore teammates.
   - `attachBots` takes per-robot `roles` and per-alliance `strategies` (`AllianceStrategy`).
