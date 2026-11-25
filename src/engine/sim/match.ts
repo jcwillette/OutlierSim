@@ -24,6 +24,7 @@ import type {
   Alliance,
   AllianceSummary,
   GameDefinition,
+  IndicatorStyle,
   MatchPhase,
   PieceType,
   RobotArchetype,
@@ -458,6 +459,8 @@ export class Match {
   readonly ledger = new ScoreLedger();
   readonly announcements: Announcement[] = [];
   readonly indicators = new Map<string, string | number>();
+  /** How the HUD draws each indicator that has a style (`RulesContext.setIndicator`). */
+  readonly indicatorStyles = new Map<string, IndicatorStyle>();
   readonly fouls: Record<Alliance, { minor: number; major: number }> = {
     blue: { minor: 0, major: 0 },
     red: { minor: 0, major: 0 },
@@ -1712,9 +1715,11 @@ export class Match {
       robots: () => m.robots.map((r) => m.robotInfo(r)),
       spawnPiece: (type, pos, vel) => void m.spawnPiece(type, pos, vel),
       announce: (text, alliance) => m.announce(text, alliance),
-      setIndicator: (key, value) => {
+      setIndicator: (key, value, style) => {
         if (value === null) m.indicators.delete(key);
         else m.indicators.set(key, value);
+        if (value === null || !style) m.indicatorStyles.delete(key);
+        else m.indicatorStyles.set(key, style);
       },
       random: () => m.random(),
     };

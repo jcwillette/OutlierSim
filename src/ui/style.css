@@ -237,23 +237,54 @@ label.check {
   color: var(--accent);
 }
 
-.indicators {
+/* Indicators, then toasts below them, centered under the score bar. */
+.topstack {
   position: absolute;
   top: 78px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.indicators {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
   justify-content: center;
-  max-width: 90vw;
+  width: max-content;
+  max-width: 96vw;
+}
+.ind-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ind-group.blue {
+  align-items: flex-end;
+}
+.ind-group.mid {
+  align-items: center;
+}
+.ind-group.red {
+  align-items: flex-start;
 }
 .chip {
+  position: relative;
+  overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 3px 10px;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chip .label {
+  font-weight: 700;
+  color: var(--muted);
 }
 .chip.blue {
   border-color: var(--blue);
@@ -261,12 +292,36 @@ label.check {
 .chip.red {
   border-color: var(--red);
 }
+/* A live window or multiplier: filled with the alliance color (shared ones with the accent). */
+.chip.active {
+  border-color: var(--accent);
+  font-weight: 700;
+  box-shadow: 0 0 10px var(--accent);
+}
+.chip.active.blue {
+  background: var(--blue);
+  border-color: #fff;
+}
+.chip.active.red {
+  background: var(--red);
+  border-color: #fff;
+}
+.chip.active .label {
+  color: inherit;
+}
+.chip .bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent);
+}
+.chip.active.blue .bar,
+.chip.active.red .bar {
+  background: #fff;
+}
 
 .toasts {
-  position: absolute;
-  top: 118px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   gap: 6px;
