@@ -29,7 +29,7 @@ Status of the build plan. Update this file in every PR.
 - The player can't give partner bots instructions during a match (e.g. "you defend now"). Roles and strategies are set before the match.
 
 - Teammate coordination is a shared blackboard (intended spots, yielding), not real multi-robot planning. Head-on meetings in narrow lanes still cost a second or two.
-- Defense has no counter-defense (scorers don't route around a defender). With calibrated 2023 robots a defender barely slows a typical alliance (teleop 50 vs 47-52; the blind build's faster bots lost 6 points). Real defense's share and effect aren't in TBA data.
+- Defense (ADR 0010) is one defender marking one robot: it waits at the opponents' gate, meets carriers there and holds them up goal-side, and scorers slip round it after a reaction time. Against three 2023 elevators it takes 6.6 points (1.9 pieces) a match; in 2024 only about 2, because shooters score from range before reaching a gate at the goal. A shooter-aware gate (at the opponent's shot range) is the next step there. Defenders don't guard a loading area, block shots or double-team, and two defenders on one alliance don't split the lanes. Real defense's share and effect aren't in TBA data, so the size of the effect is a judgment call, not a calibration.
 - Declared contact fouls (ADR 0008): bots keep their whole body out of the opponent's protected zones and give opponents room while partly inside one, but they don't anticipate a defender pushing them over a zone line. In 2023 random lineups that leaves ~1.6 G207 fouls per alliance per match, ~4 for an alliance facing a defender. Only protected-zone contact and pinning are declarable; other fouls (over-capacity, extension, launching) still need `rules.ts`.
 - Robot chassis are frictionless boxes, so a robot pressed against a wall slides along it: sim pins happen against a robot that can't push back, or in corners and against field elements. Bot defenders break off before the 5 s count (0 pin fouls in 120 Shutdown vs Typical matches), so pin calls are mostly what students do. Transitive pins (through a game piece) aren't detected.
 
@@ -48,7 +48,7 @@ Status of the build plan. Update this file in every PR.
 
 - There's no audio transcription for reveal videos. Captions are used only when a subtitle track exists, and the manual is the source of truth.
 - The optional real-match comparison (`npm run calibrate`) covers alliance-level distributions only, not per-team cycle times.
-- Bots don't reason about opponents beyond avoidance and the simple defense role. There's no shot-blocking or counter-defense.
+- Bots don't reason about opponents beyond avoidance, the juke round a defender and the defense role. There's no shot-blocking.
 - The reference game's tower recycles orbs right back to midfield, so scores are unrealistically high (~650/alliance). That's fine for an engine test.
 
 - No touch controls, so phones and tablets can only use the menus. Matches need a keyboard or gamepad.

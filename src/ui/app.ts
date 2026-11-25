@@ -1467,6 +1467,8 @@ function describePlan(m: Match, p: BotBrain['currentPlan']): string {
       const o = m.robots[p.opponentId];
       return o ? `Defending ${robotName(o)}` : 'Playing defense';
     }
+    case 'guard':
+      return 'Waiting for a carrier in the opponents’ path';
     case 'idle':
       return 'Idle';
   }

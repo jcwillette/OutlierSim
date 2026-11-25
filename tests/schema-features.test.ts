@@ -326,11 +326,15 @@ describe('bots read protected zones from the contact fouls', () => {
       r.setVelocity({ x: 0, y: 0, z: 0 });
     };
     const [blue, red] = [m.robots[0]!, m.robots[3]!];
-    put(blue, 8, 6); // mid-field
-    put(red, 9.5, 6);
+    put(blue, 8, 4); // mid-field, between blue's zone (y < 3) and red's (rotated: y > 5)
+    put(red, 9.5, 4);
     expect(brain.worthDefending(m, red, blue)).toBe(true);
     put(blue, 8, 1.5); // in its protected loading zone
     put(red, 9.5, 4.5);
+    expect(brain.worthDefending(m, red, blue)).toBe(false);
+    // In the defender's own zone: contact there would count against blue, though red forced it.
+    put(blue, 8, 6.5);
+    put(red, 9.5, 4);
     expect(brain.worthDefending(m, red, blue)).toBe(false);
   });
 });

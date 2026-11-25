@@ -62,12 +62,14 @@ interface Skill {
    * championship. No effect on robot types without `alignSec`.
    */
   align: number;
+  /** Seconds a driver takes to start round an opponent that has got in its way. */
+  react: number;
 }
 
 export const SKILL: Record<Difficulty, Skill> = {
-  easy: { speed: 0.65, think: 0.9, noise: 0.6, dwell: 0.7, lapse: 0.2, align: 1.6 },
-  normal: { speed: 0.85, think: 0.4, noise: 0.25, dwell: 0.25, lapse: 0.08, align: 1 },
-  hard: { speed: 1, think: 0.15, noise: 0.05, dwell: 0.05, lapse: 0.02, align: 0.35 },
+  easy: { speed: 0.65, think: 0.9, noise: 0.6, dwell: 0.7, lapse: 0.2, align: 1.6, react: 0.6 },
+  normal: { speed: 0.85, think: 0.4, noise: 0.25, dwell: 0.25, lapse: 0.08, align: 1, react: 0.35 },
+  hard: { speed: 1, think: 0.15, noise: 0.05, dwell: 0.05, lapse: 0.02, align: 0.35, react: 0.2 },
 };
 
 type Plan =
@@ -82,6 +84,8 @@ type Plan =
   | { kind: 'leave'; point: Vec2 }
   /** `until`: opportunistic blocking is time-boxed (match time); the defense role has no limit. */
   | { kind: 'defend'; opponentId: number; point: Vec2; until?: number }
+  /** Defense role with nobody to mark right now: wait in the opponents' carrying lane. */
+  | { kind: 'guard'; point: Vec2 }
   | { kind: 'idle' };
 
 interface Option {
@@ -104,6 +108,33 @@ interface MatchAI {
   protected: Record<Alliance, { always: ZoneCheck[]; endgame: ZoneCheck[] }>;
   /** Path penalty for each alliance's robots: the opponent's protected zones. */
   penalty: Record<Alliance, { key: string; regions: Region2D[] } | undefined>;
+  /** Each alliance's carrying lane (where it fetches and scores), for defenders. */
+  lanes: Record<Alliance, Lane>;
+}
+
+/**
+ * Where an alliance's robots carry pieces: from its stations' centroid (null if it has no stations)
+ * to its targets' centroid. What any scout knows from the field drawings.
+ */
+interface Lane {
+  source: Vec2 | null;
+  goal: Vec2;
+}
+
+function laneFor(m: Match, a: Alliance): Lane {
+  const mean = (ps: Vec2[]): Vec2 | null =>
+    ps.length
+      ? { x: ps.reduce((t, p) => t + p.x, 0) / ps.length, y: ps.reduce((t, p) => t + p.y, 0) / ps.length }
+      : null;
+  const targets: Vec2[] = [];
+  for (const { target: t } of m.targets.values()) {
+    if (t.alliance && t.alliance !== a) continue;
+    if (t.place) targets.push(regionCenter(t.place.zone));
+    else if (t.aimPoint) targets.push({ x: t.aimPoint.x, y: t.aimPoint.y });
+  }
+  const stations = m.game.stations.filter((st) => !st.alliance || st.alliance === a);
+  const home = { x: a === 'blue' ? 0 : m.def.field.length, y: m.def.field.width / 2 };
+  return { source: mean(stations.map((st) => regionCenter(st.zone))), goal: mean(targets) ?? home };
 }
 const matchAI = new WeakMap<Match, MatchAI>();
 
@@ -136,6 +167,7 @@ function aiFor(m: Match): MatchAI {
         red: { always: regions('red', always), endgame: regions('red', endgame) },
       },
       penalty: { blue: penalty('blue'), red: penalty('red') },
+      lanes: { blue: laneFor(m, 'blue'), red: laneFor(m, 'red') },
     };
     matchAI.set(m, s);
   }
@@ -278,8 +310,13 @@ export class BotBrain implements RobotController {
   private readonly refillCache = new Map<string, number>();
   /** Opponent id -> match time before which this bot won't defend it again. */
   private readonly harassCooldown = new Map<number, number>();
-  /** Seconds pressed against a stopped opponent (pin count). */
-  private pinTime = 0;
+  /** Where this defender waits for carriers (`guardPost`), worked out once. */
+  private post: Vec2 | null = null;
+  /** Match time an opponent got squarely in our way (-1: none is), for `Skill.react`. */
+  private blockedSince = -1;
+  /** The side (+1 left, -1 right, in our direction of travel) we are slipping round it, until `jukeUntil`. */
+  private jukeSide = 0;
+  private jukeUntil = 0;
   readonly role: RobotRole;
   readonly strategy: AllianceStrategy;
   /** Match time until which this bot has tunnel vision (ignores teammates). */
@@ -439,6 +476,11 @@ export class BotBrain implements RobotController {
         if (p.until !== undefined && (m.time > p.until || o.held.length === 0)) {
           this.harassCooldown.set(o.id, m.time + 6);
           return false;
+        }
+        // The defense role lets an empty robot go once it is clear of our post (don't follow it home).
+        if (p.until === undefined && o.held.length === 0) {
+          const post = this.guardPost(m, r);
+          if (Math.hypot(o.x - post.x, o.y - post.y) > EMPTY_LEASH + 1) return false;
         }
         return true;
       }
@@ -840,18 +882,105 @@ export class BotBrain implements RobotController {
     return null;
   }
 
-  /** `force`: defend even without the defense role (a robot that can't score). */
+  /**
+   * Defense role (`force`: a robot that can't score). Mark the opponent whose trip home this robot
+   * can cut off soonest, carriers first, and stay on it while it's still in the open; with nobody to
+   * mark, wait in the opponents' carrying lane (`guard`) instead of wandering off to score.
+   */
   private defenseOption(m: Match, r: Robot, force = false): Option | null {
     if ((this.role !== 'defense' && !force) || m.phase !== 'teleop') return null;
-    const opps = m.robots.filter((o) => this.worthDefending(m, r, o));
-    if (!opps.length) return null; // nobody worth marking (all defending, broken, protected): score instead
-    // Mark the opponent carrying the most pieces, nearest first.
-    opps.sort(
-      (a, b) =>
-        b.held.length - a.held.length || Math.hypot(a.x - r.x, a.y - r.y) - Math.hypot(b.x - r.x, b.y - r.y),
+    const current = this.plan.kind === 'defend' && this.plan.until === undefined ? this.plan.opponentId : -1;
+    let best: { o: Robot; u: number } | null = null;
+    let kept = 0;
+    for (const o of m.robots) {
+      if (!this.worthDefending(m, r, o)) continue;
+      const u = this.markValue(m, r, o) * (o.id === current ? 1 : this.noise(m));
+      if (o.id === current) kept = u;
+      if (u > 0 && (!best || u > best.u)) best = { o, u };
+    }
+    // Stick with the robot already marked unless another is clearly a better use of the time.
+    const o = kept > 0 && best && best.u < kept * MARK_HYSTERESIS ? m.robots[current]! : best?.o;
+    if (o) return { plan: { kind: 'defend', opponentId: o.id, point: standPoint(m, r, o) }, utility: 1 };
+    // Nobody who could carry a piece past us (all defending, broken or done): score instead.
+    const scorers = m.robots.some(
+      (x) => x.alliance !== r.alliance && !x.endgameDone && !x.brokenDown && !x.mechDown && !isDefending(x),
     );
-    const o = opps[0]!;
-    return { plan: { kind: 'defend', opponentId: o.id, point: blockPoint(m, o) }, utility: 1 };
+    return scorers ? { plan: { kind: 'guard', point: this.guardPost(m, r) }, utility: 0 } : null;
+  }
+
+  /**
+   * How much marking `o` is worth now (0: not worth it). Holding up a robot costs its alliance the
+   * same cycle time whether it carries a piece or not, but a carrier heads straight through the
+   * open field to score, so a defender can get in front of it; an empty robot is mostly on its way
+   * into its own loading area, where it can't be touched. Discounted by the time to get in front
+   * of it, and zero if it will reach its protected zones before then.
+   */
+  private markValue(m: Match, r: Robot, o: Robot): number {
+    const carrying = o.held.length > 0 && opponentPieceValue(m, o) > 0;
+    if (!carrying && !this.nearPost(m, r, o)) return 0;
+    const value = carrying ? 1 : EMPTY_MARK_VALUE;
+    const vo = Math.max(o.speed, CARRIER_PACE * o.archetype.drive.maxSpeed);
+    const gate = carrying ? this.gate(m, r, o, o.alliance, 0) : null;
+    // Still well out: can we be waiting at its gate by the time it gets there? (Soonest arrival first.)
+    if (gate && Math.hypot(o.x - gate.x, o.y - gate.y) > STEP_OUT) {
+      const tO = Math.hypot(o.x - gate.x, o.y - gate.y) / vo;
+      return this.travelBetween(r, r, gate) <= tO + 0.5 ? value / (1 + tO) : 0;
+    }
+    // Nearly there: only if we can still get in front of it.
+    const cut = this.intercept(m, r, o);
+    return cut ? value / (1 + cut.t) : 0;
+  }
+
+  /** An empty-handed opponent close enough to us and to our post to be worth holding up on its way out. */
+  private nearPost(m: Match, r: Robot, o: Robot): boolean {
+    const post = this.guardPost(m, r);
+    return (
+      Math.hypot(o.x - r.x, o.y - r.y) < EMPTY_MARK_RANGE &&
+      Math.hypot(o.x - post.x, o.y - post.y) < EMPTY_LEASH
+    );
+  }
+
+  /**
+   * Where a defender waits with no one to mark: at the opponents' goal end of their carrying lane,
+   * just outside their protected zones there (`gate`). Every carrier has to come to it, and close to
+   * the goal a small step sideways covers a wide arc of approaches.
+   */
+  private guardPost(m: Match, r: Robot): Vec2 {
+    if (this.post) return this.post;
+    const opp = other(r.alliance);
+    const lane = aiFor(m).lanes[opp];
+    const from = lane.source ?? { x: m.def.field.length / 2, y: m.def.field.width / 2 };
+    this.post = this.gate(m, r, from, opp, GUARD_DEPTH) ?? gridFor(m, r).nearestFree(from);
+    return this.post;
+  }
+
+  /**
+   * Where a defender meets a robot coming from `from` toward `alliance`'s goal (`Lane.goal`): the
+   * first free spot on that straight line, walking out from the goal, that is clear of the goal's
+   * protected zones with room for the defender, then `depth` m further out. Null if `from` is itself
+   * that close to the goal.
+   */
+  private gate(m: Match, r: Robot, from: Vec2, alliance: Alliance, depth: number): Vec2 | null {
+    const goal = aiFor(m).lanes[alliance].goal;
+    const grid = gridFor(m, r);
+    const margin = DEFENSE_ZONE_MARGIN + halfSize(r) + 0.2;
+    const clear = (p: Vec2) => !nearProtectedZone(m, p, alliance, margin, m.isEndgame) && grid.isFree(p);
+    const len = Math.hypot(from.x - goal.x, from.y - goal.y);
+    if (len < 1e-6) return null;
+    const ux = (from.x - goal.x) / len;
+    const uy = (from.y - goal.y) / len;
+    for (let d = 0; d < len - 0.5; d += 0.25) {
+      const p = { x: goal.x + ux * d, y: goal.y + uy * d };
+      if (!clear(p)) continue;
+      let q = p;
+      for (let e = 0.25; e <= depth && d + e < len - 0.5; e += 0.25) {
+        const n = { x: p.x + ux * e, y: p.y + uy * e };
+        if (!clear(n)) break;
+        q = n;
+      }
+      return q;
+    }
+    return null;
   }
 
   private decide(m: Match, r: Robot): void {
@@ -943,7 +1072,7 @@ export class BotBrain implements RobotController {
       if (o.action || o.held.length === 0 || !this.worthDefending(m, r, o)) continue;
       const d = Math.hypot(o.x - r.x, o.y - r.y);
       if (d > 3.5) continue;
-      const point = blockPoint(m, o);
+      const point = standPoint(m, r, o);
       // Only worth it if they're actually heading home with it.
       const home = { x: o.alliance === 'blue' ? 0 : m.def.field.length, y: o.y };
       if ((home.x - o.x) * o.vx < 0) continue;
@@ -971,25 +1100,27 @@ export class BotBrain implements RobotController {
     if (o.alliance === r.alliance || o.endgameDone || o.brokenDown || o.mechDown) return false;
     if (isDefending(o)) return false;
     if ((this.harassCooldown.get(o.id) ?? 0) > m.time) return false;
-    const point = blockPoint(m, o);
+    const point = standPoint(m, r, o);
     const endgame = m.isEndgame;
     return (
       !nearProtectedZone(m, o, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
       !nearProtectedZone(m, point, o.alliance, DEFENSE_ZONE_MARGIN, endgame) &&
       // ...and no part of us is in them (contact rules usually count any part of the robot).
-      !nearProtectedZone(m, r, o.alliance, halfSize(r), endgame)
+      !nearProtectedZone(m, r, o.alliance, halfDiag(r) + 0.1, endgame) &&
+      // Nor about to be shoved into ours: contact there counts against the opponent, though we
+      // forced it (G201).
+      !nearProtectedZone(m, o, r.alliance, halfDiag(o) + OWN_ZONE_MARGIN, endgame)
     );
   }
 
   /**
-   * Pin count (G202-style): pressed against a stopped opponent for a while (`pinBreakSec`), back off
-   * and leave that robot alone (`pinCooldownSec`).
+   * Pin count (G202-style): when the referee's count on us (`Match.pinCounts`, the hand count drive
+   * teams see) reaches `pinBreakSec`, back off and leave that robot alone (`pinCooldownSec`).
+   * Holding a robot up in the open is a shoving match, not a pin, and can go on.
    */
-  private watchPin(m: Match, r: Robot, o: Robot, dt: number): boolean {
-    const touching = Math.hypot(o.x - r.x, o.y - r.y) < halfSize(o) + halfSize(r) + 0.1;
-    this.pinTime = touching && o.speed < 0.25 ? this.pinTime + dt : Math.max(0, this.pinTime - dt * 2);
-    if (this.pinTime < pinBreakSec(m)) return false;
-    this.pinTime = 0;
+  private watchPin(m: Match, r: Robot, o: Robot): boolean {
+    const count = m.pinCounts(r).find((p) => p.attacker === r && p.victim === o);
+    if (!count || count.seconds < pinBreakSec(m)) return false;
     this.harassCooldown.set(o.id, m.time + pinCooldownSec(m));
     return true;
   }
@@ -997,7 +1128,8 @@ export class BotBrain implements RobotController {
   // ---------------------------------------------------------------- execution
 
   private checkStuck(m: Match, r: Robot, dt: number): void {
-    if (r.action || this.plan.kind === 'idle' || this.arrivedFor > 0) {
+    const marking = this.plan.kind === 'defend' || this.plan.kind === 'guard';
+    if (r.action || this.plan.kind === 'idle' || this.arrivedFor > 0 || marking) {
       this.stuckTimer = 0;
       this.stuckFrom = { x: r.x, y: r.y };
       return;
@@ -1062,6 +1194,10 @@ export class BotBrain implements RobotController {
     let yieldTo = false;
     let sideX = 0;
     let sideY = 0;
+    // An opponent squarely in our way (a defender): once the driver reacts, slip round it to one side
+    // (kept for a moment) instead of shoving into it.
+    const marking = this.plan.kind === 'defend' || this.plan.kind === 'guard';
+    let blocker: { lateral: number; od: number } | null = null;
     // Partly inside an opponent's protected zone, touching an opponent is a foul: give them room.
     const exposed = nearProtectedZone(m, r, other(r.alliance), halfSize(r), m.isEndgame);
     for (const o of m.robots) {
@@ -1076,6 +1212,12 @@ export class BotBrain implements RobotController {
         dx += (ox / od) * push;
         dy += (oy / od) * push;
       }
+      if (o.alliance !== r.alliance && !marking && sp > 1e-3 && od < halfSize(r) + halfSize(o) + JUKE_RANGE) {
+        const ahead = -(ox * ux + oy * uy);
+        const lateral = ux * -oy - uy * -ox; // > 0: it is to our left
+        if (ahead > 0 && Math.abs(lateral) < halfSize(r) + halfSize(o) && (!blocker || od < blocker.od))
+          blocker = { lateral, od };
+      }
       // Teammates talk: in a lane conflict the lower-priority robot steps aside and slows down
       // instead of shoving. (Ahead of us = negative projection of r - o on our direction.)
       if (o.alliance === r.alliance && od < 1.8 && sp > 1e-3 && !o.endgameDone && !this.lapsing) {
@@ -1089,6 +1231,24 @@ export class BotBrain implements RobotController {
           sideY += ux * s;
         }
       }
+    }
+    if (!blocker) this.blockedSince = -1;
+    else if (this.blockedSince < 0) this.blockedSince = m.time;
+    if (blocker && m.time - this.blockedSince >= this.skill.react && m.time >= this.jukeUntil) {
+      const l = blocker.lateral;
+      let side: number = l > 0 ? -1 : l < 0 ? 1 : handedness(m, r);
+      // Not the way into the opponent's protected zones or into a wall.
+      const into = (sd: number) => {
+        const p = { x: r.x - uy * sd, y: r.y + ux * sd };
+        return !grid.isFree(p) || nearProtectedZone(m, p, other(r.alliance), halfDiag(r), m.isEndgame);
+      };
+      if (into(side) && !into(-side)) side = -side;
+      this.jukeSide = side;
+      this.jukeUntil = m.time + JUKE_SEC;
+    }
+    if (m.time < this.jukeUntil && sp > 1e-3) {
+      dx = dx * 0.5 - uy * this.jukeSide * 0.8 * this.skill.speed;
+      dy = dy * 0.5 + ux * this.jukeSide * 0.8 * this.skill.speed;
     }
     if (yieldTo) {
       const n = Math.hypot(sideX, sideY) || 1;
@@ -1232,9 +1392,17 @@ export class BotBrain implements RobotController {
         const s = this.steer(m, r, p.point, false);
         return { ...cmd, vx: s.vx, vy: s.vy };
       }
+      case 'guard': {
+        const s = this.steer(m, r, p.point, false);
+        // Face up the lane, toward where carriers come from.
+        const lane = aiFor(m).lanes[other(r.alliance)];
+        const from = lane.source ?? r;
+        const yaw = s.dist < 1 ? Math.atan2(from.y - r.y, from.x - r.x) : Math.atan2(s.vy, s.vx);
+        return { ...cmd, vx: s.vx, vy: s.vy, omega: this.faceCmd(m, r, yaw) };
+      }
       case 'defend': {
         const o = m.robots[p.opponentId]!;
-        if (this.watchPin(m, r, o, dt)) {
+        if (this.watchPin(m, r, o)) {
           // Release the pin: back straight away from them (far enough to end it), then re-plan.
           const d = Math.hypot(r.x - o.x, r.y - o.y) || 1;
           const back = pinBackOff(m);
@@ -1246,10 +1414,122 @@ export class BotBrain implements RobotController {
           this.setIntent(m, r, this.plan);
           return cmd;
         }
-        const s = this.steer(m, r, blockPoint(m, o), Math.hypot(o.x - r.x, o.y - r.y) < 3);
-        return { ...cmd, vx: s.vx, vy: s.vy, omega: this.faceCmd(m, r, Math.atan2(o.y - r.y, o.x - r.x)) };
+        const v = this.press(m, r, o);
+        return { ...cmd, vx: v.x, vy: v.y, omega: this.faceCmd(m, r, Math.atan2(o.y - r.y, o.x - r.x)) };
       }
     }
+  }
+
+  /**
+   * Where and when this robot can first get in front of `o`, assuming `o` keeps heading home
+   * (`goalDir`) at a brisk pace: the spot bumper to bumper ahead of where `o` will be. Null if `o`
+   * reaches its protected zones first. Already in front: here, now.
+   */
+  private intercept(m: Match, r: Robot, o: Robot): { point: Vec2; t: number } | null {
+    if (goalSide(m, r, o)) return { point: standPoint(m, r, o), t: 0 };
+    const g = goalDir(m, o);
+    const vo = Math.max(o.speed, CARRIER_PACE * o.archetype.drive.maxSpeed);
+    const vd = this.skill.speed * r.archetype.drive.maxSpeed;
+    const reach = halfSize(o) + halfSize(r) + 0.05;
+    const run = openRun(m, o);
+    for (let t = 0; t <= INTERCEPT_HORIZON; t += 0.1) {
+      const d = Math.min(vo * t, run);
+      const point = { x: o.x + g.x * (d + reach), y: o.y + g.y * (d + reach) };
+      // Within a third of a robot of its path is enough to get in its way.
+      if (Math.hypot(point.x - r.x, point.y - r.y) <= vd * t + reach / 3) return { point, t };
+      if (d >= run) return null;
+    }
+    return null;
+  }
+
+  /**
+   * Drive command against a marked opponent. Far off: path to the spot in front of it. Close but
+   * not yet in front: swing around its side (never into its back, which would only shove it toward
+   * its goal) to that spot. In front of it: drive into it at full power, tracking its sideways
+   * moves, so it is held up or pushed back. Never into its protected zones.
+   */
+  private press(m: Match, r: Robot, o: Robot): Vec2 {
+    const stand = standPoint(m, r, o);
+    const dist = Math.hypot(o.x - r.x, o.y - r.y);
+    const speed = this.skill.speed;
+    let goal: Vec2;
+    // Still well out: wait on its line home, just outside its goal's zones, shifting as it moves.
+    const gate = o.held.length > 0 ? this.gate(m, r, o, o.alliance, 0) : null;
+    if (gate && Math.hypot(o.x - gate.x, o.y - gate.y) > STEP_OUT) {
+      const s = this.steer(m, r, gate, Math.hypot(gate.x - r.x, gate.y - r.y) < PRESS_RANGE);
+      return { x: s.vx, y: s.vy };
+    }
+    if (dist > PRESS_RANGE) {
+      const s = this.steer(m, r, stand, false);
+      return { x: s.vx, y: s.vy };
+    }
+    const g = goalDir(m, o);
+    const relX = r.x - o.x;
+    const relY = r.y - o.y;
+    const along = relX * g.x + relY * g.y;
+    const lat = g.x * relY - g.y * relX; // > 0: we're to the left of its way home
+    const reach = halfSize(o) + halfSize(r);
+    if (goalSide(m, r, o)) {
+      // Into it, aiming a little past its center along its way home, so it is pushed back.
+      goal = { x: stand.x - g.x * (reach + 0.4), y: stand.y - g.y * (reach + 0.4) };
+    } else if (along < reach * 0.6 && Math.abs(lat) < reach + 0.25) {
+      // Beside or behind it: go round its side first.
+      const side = lat > 0 ? 1 : lat < 0 ? -1 : handedness(m, r);
+      const out = reach + 0.35;
+      goal = { x: o.x - g.y * side * out + g.x * reach * 0.5, y: o.y + g.x * side * out + g.y * reach * 0.5 };
+    } else {
+      // Cut it off: head for where we can get in front of it, not where it is now.
+      goal = this.intercept(m, r, o)?.point ?? stand;
+    }
+    let vx = goal.x - r.x;
+    let vy = goal.y - r.y;
+    const d = Math.hypot(vx, vy) || 1;
+    vx = (vx / d) * speed;
+    vy = (vy / d) * speed;
+    // Keep every part of us out of the opponent's protected zones: if this way leads in, take the
+    // nearest heading that doesn't (holding our ground against a shove), else back out.
+    const safe = (x: number, y: number) =>
+      !nearProtectedZone(
+        m,
+        { x: r.x + x * 0.4, y: r.y + y * 0.4 },
+        o.alliance,
+        halfDiag(r) + 0.15,
+        m.isEndgame,
+      );
+    if (!safe(vx, vy)) {
+      const turns = [Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4, Math.PI];
+      const h = handedness(m, r);
+      let found = false;
+      for (const a of turns) {
+        for (const sgn of [h, -h]) {
+          const c = Math.cos(a * sgn);
+          const sn = Math.sin(a * sgn);
+          const nx = vx * c - vy * sn;
+          const ny = vx * sn + vy * c;
+          if (safe(nx, ny)) {
+            vx = nx;
+            vy = ny;
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+      if (!found) return { x: 0, y: 0 };
+    }
+    // Teammates in the way: nudge aside as when driving anywhere else.
+    for (const t of m.robots) {
+      if (t === r || t.alliance !== r.alliance) continue;
+      const ox = r.x - t.x;
+      const oy = r.y - t.y;
+      const od = Math.hypot(ox, oy);
+      if (od < 1.4 && od > 1e-3) {
+        const push = ((1.4 - od) / 1.4) * 0.6;
+        vx += (ox / od) * push;
+        vy += (oy / od) * push;
+      }
+    }
+    return { x: vx, y: vy };
   }
 
   private travelFace(m: Match, r: Robot, s: { vx: number; vy: number }): number {
@@ -1283,6 +1563,30 @@ function samePlan(a: Plan, b: Plan): boolean {
 
 /** Defenders keep this far (m) from an opponent's protected zones, so contact can't happen inside. */
 const DEFENSE_ZONE_MARGIN = 0.6;
+/** Defenders let go of opponents whose bumpers come this close (m) to the defenders' own protected zones. */
+const OWN_ZONE_MARGIN = 0.25;
+/** Switch marks only for an opponent this much more worth it (`markValue`). */
+const MARK_HYSTERESIS = 1.5;
+/** Empty-handed opponents are marked only this close (m)... */
+const EMPTY_MARK_RANGE = 2.5;
+/** ...and near the defender's post (m)... */
+const EMPTY_LEASH = 3;
+/** ...and are worth this much of a carrier. */
+const EMPTY_MARK_VALUE = 0.4;
+/** A guarding defender waits this far (m) out from the opponents' gate (`gate`). */
+const GUARD_DEPTH = 0.5;
+/** A marked opponent this close (m) to its gate gets met; farther out, the defender waits at the gate. */
+const STEP_OUT = 3.5;
+/** Within this distance (m) of its mark a defender drives straight at it instead of path planning. */
+const PRESS_RANGE = 3.5;
+/** A defender leads a moving opponent by this long (s). */
+const STAND_LEAD = 0.25;
+/** Defenders expect a carrier to head home at least this fraction of its top speed... */
+const CARRIER_PACE = 0.7;
+/** ...and look this far ahead (s) for a place to cut it off. */
+const INTERCEPT_HORIZON = 4;
+/** `openRun` looks this far (m) ahead. */
+const OPEN_RUN_MAX = 12;
 /** Break off after this long pressed against a stopped opponent (manual pin counts are 5 s)... */
 const PIN_BREAK_SEC = 3;
 /** ...and leave that robot alone this long (manuals require 3 s before re-pinning). */
@@ -1313,10 +1617,20 @@ const WARY_RANGE = 1.8;
 /** ...this hard (vs 0.6 for ordinary traffic). */
 const WARY_PUSH = 1.5;
 
+/** Bots slip sideways round an opponent in their way once their bumpers are this close (m)... */
+const JUKE_RANGE = 1;
+/** ...committing to a side for this long (s). */
+const JUKE_SEC = 0.6;
+
 /** Bots drive no faster than this (m/s) on ramps and platforms. */
 const RAMP_SPEED = 1.5;
 
 // ------------------------------------------------------------------ coordination helpers
+
+/** Half the frame diagonal: how far a robot's corners reach from its center, whatever its heading. */
+function halfDiag(r: Robot): number {
+  return Math.hypot(r.archetype.frame.length, r.archetype.frame.width) / 2;
+}
 
 /** Half the larger frame dimension (a robot's "radius" for spacing). */
 function halfSize(r: Robot): number {
@@ -1420,11 +1734,63 @@ function expectedEndgamePoints(m: Match, r: Robot, a: XEndgame, auto: boolean): 
   return chance * value(a) + (1 - chance) * (fallback ? value(fallback) : 0);
 }
 
-/** Where a defender stands to block `o`: just in front of it, toward its own alliance wall. */
-function blockPoint(m: Match, o: Robot): Vec2 {
-  const home = o.alliance === 'blue' ? 0 : m.def.field.length;
-  const dir = Math.sign(home - o.x) || 1;
-  return { x: o.x + dir * 0.9, y: o.y };
+/**
+ * Which way `o` is going: toward its alliance's targets (`Lane.goal`) with a piece, else toward its
+ * stations (`Lane.source`), bent toward the way it is actually driving when it's moving that way
+ * (dodging round a defender, or round an obstacle).
+ */
+function goalDir(m: Match, o: Robot): Vec2 {
+  const lane = aiFor(m).lanes[o.alliance];
+  // Carrying: to its targets. Empty: back to its stations for the next piece.
+  const goal = o.held.length > 0 ? lane.goal : (lane.source ?? lane.goal);
+  let x = goal.x - o.x;
+  let y = goal.y - o.y;
+  const d = Math.hypot(x, y) || 1;
+  x /= d;
+  y /= d;
+  const sp = o.speed;
+  if (sp > 0.5 && (o.vx * x + o.vy * y) / sp > -0.2) {
+    x += o.vx / sp;
+    y += o.vy / sp;
+    const n = Math.hypot(x, y) || 1;
+    x /= n;
+    y /= n;
+  }
+  return { x, y };
+}
+
+/** Where a defender stands to block `o`: bumper to bumper in front of it, on its way home. */
+function standPoint(m: Match, r: Robot, o: Robot): Vec2 {
+  const g = goalDir(m, o);
+  const reach = halfSize(o) + halfSize(r) + 0.05;
+  return { x: o.x + o.vx * STAND_LEAD + g.x * reach, y: o.y + o.vy * STAND_LEAD + g.y * reach };
+}
+
+/** `r` is in front of `o`, between it and its goal, close enough to hold it up. */
+function goalSide(m: Match, r: Robot, o: Robot): boolean {
+  const g = goalDir(m, o);
+  const relX = r.x - o.x;
+  const relY = r.y - o.y;
+  const reach = halfSize(o) + halfSize(r);
+  const along = relX * g.x + relY * g.y;
+  return along > reach * 0.5 && along < reach + 0.6 && Math.abs(g.x * relY - g.y * relX) < reach * 0.8;
+}
+
+/** Metres of open field (outside its protected zones) `o` still has to cross on its way home. */
+function openRun(m: Match, o: Robot): number {
+  const g = goalDir(m, o);
+  for (let d = 0; d < OPEN_RUN_MAX; d += 0.25)
+    if (
+      nearProtectedZone(
+        m,
+        { x: o.x + g.x * d, y: o.y + g.y * d },
+        o.alliance,
+        DEFENSE_ZONE_MARGIN,
+        m.isEndgame,
+      )
+    )
+      return d;
+  return OPEN_RUN_MAX;
 }
 
 /**

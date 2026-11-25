@@ -35,7 +35,7 @@ Rank every robot at every event by its contribution, and cut the ranking into se
 | 2 (kitbot)                    | 1.6                   | 0.35        | 44 %                  | 5 % (4 %)           | 49 % (43 %)            | 29 %  | 13 %                    |
 | 1, bottom (defender)          | 1.0                   | 0.16        | 29 %                  | 2 % (1 %)           | 33 % (28 %)            | 34 %  | 25 %                    |
 
-The tiers come from least-squares contribution estimates (OPR) per event, so the two ends are a little more extreme than the robots really were. The calibrated sim's teleop pieces land within 0.3 of every row except the defender's (1.45: it scores when nobody is worth defending).
+The tiers come from least-squares contribution estimates (OPR) per event, so the two ends are a little more extreme than the robots really were. The calibrated sim's teleop pieces land within 0.3 of every row except the defender's. It scored 1.45 when it went off to score with nobody worth defending; since ADR 0010 it waits for carriers instead, and scores almost nothing in teleop.
 
 ## Settings that produce those tiers
 
