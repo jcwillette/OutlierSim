@@ -892,6 +892,31 @@ export const definition: GameDefinition = {
       robots: [{ archetype: 'kitbot' }, { archetype: 'kitbot' }, { archetype: 'kitbot' }],
     },
   ],
+  // Jobs a bot can be given in the lineup menu besides scoring freely and defense. They change what
+  // the bot goes for in TELEOP, never the robot; AUTO routines are unchanged. Measured with
+  // `npm run alliances` (SOURCES.md, "Alliance composition").
+  roles: [
+    {
+      id: 'amp',
+      name: 'AMP specialist',
+      description:
+        'Keeps the AMP bank full so the HUMAN PLAYER can AMPLIFY as often as possible: an AMP NOTE counts four times what the planner would give it. Still shoots when the SPEAKER is AMPLIFIED and the AMP is not banking.',
+      targetWeights: { amp: 4 },
+    },
+    {
+      id: 'speaker',
+      name: 'SPEAKER only',
+      description: 'Shoots every NOTE into the SPEAKER and leaves the AMP to its partners.',
+      targetWeights: { amp: 0 },
+    },
+    {
+      id: 'trap',
+      name: 'TRAP specialist',
+      description:
+        'In the last 20 s, a NOTE in a TRAP counts three times what the planner would give it, so it goes for the TRAP before climbing.',
+      targetWeights: { 'trap-1': 3, 'trap-2': 3, 'trap-3': 3 },
+    },
+  ],
   rules,
   botHints: {
     endgameLeadSec: 2,

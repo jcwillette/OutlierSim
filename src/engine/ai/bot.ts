@@ -27,6 +27,7 @@ import type {
   Region2D,
   RobotArchetype,
   RobotRole,
+  SpecialistRole,
   Vec2,
 } from '../sim/types.ts';
 import { AllianceNav, type DynamicObstacle } from './navgrid.ts';
@@ -340,6 +341,8 @@ export class BotBrain implements RobotController {
   private jukeSide = 0;
   private jukeUntil = 0;
   readonly role: RobotRole;
+  /** The game's specialist role named by `role`, looked up on first use (null: none). */
+  private specialist: SpecialistRole | null | undefined = undefined;
   readonly strategy: AllianceStrategy;
   /** Match time until which this bot has tunnel vision (ignores teammates). */
   private lapseUntil = 0;
@@ -520,8 +523,12 @@ export class BotBrain implements RobotController {
     return m.phase === 'auto' ? 'auto' : 'teleop';
   }
 
+  /** How much the bot wants `t`: the game's `botHints.targetWeights`, times its specialist role's in teleop. */
   private weight(m: Match, t: XTarget): number {
-    return m.def.botHints?.targetWeights?.[t.baseId] ?? 1;
+    const w = m.def.botHints?.targetWeights?.[t.baseId] ?? 1;
+    if (this.specialist === undefined) this.specialist = m.def.roles?.find((x) => x.id === this.role) ?? null;
+    if (!this.specialist || m.phase === 'auto') return w;
+    return w * (this.specialist.targetWeights[t.baseId] ?? 1);
   }
 
   /** The robot could score in `t` now (open, not full, its alliance's) and the game wants it to. */

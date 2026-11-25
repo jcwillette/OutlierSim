@@ -244,4 +244,12 @@ describe('lineups (menu)', () => {
     expect(l.blue.strategy).toBe('balanced');
     expect(l.blue.slots[0]).toEqual({ archetype: 'random', role: 'auto' });
   });
+
+  it('keeps a saved specialist role only in a game that offers it', () => {
+    const cr = findGame('2024-crescendo')!;
+    const saved = { blue: { slots: [{ archetype: 'allround', role: 'amp' }] } };
+    expect(sanitizeLineup(cr, saved).blue.slots[0]).toEqual({ archetype: 'allround', role: 'amp' });
+    const lone = sanitizeLineup(cu, { blue: { slots: [{ archetype: 'elevator', role: 'amp' }] } });
+    expect(lone.blue.slots[0]).toEqual({ archetype: 'elevator', role: 'auto' });
+  });
 });
