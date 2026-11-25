@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GRAVITY, solveShot, type ShotSolution } from './ballistics.ts';
+import { GRAVITY, shotAt, type ShotSolution } from './ballistics.ts';
 import { expandDefinition, type ExpandedGame, type XEndgame, type XStation, type XTarget } from './expand.ts';
 import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from './faults.ts';
 import { ScoreLedger } from './ledger.ts';
@@ -1295,9 +1295,7 @@ export class Match {
   }
 
   private shotPitch(r: Robot, t: XTarget, d: number, h: number): ShotSolution | null {
-    const sh = r.archetype.shooter!;
-    const down = t.aperture?.entry === 'down';
-    return solveShot(sh.exitSpeed, d, h, t.arc ?? (down ? 'high' : 'low'), sh.pitchRangeDeg, down);
+    return shotAt(r.archetype.shooter!, t, d, h);
   }
 
   private tryShoot(r: Robot): void {

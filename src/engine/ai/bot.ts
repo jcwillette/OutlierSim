@@ -1,4 +1,4 @@
-import { solveShot } from '../sim/ballistics.ts';
+import { shotAt } from '../sim/ballistics.ts';
 import type { XEndgame, XTarget } from '../sim/expand.ts';
 import {
   canReachHandoff,
@@ -206,16 +206,12 @@ export function findShotSpots(grid: AllianceNav, a: RobotArchetype, t: XTarget):
   if (!sh || !t.aperture) return spots;
   const aim = t.aimPoint ?? t.aperture.center;
   const launchZ = Math.max(sh.height, a.frame.height + 0.12);
-  const down = t.aperture.entry === 'down';
   for (let d = 1.2; d <= sh.maxRange * 0.9; d += 0.4) {
     for (let k = 0; k < 32; k++) {
       const ang = (k / 32) * 2 * Math.PI;
       const p = { x: aim.x + d * Math.cos(ang), y: aim.y + d * Math.sin(ang) };
       if (!grid.isFree(p)) continue;
-      if (
-        !solveShot(sh.exitSpeed, d, aim.z - launchZ, t.arc ?? (down ? 'high' : 'low'), sh.pitchRangeDeg, down)
-      )
-        continue;
+      if (!shotAt(sh, t, d, aim.z - launchZ)) continue;
       spots.push(p);
     }
   }

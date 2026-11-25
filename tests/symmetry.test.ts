@@ -82,17 +82,24 @@ describe.each(GAMES.map((g) => [g.definition.id, g.definition] as const))(
       m.start();
       let maxPos = 0;
       let maxYaw = 0;
-      // Before pieces start flying or bouncing off robots (Rapier's solver isn't mirror-exact).
+      /** Pairs that went after a loose piece: they steer by where it lies now (see below). */
+      const chased = new Set<number>();
+      // Before pieces start flying or bouncing off robots (Rapier's solver isn't mirror-exact). A
+      // piece resting on the carpet isn't mirror-exact either (a cylinder settles a few micrometers
+      // differently on each half), so a robot chasing one stops being compared by position.
       while (m.time < 1.5) {
         m.step();
         for (let i = 0; i < 3; i++) {
           const b = m.robots[i]!;
           const r = m.robots[i + 3]!;
           const rp = flip(r);
-          maxPos = Math.max(maxPos, Math.hypot(b.x - rp.x, b.y - rp.y));
-          maxYaw = Math.max(maxYaw, Math.abs(wrapAngle(b.yaw - flipYaw(r.yaw))));
           const pb = brains.get(i)!.currentPlan as unknown as Record<string, unknown>;
           const pr = brains.get(i + 3)!.currentPlan as unknown as Record<string, unknown>;
+          if (pb.kind === 'acquire') chased.add(i);
+          if (!chased.has(i)) {
+            maxPos = Math.max(maxPos, Math.hypot(b.x - rp.x, b.y - rp.y));
+            maxYaw = Math.max(maxYaw, Math.abs(wrapAngle(b.yaw - flipYaw(r.yaw))));
+          }
           const id = (p: Record<string, unknown>) =>
             String(p.targetId ?? p.stationId ?? p.actionId ?? '').replace(/\.(blue|red)$/, '');
           expect(`${pr.kind}:${id(pr)}`).toBe(`${pb.kind}:${id(pb)}`);

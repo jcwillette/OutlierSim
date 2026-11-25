@@ -47,7 +47,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
   - Step the physics with `stepWorld(world)` (`bodyState.ts`), not `world.step()`; it skips Rapier's per-step soft-body bookkeeping. `Robot` pose / velocity getters and `Piece.position` are cached per `bodyEpoch`, which advances on every step and every `RigidBody` mutator call (wrapped once in `bodyState.ts`), so setting a body directly (tests do) is always seen.
   - Rapier's world is not the field frame (`PhysicsFrame` in `frame.ts`, ADR 0007). It is centered on the field, so float32 rounds both halves alike, and on even seeds it is the field's mirror / rotation image (`MatchOptions.flipPhysics`), so Rapier's handedness favors neither end over a run. Read poses through `Robot` / `Piece` getters and move bodies with `setPosition` / `setVelocity` (field coordinates). Raw `body` calls see physics coordinates; go through `match.physics` if you must use them.
   - **Must never import Three.js, the DOM, `ui/`, `input/` or `render/`.** ESLint `no-restricted-imports` enforces this for `sim/`, `ai/` and `games/`. That rule is what lets full matches run in Node for tests and calibration.
-  - Fouls a game declares (`fouls.contact` protected-zone contact, `fouls.pinning`) are called by `Referee` (`referee.ts`) every tick of auto and teleop, on bumper contact (`robotGap` under `CONTACT_GAP`, 3 cm). A pin also needs the pressed robot to be up against a wall, an element or another robot beyond it (read from Rapier's contacts, never changing them). ADR 0008. Only what can't be declared goes through `ctx.foul()` in `rules.ts`.
+  - Fouls a game declares (`fouls.contact` protected-zone contact, `fouls.pinning`) are called by `Referee` (`referee.ts`) every tick of auto and teleop, on bumper contact (`robotGap` under `CONTACT_GAP`, 3 cm). A zone counts the opponent (`inside: 'intruder'`), the protected robot (`'protected'`) or either (`'either'`, 2024 G423 / G424: one call per contact). A pin also needs the pressed robot to be up against a wall, an element or another robot beyond it (read from Rapier's contacts, never changing them). ADR 0008. Only what can't be declared goes through `ctx.foul()` in `rules.ts`.
   - Ramps: a `hull` with `nav: 'ramp'` gets its floor edges continued 3 cm below the floor in physics (`sinkRampBase`), so the pitch-locked box robots can drive up from any speed.
   - Endgame attempts roll `RobotArchetype.endgameSuccess` (default 1: no roll, so no match changes) and earn `EndgameAction.fallback` on a failure.
   - A pickup is a timed `intake` action: the robot stops for `intake.timeSec` once a piece is in reach, after a station's `handoffSec`.
@@ -101,6 +101,11 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
     - declared G207/G202 fouls and a `pointsAtLeast` RP;
     - robot types as tiers of real robots, with auto routines and drive-team line-ups;
     - a whole-season `calibration.ts` and `CALIBRATION.md`.
+  - `2024-crescendo` (built blind from the kickoff manual only: the April copy with every Team Update change undone, see its `SOURCES.md`) is the worked example of:
+    - a SPEAKER mouth under a hood (`arc: 'rising'`), an AMP placement and TRAP targets opened in the last 20 s;
+    - `rules.ts` state machines (AMPLIFICATION multiplier, Coopertition) and match-end bonuses (HARMONY, SPOTLIT);
+    - "either robot in the zone" fouls (`inside: 'either'`) and bots-only grown zones in `botHints.protectedZones`;
+    - a structure robots drive under (a solid STAGE core above 0.71 m with `nav: 'none'`).
   - `src/games/_template/` is the typechecked starter, and `_template-calibration/` the opt-in calibration starter. Neither is registered.
   - Every game is registered in `src/games/index.ts`.
 
@@ -113,7 +118,7 @@ One generic engine plus one declarative module per game (ADR 0003). Check `docs/
     - An endgame action finished in auto (an auto dock) releases the robot when teleop starts.
     - An attempt counts with probability `RobotArchetype.endgameSuccess` (default 1, no roll); a failure earns the action's `fallback`, if any.
     - `oneAtATime` actions make teammates board a shared platform one by one.
-  - Shooting spawns a real ballistic projectile.
+  - Shooting spawns a real ballistic projectile. A target's `arc` picks the shot: 'high' / 'low' around the minimum-energy angle (top-entry goals must be falling), 'rising' the fastest shot still rising at the aim point (a mouth under a hood).
   - Human player shelves: `handoffHeight` needs a tall enough intake, and `handoffSec` is the time to line up and grab. A station with `choice` hands out the piece the robot asks for (`RobotCommand.pieceType`; players switch with F / gamepad X, `Match.choiceTypes`); otherwise the first type the robot can hold.
   - A target's `display` point draws scored pieces in place. Without one, scored pieces are hidden.
   - When a new game needs something the schema can't express, put it in that game's `rules.ts` first. Promote it into the engine only when a second game needs it.

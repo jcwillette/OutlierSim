@@ -228,6 +228,20 @@ describe('protected-zone contact fouls', () => {
     expect(m.fouls.red.minor).toBe(1);
   });
 
+  it("'either' rules call contact with either robot in the zone, once per contact", () => {
+    const m = setup(withFouls({ inside: 'either' }));
+    const [blue, red] = [m.robots[0]!, m.robots[3]!];
+    put(blue, 7, 2.2); // only blue (the protected robot) in its own zone
+    put(red, 7, 3.01);
+    stepFor(m, 0.1);
+    expect(m.fouls.red.minor).toBe(1);
+    put(blue, 7, 1.0); // both in blue's zone: still one call for the contact
+    put(red, 7, 1.81);
+    stepFor(m, 3.2);
+    expect(m.fouls.red.minor).toBe(2);
+    expect(m.fouls.blue.minor).toBe(0);
+  });
+
   it('endgame-only rules wait for the endgame', () => {
     const m = setup(withFouls({ endgameOnly: true }));
     const [blue, red] = [m.robots[0]!, m.robots[3]!];
