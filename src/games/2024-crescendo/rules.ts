@@ -16,18 +16,30 @@ import { CHAINS, L, SPEAKER_Y, chainAt } from './layout.ts';
  *
  * G422, G423, G424 and G420 are declared in `definition.fouls`; the engine calls them.
  *
+ * The HUD shows each alliance's timing state (`showStatus`): what a SPEAKER and an AMP NOTE score
+ * right now (AUTO or TELEOP, AMPLIFIED with its 10 s countdown), the AMP bank, the Coopertition
+ * window's countdown and when the TRAPS open.
+ *
  * The HUMAN PLAYERS here are the same for every alliance and robot type: they press AMP as soon as
  * an alliance robot holding a NOTE is within shooting range (or time is running out) and always
  * cooperate. Nothing prefers an alliance or a direction (ADR 0007).
  */
 
 const ALLIANCES: Alliance[] = ['blue', 'red'];
+/** NOTE points, AUTO / TELEOP (Table 6-2). */
+export const SPEAKER_POINTS = { auto: 5, teleop: 2 };
+export const AMP_POINTS = { auto: 2, teleop: 1 };
+export const TRAP_POINTS = { auto: 0, teleop: 5 };
+/** TRAPS open in the last 20 s (the endgame, `timing.endgameSec`). */
+const TRAPS_OPEN_REMAINING = 20;
 /** AMPLIFICATION length, s (Manual 6.5.3). */
 export const AMPLIFY_SEC = 10;
-/** SPEAKER NOTE points while AMPLIFIED over not (Table 6-2: 5 / 2). */
-export const AMPLIFIED_MULTIPLIER = 5 / 2;
+/** SPEAKER NOTE points while AMPLIFIED (Table 6-2: 5, over 2 otherwise in TELEOP). */
+const AMPLIFIED_POINTS = 5;
+export const AMPLIFIED_MULTIPLIER = AMPLIFIED_POINTS / SPEAKER_POINTS.teleop;
 /** Coopertition window: the first 45 s of TELEOP (remaining time above 1:30, Manual 6.5.5). */
 const COOP_UNTIL_REMAINING = 90;
+const COOP_SEC = 45;
 /** MELODY: 18 AMP and SPEAKER NOTES, 15 with the Coopertition Bonus (Table 6-2, kickoff). */
 export const MELODY_NOTES = 18;
 export const MELODY_NOTES_COOP = 15;
@@ -54,18 +66,69 @@ const SPEAKER = { blue: { x: 0.3, y: SPEAKER_Y }, red: { x: L - 0.3, y: SPEAKER_
 const state = (ctx: RulesContext) => ctx.vars.amp as Record<Alliance, AllianceState>;
 const amplified = (ctx: RulesContext, a: Alliance) => state(ctx)[a].ampUntil > ctx.time;
 const coopWindow = (ctx: RulesContext) => ctx.phase === 'teleop' && ctx.remaining > COOP_UNTIL_REMAINING;
+const coopDone = (ctx: RulesContext) => state(ctx).blue.coopPressed && state(ctx).red.coopPressed;
 
-function showAmp(ctx: RulesContext, a: Alliance): void {
-  const s = state(ctx)[a];
-  ctx.setIndicator(
-    `${a} amp`,
-    s.ampUntil > ctx.time ? `AMPLIFIED ${Math.ceil(s.ampUntil - ctx.time)} s` : `${s.bank} / 2`,
-  );
-}
+const pts = (n: number) => `${n} pt${n === 1 ? '' : 's'}`;
+const secs = (t: number) => `${Math.max(0, Math.ceil(t))} s`;
+const clock = (t: number) => {
+  const s = Math.max(0, Math.ceil(t));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+/** AUTO points count until TELEOP starts (NOTES landing in the 3 s delay still score as AUTO). */
+const period = (ctx: RulesContext) => (ctx.phase === 'teleop' || ctx.phase === 'post' ? 'teleop' : 'auto');
 
-function coopDone(ctx: RulesContext): boolean {
-  const s = state(ctx);
-  return s.blue.coopPressed && s.red.coopPressed;
+/**
+ * The HUD's timing chips: what each NOTE scores right now and the windows that change it. Display
+ * only; nothing here changes the match.
+ */
+function showStatus(ctx: RulesContext): void {
+  const per = period(ctx);
+  const teleop = ctx.phase === 'teleop';
+  for (const a of ALLIANCES) {
+    const s = state(ctx)[a];
+    const amp = amplified(ctx, a);
+    // SPEAKER: AUTO 5, TELEOP 2, AMPLIFIED 5 with the 10 s countdown.
+    if (amp)
+      ctx.setIndicator(
+        `${a} SPEAKER`,
+        `AMPLIFIED ${pts(AMPLIFIED_POINTS)} · ${secs(s.ampUntil - ctx.time)}`,
+        {
+          active: true,
+          until: s.ampUntil,
+          span: AMPLIFY_SEC,
+        },
+      );
+    else ctx.setIndicator(`${a} SPEAKER`, `${pts(SPEAKER_POINTS[per])}${per === 'auto' ? ' (auto)' : ''}`);
+    // AMP: its points and the bank toward AMPLIFICATION (no banking while AMPLIFIED).
+    const ampPts = `${pts(AMP_POINTS[per])}${per === 'auto' ? ' (auto)' : ''}`;
+    if (amp) ctx.setIndicator(`${a} AMP`, `${ampPts} · not banking`);
+    else if (s.bank >= 2)
+      ctx.setIndicator(`${a} AMP`, `${ampPts} · 2/2: AMPLIFY ${teleop ? 'ready' : 'in teleop'}`);
+    else ctx.setIndicator(`${a} AMP`, `${ampPts} · ${s.bank}/2 to AMPLIFY`);
+    // Coopertition: the first 45 s of TELEOP.
+    const key = `${a} Coopertition`;
+    if (s.coopPressed && coopDone(ctx)) ctx.setIndicator(key, `BONUS: MELODY at ${MELODY_NOTES_COOP}`);
+    else if (s.coopPressed) ctx.setIndicator(key, 'pressed, waiting on the other alliance');
+    else if (!teleop && ctx.phase !== 'post') ctx.setIndicator(key, 'opens in teleop');
+    else if (coopWindow(ctx)) {
+      const left = ctx.remaining - COOP_UNTIL_REMAINING;
+      ctx.setIndicator(key, `open ${secs(left)} · needs 1 AMP NOTE`, {
+        active: true,
+        until: ctx.time + left,
+        span: COOP_SEC,
+      });
+    } else ctx.setIndicator(key, 'closed');
+  }
+  // TRAPS: the last 20 s.
+  if (ctx.endgame)
+    ctx.setIndicator('TRAPS', `OPEN · ${pts(TRAP_POINTS.teleop)} · ${secs(ctx.remaining)}`, {
+      active: true,
+      until: ctx.time + ctx.remaining,
+      span: TRAPS_OPEN_REMAINING,
+    });
+  else if (teleop) ctx.setIndicator('TRAPS', `open in ${clock(ctx.remaining - TRAPS_OPEN_REMAINING)}`);
+  else if (ctx.phase === 'post') ctx.setIndicator('TRAPS', 'closed');
+  else ctx.setIndicator('TRAPS', `open in the last ${TRAPS_OPEN_REMAINING} s`);
 }
 
 /** The HUMAN PLAYERS' buttons, every tick. */
@@ -77,14 +140,13 @@ function humanPlayers(ctx: RulesContext): void {
     if (st.ampUntil && st.ampUntil <= ctx.time) {
       st.ampUntil = 0;
       ctx.setTargetMultiplier(`speaker.${a}`, 1);
-      showAmp(ctx, a);
+      ctx.announce(`${a.toUpperCase()} AMPLIFICATION over: SPEAKER back to ${pts(SPEAKER_POINTS.teleop)}`, a);
     }
     if (ctx.phase !== 'teleop') continue;
     // Coopertition first: one banked NOTE, in the first 45 s of TELEOP.
     if (!st.coopPressed && st.bank >= 1 && coopWindow(ctx)) {
       st.coopPressed = true;
       st.bank -= 1;
-      ctx.setIndicator(`${a} co-op`, 'pressed');
       ctx.announce(`${a.toUpperCase()} pressed the Coopertition button`, a);
       if (coopDone(ctx)) {
         // Both alliances: the Coopertition Bonus (MELODY threshold 15). It earns no MATCH points; the
@@ -92,11 +154,9 @@ function humanPlayers(ctx: RulesContext): void {
         for (const b of ALLIANCES) {
           ctx.addPoints(b, 'teleop', 1, 'coopertition');
           ctx.addPoints(b, 'teleop', -1, 'coopertition-offset');
-          ctx.setIndicator(`${b} co-op`, 'BONUS');
         }
         ctx.announce(`COOPERTITION BONUS: MELODY needs ${MELODY_NOTES_COOP} NOTES`);
       }
-      showAmp(ctx, a);
       continue;
     }
     if (st.ampUntil || st.bank < 2) continue;
@@ -110,8 +170,10 @@ function humanPlayers(ctx: RulesContext): void {
     st.bank = 0;
     st.ampUntil = ctx.time + AMPLIFY_SEC;
     ctx.setTargetMultiplier(`speaker.${a}`, AMPLIFIED_MULTIPLIER);
-    ctx.announce(`${a.toUpperCase()} SPEAKER AMPLIFIED (10 s)`, a);
-    showAmp(ctx, a);
+    ctx.announce(
+      `${a.toUpperCase()} SPEAKER AMPLIFIED: ${pts(AMPLIFIED_POINTS)} a NOTE for ${AMPLIFY_SEC} s`,
+      a,
+    );
   }
 }
 
@@ -123,9 +185,17 @@ export const rules: GameRules = {
     } satisfies Record<Alliance, AllianceState>;
     for (const a of ALLIANCES) {
       for (let i = 1; i <= CHAINS.length; i++) ctx.setTargetEnabled(`trap-${i}.${a}`, false);
-      showAmp(ctx, a);
-      ctx.setIndicator(`${a} co-op`, '-');
     }
+    showStatus(ctx);
+  },
+
+  onPhaseChange(ctx, phase) {
+    if (phase === 'teleop')
+      ctx.announce(
+        `TELEOP: SPEAKER ${SPEAKER_POINTS.auto} → ${SPEAKER_POINTS.teleop}, AMP ${AMP_POINTS.auto} → ${AMP_POINTS.teleop}. ` +
+          `Coopertition open ${COOP_SEC} s`,
+      );
+    showStatus(ctx);
   },
 
   onScore(ctx, ev) {
@@ -133,17 +203,18 @@ export const rules: GameRules = {
     if (ev.targetId !== `amp.${a}`) return;
     const st = state(ctx)[a];
     if (!amplified(ctx, a) && st.bank < 2) st.bank++;
-    showAmp(ctx, a);
+    showStatus(ctx);
   },
 
   onTick(ctx) {
     humanPlayers(ctx);
-    for (const a of ALLIANCES) if (amplified(ctx, a)) showAmp(ctx, a);
     if (ctx.endgame && !ctx.vars.trapsOpen) {
       ctx.vars.trapsOpen = true;
       for (const a of ALLIANCES)
         for (let i = 1; i <= CHAINS.length; i++) ctx.setTargetEnabled(`trap-${i}.${a}`, true);
+      ctx.announce(`ENDGAME: TRAPS open (${pts(TRAP_POINTS.teleop)} a NOTE from ONSTAGE)`);
     }
+    showStatus(ctx);
   },
 
   /**

@@ -59,7 +59,7 @@ import {
   polar,
   sourcePoint,
 } from './layout.ts';
-import { MELODY_NOTES, MELODY_NOTES_COOP, rules } from './rules.ts';
+import { AMP_POINTS, MELODY_NOTES, MELODY_NOTES_COOP, SPEAKER_POINTS, TRAP_POINTS, rules } from './rules.ts';
 
 /**
  * 2024 CRESCENDO presented by Haas: generated from the kickoff Game Manual (6 Jan 2024) only. The
@@ -328,7 +328,7 @@ const traps: ScoringTarget[] = CHAINS.map((c, i) => ({
   name: `TRAP (${c.name})`,
   side: 'blue',
   accepts: ['note'],
-  points: { auto: 0, teleop: 5 },
+  points: TRAP_POINTS,
   tags: ['trap'],
   capacity: 1,
   place: { zone: chainZone(c.deg), facePoint: { x: STAGE_C.x, y: STAGE_C.y }, faceToleranceRad: 0.6 },
@@ -342,7 +342,7 @@ const targets: ScoringTarget[] = [
     name: 'SPEAKER',
     side: 'blue',
     accepts: ['note'],
-    points: { auto: 5, teleop: 2 },
+    points: SPEAKER_POINTS,
     tags: ['speaker'],
     // The opening between the top of the ALLIANCE WALL and the hood, under the hood.
     aperture: {
@@ -360,7 +360,7 @@ const targets: ScoringTarget[] = [
     name: 'AMP',
     side: 'blue',
     accepts: ['note'],
-    points: { auto: 2, teleop: 1 },
+    points: AMP_POINTS,
     tags: ['amp'],
     place: {
       zone: rect(AMP_X - 0.3, W - 1.0, AMP_X + 0.3, W - 0.38),

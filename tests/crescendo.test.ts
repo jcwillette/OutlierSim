@@ -158,6 +158,41 @@ describe('2024 Crescendo: rules (AMPLIFICATION, Coopertition, HARMONY, SPOTLIT)'
     expect(rules.botValue!(ctx, 'blue', 'amp.blue')).toBe(2); // bank empty again
   });
 
+  it('shows the timing of scoring on the HUD: points now, AMPLIFIED countdown, co-op window, TRAPS', () => {
+    const shown = new Map<string, { v: unknown; st?: { active?: boolean; until?: number; span?: number } }>();
+    const setIndicator = (k: string, v: unknown, st?: { active?: boolean; until?: number; span?: number }) =>
+      shown.set(k, { v, st });
+    const shooter = { id: 0, alliance: 'blue', x: 3, y: SPEAKER_Y, held: ['note'] } as unknown as RobotInfo;
+    const { ctx } = fakeCtx({ phase: 'auto', remaining: 10, setIndicator, robots: () => [shooter] });
+    rules.onInit!(ctx);
+    expect(shown.get('blue SPEAKER')!.v).toBe('5 pts (auto)');
+    expect(shown.get('red AMP')!.v).toBe('2 pts (auto) · 0/2 to AMPLIFY');
+    expect(shown.get('blue Coopertition')!.v).toBe('opens in teleop');
+    expect(shown.get('TRAPS')!.v).toBe('open in the last 20 s');
+    Object.assign(ctx, { phase: 'teleop', remaining: 120 });
+    rules.onTick!(ctx, 1 / 60);
+    expect(shown.get('blue SPEAKER')!.v).toBe('2 pts');
+    expect(shown.get('blue Coopertition')!.v).toBe('open 30 s · needs 1 AMP NOTE');
+    expect(shown.get('blue Coopertition')!.st).toEqual({ active: true, until: 60, span: 45 });
+    expect(shown.get('TRAPS')!.v).toBe('open in 1:40');
+    ampScore(ctx, 'blue'); // spent on Coopertition
+    rules.onTick!(ctx, 1 / 60);
+    ampScore(ctx, 'blue');
+    ampScore(ctx, 'blue');
+    rules.onTick!(ctx, 1 / 60);
+    expect(shown.get('blue Coopertition')!.v).toBe('pressed, waiting on the other alliance');
+    expect(shown.get('blue SPEAKER')!.v).toBe('AMPLIFIED 5 pts · 10 s');
+    expect(shown.get('blue SPEAKER')!.st).toEqual({ active: true, until: 40, span: 10 });
+    expect(shown.get('red SPEAKER')!.v).toBe('2 pts');
+    Object.assign(ctx, { time: 41, remaining: 15, endgame: true });
+    rules.onTick!(ctx, 1 / 60);
+    expect(shown.get('blue SPEAKER')!.v).toBe('2 pts');
+    expect(shown.get('blue Coopertition')!.v).toBe('pressed, waiting on the other alliance');
+    expect(shown.get('red Coopertition')!.v).toBe('closed');
+    expect(shown.get('TRAPS')!.v).toBe('OPEN · 5 pts · 15 s');
+    expect(shown.get('TRAPS')!.st).toEqual({ active: true, until: 56, span: 20 });
+  });
+
   it('both HUMAN PLAYERS pressing Coopertition in the first 45 s of TELEOP lowers MELODY to 15', () => {
     const { ctx, added } = fakeCtx({ remaining: 110 });
     rules.onInit!(ctx);

@@ -1488,6 +1488,8 @@ class Hud {
   private readonly countdown = h('div', { class: 'countdown' });
   private pauseCard: HTMLElement | null = null;
   private lastIndicatorKey = '';
+  /** Countdown bars of timed indicators, drained every frame. */
+  private indicatorBars: Array<{ bar: HTMLElement; until: number; span: number }> = [];
   private lastToastKey = '';
   private lastHeldKey = '';
   /** Robot shown in the status panel: the player, or the followed robot when spectating. */
@@ -1504,8 +1506,7 @@ class Hud {
       'div',
       { class: `hud ${mode.kind === 'watch' ? 'spectating' : ''}` },
       h('div', { class: 'scorebar' }, this.blue, this.clock, this.red),
-      this.indicators,
-      this.toasts,
+      h('div', { class: 'topstack' }, this.indicators, this.toasts),
       h('div', { class: 'status' }, this.name, this.held, this.hint),
       this.cam,
       this.countdown,
@@ -1592,18 +1593,42 @@ class Hud {
     this.clock.classList.toggle('endgame', m.isEndgame);
 
     const ind = [...m.indicators.entries()];
-    const indKey = ind.map(([k, v]) => `${k}=${v}`).join('|');
+    const indKey = ind
+      .map(([k, v]) => {
+        const st = m.indicatorStyles.get(k);
+        return `${k}=${v}${st?.active ? '!' : ''}${st?.until !== undefined ? '~' : ''}`;
+      })
+      .join('|');
     if (indKey !== this.lastIndicatorKey) {
       this.lastIndicatorKey = indKey;
+      this.indicatorBars = [];
+      // Blue's chips on the left, shared ones in the middle, red's on the right.
+      const groups: Record<'blue' | 'mid' | 'red', HTMLElement[]> = { blue: [], mid: [], red: [] };
+      for (const [k, v] of ind) {
+        const side = /^(blue|red)\b/.exec(k)?.[1] as 'blue' | 'red' | undefined;
+        const st = m.indicatorStyles.get(k);
+        const chip = h(
+          'span',
+          { class: `chip ${side ?? ''} ${st?.active ? 'active' : ''}` },
+          h('span', { class: 'label' }, side ? k.slice(side.length).trim() : k),
+          ` ${v}`,
+        );
+        if (st?.until !== undefined && st.span) {
+          const bar = h('span', { class: 'bar' });
+          chip.append(bar);
+          this.indicatorBars.push({ bar, until: st.until, span: st.span });
+        }
+        groups[side ?? 'mid'].push(chip);
+      }
       this.indicators.replaceChildren(
-        ...ind.map(([k, v]) =>
-          h(
-            'span',
-            { class: `chip ${k.startsWith('blue') ? 'blue' : k.startsWith('red') ? 'red' : ''}` },
-            `${k}: ${v}`,
-          ),
-        ),
+        ...(['blue', 'mid', 'red'] as const)
+          .filter((g) => groups[g].length)
+          .map((g) => h('div', { class: `ind-group ${g}` }, ...groups[g])),
       );
+    }
+    for (const b of this.indicatorBars) {
+      const left = Math.max(0, Math.min(1, (b.until - m.time) / b.span));
+      b.bar.style.width = `${(left * 100).toFixed(1)}%`;
     }
     const recent = m.announcements.filter((a) => m.time - a.time < 4).slice(-3);
     const toastKey = recent.map((a) => `${a.time}${a.text}`).join('|');

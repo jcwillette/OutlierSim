@@ -638,9 +638,22 @@ export interface RulesContext {
   spawnPiece(type: string, position: Vec3, velocity?: Vec3): void;
   /** Short message shown on the HUD. */
   announce(text: string, alliance?: Alliance): void;
-  /** Named HUD indicator (e.g. 'blue hub' -> 'ACTIVE'). */
-  setIndicator(key: string, value: string | number | null): void;
+  /**
+   * Named HUD indicator (e.g. 'blue hub' -> 'ACTIVE'). A key starting with 'blue' or 'red' is shown
+   * on that alliance's side. `style` marks a live window or bonus and can draw a countdown bar.
+   */
+  setIndicator(key: string, value: string | number | null, style?: IndicatorStyle): void;
   random(): number;
+}
+
+/** How the HUD draws an indicator. */
+export interface IndicatorStyle {
+  /** A window, multiplier or bonus is live now: the chip is highlighted. */
+  active?: boolean;
+  /** The window ends at this match time (s): the chip drains a bar toward it... */
+  until?: number;
+  /** ...over a window this long (s). */
+  span?: number;
 }
 
 export interface GameRules {
