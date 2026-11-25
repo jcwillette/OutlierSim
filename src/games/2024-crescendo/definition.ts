@@ -886,10 +886,47 @@ export const definition: GameDefinition = {
       strategy: 'early-endgame',
     },
     {
+      id: 'ideal',
+      name: 'Monte Carlo pick',
+      description:
+        'The best alliance the Monte Carlo search found: three under-stage all-rounders as TRAP specialists, closing out (climbing early once the lead is safe) for the ENSEMBLE RP.',
+      robots: [
+        { archetype: 'allround', role: 'trap' },
+        { archetype: 'allround', role: 'trap' },
+        { archetype: 'allround', role: 'trap' },
+      ],
+      strategy: 'close-out',
+    },
+    {
       id: 'rookies',
       name: 'Rookie alliance',
       description: 'Three kitbots: SUBWOOFER shots, the AMP, parking, and the occasional breakdown.',
       robots: [{ archetype: 'kitbot' }, { archetype: 'kitbot' }, { archetype: 'kitbot' }],
+    },
+  ],
+  // Jobs a bot can be given in the lineup menu besides scoring freely and defense. They change what
+  // the bot goes for in TELEOP, never the robot; AUTO routines are unchanged. Measured with
+  // `npm run alliances` (SOURCES.md, "Alliance composition").
+  roles: [
+    {
+      id: 'amp',
+      name: 'AMP specialist',
+      description:
+        'Keeps the AMP bank full so the HUMAN PLAYER can AMPLIFY as often as possible: an AMP NOTE counts four times what the planner would give it. Still shoots when the SPEAKER is AMPLIFIED and the AMP is not banking.',
+      targetWeights: { amp: 4 },
+    },
+    {
+      id: 'speaker',
+      name: 'SPEAKER only',
+      description: 'Shoots every NOTE into the SPEAKER and leaves the AMP to its partners.',
+      targetWeights: { amp: 0 },
+    },
+    {
+      id: 'trap',
+      name: 'TRAP specialist',
+      description:
+        'In the last 20 s, a NOTE in a TRAP counts three times what the planner would give it, so it goes for the TRAP before climbing.',
+      targetWeights: { 'trap-1': 3, 'trap-2': 3, 'trap-3': 3 },
     },
   ],
   rules,

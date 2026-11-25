@@ -670,6 +670,9 @@ export class App {
             ),
             h('option', { value: 'score', selected: slot.role === 'score' }, 'Score'),
             h('option', { value: 'defense', selected: slot.role === 'defense' }, 'Defend'),
+            ...(def.roles ?? []).map((x) =>
+              h('option', { value: x.id, selected: slot.role === x.id, title: x.description }, x.name),
+            ),
           ),
         );
       });
@@ -961,7 +964,9 @@ export function describeAlliance(def: GameDefinition, spec: MonteCarloSpec, a: A
         s.archetype === 'random'
           ? 'Random'
           : (def.archetypes.find((x) => x.id === s.archetype)?.name ?? s.archetype);
-      return s.role === 'auto' ? name : `${name} (${s.role === 'defense' ? 'defends' : 'scores'})`;
+      if (s.role === 'auto') return name;
+      const job = def.roles?.find((x) => x.id === s.role)?.name;
+      return `${name} (${job ?? (s.role === 'defense' ? 'defends' : 'scores')})`;
     })
     .join(', ');
   return `${preset ? `${preset}: ` : ''}${strategy} · ${skill} bots · ${robots}`;
@@ -1440,7 +1445,8 @@ export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): st
   if (m.phase === 'post') return 'Match over';
   const p = brain?.currentPlan;
   if (!p) return 'Idle';
-  const role = brain?.role === 'defense' ? ' (defender)' : '';
+  const job = m.def.roles?.find((x) => x.id === brain?.role)?.name;
+  const role = brain?.role === 'defense' ? ' (defender)' : job ? ` (${job})` : '';
   const lapse = brain?.lapsing ? ' · not watching teammates' : '';
   return describePlan(m, p) + role + lapse;
 }

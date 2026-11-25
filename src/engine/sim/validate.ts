@@ -275,10 +275,27 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     'lineups',
     (def.lineups ?? []).map((l) => l.id),
   );
+  // specialist roles
+  const roleIds = new Set(['score', 'defense', ...(def.roles ?? []).map((r) => r.id)]);
+  unique(
+    'roles',
+    (def.roles ?? []).map((r) => r.id),
+  );
+  const targetIds = new Set(def.targets.map((tg) => tg.id));
+  (def.roles ?? []).forEach((r, i) => {
+    const path = `roles[${i}] ${r.id}`;
+    if (['score', 'defense', 'auto', 'random'].includes(r.id)) err(path, `'${r.id}' is reserved`);
+    for (const [id, w] of Object.entries(r.targetWeights)) {
+      if (!targetIds.has(id)) err(path, `unknown target '${id}'`);
+      if (!(w >= 0)) err(path, `weight for '${id}' must be 0 or more`);
+    }
+  });
   (def.lineups ?? []).forEach((l, i) => {
     l.robots.forEach((slot, j) => {
       if (!archIds.has(slot.archetype))
         err(`lineups[${i}] ${l.id}.robots[${j}]`, `unknown archetype '${slot.archetype}'`);
+      if (slot.role !== undefined && !roleIds.has(slot.role))
+        err(`lineups[${i}] ${l.id}.robots[${j}]`, `unknown role '${slot.role}'`);
     });
   });
 

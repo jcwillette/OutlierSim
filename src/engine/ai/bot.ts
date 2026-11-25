@@ -27,6 +27,7 @@ import type {
   Region2D,
   RobotArchetype,
   RobotRole,
+  SpecialistRole,
   Vec2,
 } from '../sim/types.ts';
 import { AllianceNav, type DynamicObstacle } from './navgrid.ts';
@@ -340,6 +341,8 @@ export class BotBrain implements RobotController {
   private jukeSide = 0;
   private jukeUntil = 0;
   readonly role: RobotRole;
+  /** The game's specialist role named by `role`, looked up on first use (null: none). */
+  private specialist: SpecialistRole | null | undefined = undefined;
   readonly strategy: AllianceStrategy;
   /** Match time until which this bot has tunnel vision (ignores teammates). */
   private lapseUntil = 0;
@@ -520,8 +523,12 @@ export class BotBrain implements RobotController {
     return m.phase === 'auto' ? 'auto' : 'teleop';
   }
 
+  /** How much the bot wants `t`: the game's `botHints.targetWeights`, times its specialist role's in teleop. */
   private weight(m: Match, t: XTarget): number {
-    return m.def.botHints?.targetWeights?.[t.baseId] ?? 1;
+    const w = m.def.botHints?.targetWeights?.[t.baseId] ?? 1;
+    if (this.specialist === undefined) this.specialist = m.def.roles?.find((x) => x.id === this.role) ?? null;
+    if (!this.specialist || m.phase === 'auto') return w;
+    return w * (this.specialist.targetWeights[t.baseId] ?? 1);
   }
 
   /** The robot could score in `t` now (open, not full, its alliance's) and the game wants it to. */
@@ -766,10 +773,12 @@ export class BotBrain implements RobotController {
   }
 
   /** Seconds of margin before the end a bot keeps for its endgame action (by strategy). */
-  private endgameLead(m: Match): number {
+  private endgameLead(m: Match, r: Robot): number {
     const baseLead = m.def.botHints?.endgameLeadSec ?? 3;
     if (m.phase === 'auto' || this.strategy === 'max-cycles') return 0.5;
-    return this.strategy === 'early-endgame' ? baseLead + 15 : baseLead;
+    const early =
+      this.strategy === 'early-endgame' || (this.strategy === 'close-out' && safeLead(m, r.alliance));
+    return early ? baseLead + EARLY_ENDGAME_SEC : baseLead;
   }
 
   /**
@@ -791,7 +800,7 @@ export class BotBrain implements RobotController {
       if (best && rank >= best.rank) continue;
       const queue = a.oneAtATime ? this.endgameQueue(m, r) * dur : 0;
       const point = spotPoint(gridFor(m, r), endgameSpots(a)[0]!);
-      best = { point, sec: dur + this.endgameLead(m) + queue + this.skill.think, rank };
+      best = { point, sec: dur + this.endgameLead(m, r) + queue + this.skill.think, rank };
     }
     return best;
   }
@@ -828,7 +837,7 @@ export class BotBrain implements RobotController {
     const auto = m.phase === 'auto';
     if (!auto && m.phase !== 'teleop') return null;
     const pref = m.def.botHints?.endgamePreference;
-    const lead = this.endgameLead(m);
+    const lead = this.endgameLead(m, r);
     let best: Option | null = null;
     for (const a of m.game.endgame) {
       if (a.alliance && a.alliance !== r.alliance) continue;
@@ -1099,7 +1108,13 @@ export class BotBrain implements RobotController {
    * bot would earn by cycling. Never inside the opponent's protected zones (`botHints.protectedZones`).
    */
   private harassOption(m: Match, r: Robot): Option | null {
-    const strategyWeight = { balanced: 1, 'max-cycles': 0, 'early-endgame': 1, aggressive: 3 }[this.strategy];
+    const strategyWeight = {
+      balanced: 1,
+      'max-cycles': 0,
+      'early-endgame': 1,
+      aggressive: 3,
+      'close-out': 1,
+    }[this.strategy];
     const weight = (m.def.botHints?.defenseOpportunism ?? 1) * strategyWeight;
     if (weight <= 0 || m.phase !== 'teleop' || r.held.length > 0 || this.role === 'defense') return null;
     let best: Option | null = null;
@@ -1770,6 +1785,22 @@ function spotOccupied(m: Match, r: Robot, zone: Region2D): boolean {
  * Points this robot can expect from an endgame action: its points, or with an uncertain attempt
  * (`endgameSuccess`) the chance-weighted mix with its fallback's points.
  */
+/** Seconds earlier than usual that 'early-endgame' (and 'close-out' with a safe lead) head for the endgame. */
+const EARLY_ENDGAME_SEC = 15;
+
+/**
+ * 'close-out': the alliance's lead is safe, as its drive teams read the scoreboard. The opponents
+ * could not catch up in the time left even scoring at twice their rate so far (auto included, so
+ * the rate is generous for teleop).
+ */
+export function safeLead(m: Match, alliance: Alliance): boolean {
+  if (m.phase !== 'teleop') return false;
+  const own = m.ledger.total(alliance);
+  const opp = m.ledger.total(other(alliance));
+  const rate = opp / Math.max(m.time, 1);
+  return own - opp > 2 * rate * m.remaining;
+}
+
 function expectedEndgamePoints(m: Match, r: Robot, a: XEndgame, auto: boolean): number {
   const value = (x: XEndgame) => (auto ? (x.autoPoints ?? x.points) : x.points);
   const chance = r.archetype.endgameSuccess?.[a.baseId] ?? 1;

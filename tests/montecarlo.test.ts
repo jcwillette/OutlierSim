@@ -40,6 +40,10 @@ const sample = (seed: number, blue: number, red: number, bonuses: string[] = [])
   rp: { blue: blue > red ? 2 : blue === red ? 1 : 0, red: red > blue ? 2 : blue === red ? 1 : 0 },
   bonuses: { blue: bonuses, red: [] },
   archetypes: [],
+  breakdown: {
+    blue: { auto: 0, teleop: blue, endgame: 0, penalty: 0 },
+    red: { auto: 0, teleop: red, endgame: 0, penalty: 0 },
+  },
 });
 
 describe('wilson interval', () => {

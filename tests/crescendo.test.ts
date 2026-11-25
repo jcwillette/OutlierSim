@@ -1,9 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { attachBots } from '../src/engine/ai/index.ts';
 import {
   IDLE,
   Match,
   expandDefinition,
   initPhysics,
+  validateDefinition,
   type AllianceSummary,
   type Robot,
   type RobotCommand,
@@ -276,5 +278,59 @@ describe('2024 Crescendo: rules (AMPLIFICATION, Coopertition, HARMONY, SPOTLIT)'
         s({}, 0, { "G424 contact with either robot in the opponent's STAGE ZONE in the last 20 s": 1 }),
       ),
     ).toBe(true);
+  });
+});
+
+describe('2024 Crescendo: specialist roles', () => {
+  it('the definition offers its roles, and the validator rejects bad ones', () => {
+    expect(validateDefinition(definition).filter((i) => i.level === 'error')).toEqual([]);
+    const bad = {
+      ...definition,
+      roles: [
+        { id: 'score', name: 'x', description: 'x', targetWeights: {} },
+        { id: 'feeder', name: 'x', description: 'x', targetWeights: { hoop: 1 } },
+      ],
+      lineups: [
+        {
+          id: 'l',
+          name: 'l',
+          description: 'l',
+          robots: [
+            { archetype: 'allround', role: 'nope' },
+            { archetype: 'allround' },
+            { archetype: 'allround' },
+          ],
+        },
+      ],
+    } as typeof definition;
+    const errors = validateDefinition(bad).map((i) => i.message);
+    expect(errors).toContain("'score' is reserved");
+    expect(errors).toContain("unknown target 'hoop'");
+    expect(errors).toContain("unknown role 'nope'");
+  });
+
+  it('a SPEAKER-only alliance never uses its AMP in TELEOP; an AMP specialist does', () => {
+    const play = (role: string) => {
+      const m = new Match(definition, {
+        seed: 3,
+        archetypes: {
+          0: 'allround',
+          1: 'allround',
+          2: 'allround',
+          3: 'allround',
+          4: 'allround',
+          5: 'allround',
+        },
+      });
+      attachBots(m, {
+        partners: 'normal',
+        opponents: 'normal',
+        playerId: null,
+        roles: { 0: role, 1: role === 'amp' ? 'score' : role, 2: role === 'amp' ? 'score' : role },
+      });
+      return m.runToEnd().blue.targetCounts['amp.blue']?.teleop ?? 0;
+    };
+    expect(play('speaker')).toBe(0);
+    expect(play('amp')).toBeGreaterThan(play('score'));
   });
 });

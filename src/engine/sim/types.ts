@@ -555,7 +555,30 @@ export interface AutoRoutine {
   success?: number;
 }
 
-export type RobotRole = 'score' | 'defense';
+/**
+ * What a bot does all match: 'score' (the planner's best points per second), 'defense' (marks
+ * opposing scorers in teleop), or the id of one of the game's specialist `roles` (a scorer that
+ * keeps to some targets in teleop).
+ */
+export type RobotRole = 'score' | 'defense' | (string & {});
+
+/**
+ * A specialist job a game offers for bots (`GameDefinition.roles`), chosen per slot like 'score' or
+ * 'defense': a scoring bot that weighs its targets differently in teleop, e.g. one that only feeds
+ * an AMP. Auto routines are unchanged. It changes what the bot chooses, never the robot.
+ */
+export interface SpecialistRole {
+  id: string;
+  name: string;
+  description: string;
+  /**
+   * Teleop weight per base target id, multiplying `botHints.targetWeights` (default 1, 0 = never).
+   * Weights bias the bot's points-per-second planner, so a weight above 1 also makes it accept a
+   * longer trip for that target.
+   */
+  targetWeights: Record<string, number>;
+  source?: Citation;
+}
 
 /**
  * How an alliance's bots play the match (any game):
@@ -563,8 +586,10 @@ export type RobotRole = 'score' | 'defense';
  * - 'max-cycles': keep cycling as late as possible, never stop to defend.
  * - 'early-endgame': head for the endgame ~15 s early to make sure of it.
  * - 'aggressive': defend opportunistically about three times as readily.
+ * - 'close-out': balanced, but once the lead is safe (the opponents can't catch up at twice the
+ *   rate they have scored so far), head for the endgame ~15 s early like 'early-endgame'.
  */
-export type AllianceStrategy = 'balanced' | 'max-cycles' | 'early-endgame' | 'aggressive';
+export type AllianceStrategy = 'balanced' | 'max-cycles' | 'early-endgame' | 'aggressive' | 'close-out';
 
 /** A suggested alliance composition shown in the menu. */
 export interface AllianceLineup {
@@ -737,6 +762,8 @@ export interface GameDefinition {
   defaultArchetype: string;
   /** Suggested alliance compositions (specialist mixes and strategies) offered in the menu. */
   lineups?: AllianceLineup[];
+  /** Specialist jobs bots can be given besides 'score' and 'defense' (lineup slot roles). */
+  roles?: SpecialistRole[];
   rules?: GameRules;
   botHints?: BotHints;
 }

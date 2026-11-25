@@ -1,7 +1,7 @@
 import { attachBots, type Difficulty } from '../engine/ai/bot.ts';
 import { Match } from '../engine/sim/match.ts';
 import { makeRng } from '../engine/sim/math.ts';
-import type { Alliance, GameDefinition } from '../engine/sim/types.ts';
+import type { Alliance, GameDefinition, ScoreCategory } from '../engine/sim/types.ts';
 import { resolveLineup, type LineupChoice } from './lineup.ts';
 import type { GameTuning } from './tuning.ts';
 
@@ -32,6 +32,8 @@ export interface MatchupSample {
   bonuses: Record<Alliance, string[]>;
   /** Archetype per robot id 0-5 (differs between samples when slots are 'random'). */
   archetypes: string[];
+  /** Points by category (auto, teleop, endgame, penalty: foul points awarded to the alliance). */
+  breakdown: Record<Alliance, Record<ScoreCategory, number>>;
 }
 
 /**
@@ -62,6 +64,7 @@ export function runMatchup(def: GameDefinition, spec: MonteCarloSpec, seed: numb
     rp: { blue: r.blue.rp, red: r.red.rp },
     bonuses: { blue: bonuses('blue'), red: bonuses('red') },
     archetypes: m.robots.map((x) => x.archetype.id),
+    breakdown: { blue: { ...r.blue.breakdown }, red: { ...r.red.breakdown } },
   };
 }
 

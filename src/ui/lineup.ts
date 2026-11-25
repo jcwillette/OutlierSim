@@ -30,6 +30,11 @@ export const STRATEGIES: ReadonlyArray<readonly [AllianceStrategy, string, strin
   ['max-cycles', 'Max cycles', 'Keep scoring as late as possible and never stop to defend.'],
   ['early-endgame', 'Early endgame', 'Head for the endgame about 15 s early to make sure of it.'],
   ['aggressive', 'Aggressive', 'Get in the way of opponents carrying pieces about three times as readily.'],
+  [
+    'close-out',
+    'Close out',
+    'Balanced, but once the lead is safe, head for the endgame about 15 s early to make sure of it.',
+  ],
 ];
 
 const randomSlots = (): AllianceChoice['slots'] => [
@@ -65,6 +70,7 @@ export function sanitizeLineup(def: GameDefinition, saved: unknown): LineupChoic
   const ids = new Set(def.archetypes.map((a) => a.id));
   const strategies = new Set(STRATEGIES.map(([s]) => s));
   const presets = new Set(['random', 'custom', ...(def.lineups ?? []).map((l) => l.id)]);
+  const roles = new Set(['score', 'defense', ...(def.roles ?? []).map((r) => r.id)]);
   const src = (saved ?? {}) as Partial<Record<Alliance, Partial<AllianceChoice>>>;
   for (const a of ['blue', 'red'] as const) {
     const s = src[a];
@@ -75,7 +81,7 @@ export function sanitizeLineup(def: GameDefinition, saved: unknown): LineupChoic
       if (slot && (slot.archetype === 'random' || ids.has(slot.archetype)))
         out[a].slots[i] = {
           archetype: slot.archetype,
-          role: slot.role === 'score' || slot.role === 'defense' ? slot.role : 'auto',
+          role: typeof slot.role === 'string' && roles.has(slot.role) ? slot.role : 'auto',
         };
     });
   }
