@@ -6,10 +6,13 @@ import type { AllianceResult } from './match.ts';
  */
 export interface CalibrationMetric {
   name: string;
-  /** Value from a TBA alliance `score_breakdown` (plus the alliance's final score). Null = skip match. */
-  real: (breakdown: Record<string, unknown>, score: number) => number | null;
-  /** Same quantity from a simulated alliance result. */
-  sim: (s: AllianceResult) => number;
+  /**
+   * Value from a TBA alliance `score_breakdown` (plus the alliance's final score, and the other
+   * alliance's breakdown). Null = skip match.
+   */
+  real: (breakdown: Record<string, unknown>, score: number, opp: Record<string, unknown>) => number | null;
+  /** Same quantity from a simulated alliance result (`opp`: the other alliance in that match). */
+  sim: (s: AllianceResult, opp: AllianceResult) => number;
 }
 
 export interface CalibrationSpec {

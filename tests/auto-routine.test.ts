@@ -108,6 +108,21 @@ describe('line-up time (alignSec)', () => {
     expect(placeTimes(0, [0])).toEqual({ auto: [0.5], teleop: [0.5] }); // the student drives this one
   });
 
+  it('scales it per target (alignScale), for a forgiving or a fussy placement', () => {
+    const def = withBasic({ alignSec: 2, place: { low: 0.5 } });
+    const scaled = {
+      ...def,
+      targets: def.targets.map((t) => (t.id === 'shelf' ? { ...t, alignScale: 0.25 } : t)),
+    };
+    const m = new Match(scaled, { seed: 1 });
+    const r = m.robots[0]!;
+    m.start();
+    while (m.phase !== 'teleop') m.step();
+    r.setPosition({ x: 1, y: 1, z: r.archetype.frame.height / 2 + 0.01 });
+    m.step();
+    expect(m.placeOptions(r).map((o) => o.time)).toEqual([1]); // 0.5 + 2 × 0.25
+  });
+
   it('adds it to a teleop pickup too', () => {
     const def = withBasic({ alignSec: 2, intake: { pieceTypes: ['ball'], timeSec: 0.5 } });
     const m = new Match(def, { seed: 1 });
@@ -169,14 +184,25 @@ describe('auto routine', () => {
     expect(player.scored).toBe(1);
   });
 
+  it('a routine that fails can still drive forward out of the starting zone (driveOut)', () => {
+    const forward = runAuto({ pieces: 1, success: 0, driveOut: 1 });
+    expect(forward.scored).toBe(0);
+    expect(forward.held).toBe(1); // keeps its preload for teleop
+    expect(forward.left).toBe(true);
+    // driveOut only matters when the routine fails.
+    const runs = runAuto({ pieces: 1, success: 1, driveOut: 1 });
+    expect(runs.scored).toBe(1);
+  });
+
   it('validates its numbers', () => {
-    const bad = withBasic({ auto: { pieces: 1.5, success: 2 } });
+    const bad = withBasic({ auto: { pieces: 1.5, success: 2, driveOut: -1 } });
     const errors = validateDefinition(bad)
       .filter((i) => i.level === 'error')
       .map((e) => e.message);
     expect(errors).toEqual([
       'auto.pieces must be a whole number, 0 or more',
       'auto.success must be between 0 and 1',
+      'auto.driveOut must be between 0 and 1',
     ]);
   });
 });

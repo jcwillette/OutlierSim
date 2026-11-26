@@ -214,6 +214,11 @@ export interface ScoringTarget {
   displayStep?: Vec3;
   /** Visual only: orientation of the displayed pieces (a tube on an angled branch). Default upright. */
   displayRotation?: Euler;
+  /**
+   * Multiplies the drive team's line-up (`RobotArchetype.alignSec`) for placements here: below 1 for
+   * a wide, forgiving target (2025's trough), above 1 for a fussy one. Default 1.
+   */
+  alignScale?: number;
   source?: Citation;
 }
 
@@ -268,6 +273,14 @@ export interface HumanPlayerStation {
    * supply for that alliance (a piece resting on a field structure until a robot takes it).
    */
   display?: Vec3;
+  /**
+   * A robot that reaches the piece (`handoffHeight`) can knock it off the structure instead of taking
+   * it: it falls to the floor beside the robot, a loose piece anyone may pick up. A robot knocks when
+   * it asks to (`RobotCommand.knock`) or can't hold any of the station's piece types (a CORAL-only
+   * mechanism pushing a 2025 REEF ALGAE off). Needs `display` (where the piece falls from) and a
+   * `supply`. Default false.
+   */
+  knockOff?: boolean;
   source?: Citation;
 }
 
@@ -596,6 +609,13 @@ export interface AutoRoutine {
    * missing auto). Default 1. The player's own auto routine always runs.
    */
   success?: number;
+  /**
+   * When the routine doesn't run (chance 1 - `success`): the chance the robot still drives out of the
+   * starting zone and scores nothing (a "drive forward" auto, all many robots' autos do). Default 0:
+   * it sits still. 2025's AUTO RP needed every robot to LEAVE, and real robots did far more often
+   * than they scored in AUTO.
+   */
+  driveOut?: number;
 }
 
 /**
@@ -757,6 +777,12 @@ export interface GameRules {
    * A bot holds at most `HOLD_LIMIT_SEC` per arrival, then scores anyway.
    */
   botHold?(ctx: RulesContext, alliance: Alliance, targetId: string): boolean;
+  /**
+   * Bots only: extra points `alliance` gets from clearing station `stationId` (expanded id) now, by
+   * taking or knocking off its piece (2025: the REEF BRANCHES an ALGAE blocks). Added to taking the
+   * piece; the only value of knocking it off (`HumanPlayerStation.knockOff`).
+   */
+  botStationValue?(ctx: RulesContext, alliance: Alliance, stationId: string): number;
 }
 
 /** Optional strategy hints for the generic bot AI. */

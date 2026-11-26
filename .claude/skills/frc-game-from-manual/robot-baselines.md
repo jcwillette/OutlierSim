@@ -1,13 +1,14 @@
 # Robot baselines that carry from season to season
 
-Calibrated twice, each time at the owner's request, against every official qualification match of a season on The Blue Alliance:
+Calibrated three times, each time at the owner's request, against every official qualification match of a season on The Blue Alliance:
 
 - 2023: 185 events, 27,076 alliance-matches (`src/games/2023-chargedup/CALIBRATION.md`, ADR 0009);
-- 2024: 190 events, 28,250 alliance-matches, plus Chief Delphi's strategy discussion (`src/games/2024-crescendo/CALIBRATION.md`, ADR 0012). The 2024 blind build used only the 2023 tiers below; how far off that left it is the best evidence of what carries over and what doesn't ("Lessons from 2024").
+- 2024: 190 events, 28,250 alliance-matches, plus Chief Delphi's strategy discussion (`src/games/2024-crescendo/CALIBRATION.md`, ADR 0012). The 2024 blind build used only the 2023 tiers below; how far off that left it is the best evidence of what carries over and what doesn't ("Lessons from 2024");
+- 2025: 203 events, 29,610 alliance-matches, plus Chief Delphi (`src/games/2025-reefscape/CALIBRATION.md`, ADR 0014). The 2025 blind build used the 2023 tiers and the 2024 lessons ("Lessons from 2025").
 
 A new season's blind build starts from these numbers. They describe how real drive teams and robots perform, not how any one game scores, so treat them as **general FRC engineering knowledge**.
 
-**Don't use a season's numbers for a stress test of that season or an earlier one.** The 2023 tiers may inform seasons from 2024 on, the 2024 lessons seasons from 2025 on (including 2027). Never look up the new season's own matches (ADR 0004).
+**Don't use a season's numbers for a stress test of that season or an earlier one.** The 2023 tiers may inform seasons from 2024 on, the 2024 lessons seasons from 2025 on, the 2025 lessons seasons from 2026 on (including 2027). Never look up the new season's own matches (ADR 0004).
 
 ## What a real qualification match looks like
 
@@ -41,6 +42,21 @@ A new season's blind build starts from these numbers. They describe how real dri
 - An alliance scored 2.9 NOTES in auto and 11.5 in teleop, with a ring that needs no orientation and a goal you can shoot from 5 m.
 - Auto was 37 % of the score (2023: 27 %), the endgame 10 % (2023: 22 %). The share depends on the game; the pieces per robot (below) carry over better.
 
+2025 (REEFSCAPE), the same way:
+
+| Event level            | Alliance mean | Auto (no ALGAE) | Teleop CORAL | ALGAE | Endgame (BARGE) |
+| ---------------------- | ------------- | --------------- | ------------ | ----- | --------------- |
+| Week 1                 | 73            | 14              | 40           | 11    | 8               |
+| Week 3                 | 77            | 16              | 43           | 10    | 9               |
+| Week 5                 | 94            | 19              | 52           | 14    | 10              |
+| District championships | 147           | 30              | 81           | 21    | 15              |
+| Championship divisions | 182           | 38              | 95           | 29    | 20              |
+| Whole season           | 96            | 19              | 52           | 14    | 10              |
+
+- Within one event the standard deviation was 33.8 points at a mean of 96: a third of the mean, a third year running.
+- An alliance scored 1.8 CORAL in auto and 13.7 in teleop, plus 2.9 ALGAE: short cycles (station to goal ~3.5 m) and a goal with 30 scoring spots per alliance.
+- Auto was 20 % of the score, the endgame 11 %.
+
 ## Seven tiers of real robots
 
 Rank every robot at every event by its contribution, and cut the ranking into sevenths. One archetype per tier makes the menu's random preset (three different robot types per alliance) play like an average event. The 2023 archetypes map onto the tiers as follows. A new game's archetypes should cover the same spread: one elite all-rounder, a few good specialists, a mid-pack robot, a weak scorer, a rookie robot and a defender.
@@ -68,6 +84,20 @@ The tiers come from least-squares contribution estimates (OPR) per event, so the
 | 3    | 3.5 (0.6)    | 29 %             | 24 %    | 54 %  | 50 %                  | 22 %                     |
 | 2    | 2.3 (0.4)    | 30 %             | 12 %    | 61 %  | 44 %                  | 27 %                     |
 | 1    | 1.1 (0.2)    | 31 %             | 5 %     | 57 %  | 33 %                  | 38 %                     |
+
+2025's tiers, per robot per match (CORAL and ALGAE from per-event contributions; NET includes about 0.3 HUMAN PLAYER ALGAE per robot):
+
+| Tier | Teleop CORAL (L1 / L2 / L3 / L4) | Auto CORAL | PROCESSOR / NET | Deep CAGE | Parks | Leaves the start zone | Neither climbs nor parks |
+| ---- | -------------------------------- | ---------- | --------------- | --------- | ----- | --------------------- | ------------------------ |
+| 7    | 10.0 (1.1 / 2.7 / 3.5 / 2.7)     | 1.90       | 0.59 / 1.52     | 58 %      | 33 %  | 99 %                  | 9 %                      |
+| 6    | 7.0 (0.7 / 1.3 / 2.1 / 2.9)      | 1.03       | 0.53 / 0.71     | 34 %      | 46 %  | 98 %                  | 20 %                     |
+| 5    | 5.3 (0.7 / 0.8 / 1.4 / 2.5)      | 0.59       | 0.48 / 0.59     | 22 %      | 52 %  | 96 %                  | 25 %                     |
+| 4    | 4.1 (0.9 / 0.5 / 1.0 / 1.7)      | 0.36       | 0.47 / 0.48     | 12 %      | 59 %  | 95 %                  | 27 %                     |
+| 3    | 3.0 (1.0 / 0.4 / 0.5 / 1.1)      | 0.23       | 0.35 / 0.38     | 7 %       | 65 %  | 91 %                  | 27 %                     |
+| 2    | 1.9 (0.8 / 0.2 / 0.1 / 0.8)      | 0.14       | 0.16 / 0.27     | 2 %       | 68 %  | 87 %                  | 29 %                     |
+| 1    | 0.7 (0.5 / 0 / 0 / 0.4)          | 0.03       | 0 / 0.14        | 1 %       | 64 %  | 73 %                  | 34 %                     |
+
+The tiers are cut across the whole season, so the top seventh is mostly district-championship and Championship robots, whose alliances filled L4 and moved down to L3 and L2.
 
 ## Settings that produce those tiers
 
@@ -106,6 +136,20 @@ The engine charges the line-up to pickups and placements, not to shots, so a sho
 | 2 (KitBot, loads only at the human player station)   | 10         | 1, 50 %        | 10 s, 12 %                          | 0.78          |
 | 1 (low-resource robot)                               | 26         | 1, 30 %        | 10 s, 5 %                           | 0.75          |
 
+### 2025's fitted settings (a placement game with short cycles and a hanging climb)
+
+| Tier (2025 type)                                      | `alignSec` | `auto` routine (drive forward when it fails) | Deep climb (s, success per try, retried) | `reliability` |
+| ----------------------------------------------------- | ---------- | -------------------------------------------- | ---------------------------------------- | ------------- |
+| 7 (full-REEF elevator: NET, ground intake)            | 2.0        | 3 pieces, 95 % (90 %)                        | 5 s, 45 %                                | 0.97          |
+| 6 (CORAL elevator)                                    | 3.8        | 1, 95 % (90 %)                               | 6 s, 22 %                                | 0.95          |
+| 5 (pivot arm)                                         | 5.5        | 1, 60 % (90 %)                               | 7 s, 12 %                                | 0.92          |
+| 4 (tank-drive elevator)                               | 8          | 1, 36 % (92 %)                               | 8 s, 8 %                                 | 0.90          |
+| 3 (budget elevator)                                   | 11         | 1, 23 % (88 %)                               | 9 s, 7 %                                 | 0.88          |
+| 2 (KitBot 0.6 / Everybot 0.4, loading at the station) | 24 / 18    | 1, 14 % (85 %)                               | none / 10 s, 3 %                         | 0.78 / 0.80   |
+| 1 (low-resource robot)                                | 60         | 1, 3 % (72 %)                                | none                                     | 0.70          |
+
+Per target, the line-up was 0.9× on the trough (the whole face wide) and 1.2× on L4 (`ScoringTarget.alignScale`).
+
 ## Lessons from 2024 (what the 2023 tiers got right and wrong)
 
 The 2024 blind build used the 2023 tiers above and nothing from 2024. Against the real season it scored 0.92 of the real total. The pieces and the scale carried over; the endgame and the strategies didn't.
@@ -125,6 +169,24 @@ The 2024 blind build used the 2023 tiers above and nothing from 2024. Against th
 - **Thresholds change at championship events, every year.** 2023's Sustainability and 2024's MELODY both moved for district championships and the Championship. Play the in-season value, and say so.
 - **Real strategies the manual makes possible will be used.** In 2024 they were passing from the loading side into the scoring area (G414 allowed it), defense at the loading area using a field structure as a choke point, and driving under the opponent's structure until its protected window. Check each one against the rules at kickoff and give the bots a role for it (`feeds`, `defense: 'source'`, `endgamePathZones`).
 
+## Lessons from 2025 (what the 2023 tiers and the 2024 lessons got right and wrong)
+
+The 2025 blind build used the 2023 tiers and the lessons above, nothing from 2025. Against the real season it scored 1.07 of the real total. The scale, the top tier and the endgame carried over; the human player, the autos and the middle tiers' designs didn't.
+
+- **The scale carries over.** Three seasons running, the top tier's drive team plus its mechanisms gave the right piece count (blind: 13.5 pieces a match, real 13.7 CORAL and ALGAE), and the score landed within 10 % of real. The fit moved the top tier's line-up from 2.6 to 2.0 s and the bottom tier's far up (60 s: it barely scores), as in 2024.
+- **Human players are good at big, close targets.** 2025's HUMAN PLAYERS put 86 % of their throws into a 4 ft × 12 ft NET 3.5 m away, from week 1 on. 2024's 8 % was a HIGH NOTE onto a 1.66 in post. Size the hit chance by the target, not by last year's: a big, close goal is 80-90 %, a small, far one under 10 %.
+- **A scoring action that feeds the opponent is avoided.** The PROCESSOR scored 6 but handed the opponents' HUMAN PLAYER 3.5 expected points; 56 % of real alliances never used it, 22 % used it exactly twice, for Coopertition. Value such a target for the bots at its net worth, the opponent's expected points included.
+- **Cooperation bonuses are agreed in pairs.** When both alliances must do something for a shared bonus (2025's Coopertition), real alliances agreed on it in the queue: both met it in 22 % of matches, one in 35 % (12 % of matches in week 1, 60 % at the Championship). 2024's button was pressed far more (60 %): it cost nothing. Fit a match-level agreement plus each alliance alone, not a fixed always-on value.
+- **Every robot drives forward in auto.** When a ranking point needs every robot to leave the starting zone (2025's AUTO RP), real robots left 73-99 % of the time by tier while scoring 0.03-1.9 pieces. Model scoring and leaving separately (`auto.success` and `driveOut`). Robots that score in auto score the high-value goal (2025: L4).
+- **Top-tier autos scored more pieces than 2024's cap advised.** With pieces next to the goal and a human player feeding, the top seventh averaged 1.9 CORAL (3-5 at the very top). A 3-piece cap at 95 % fit; 2-piece caps fit 2024.
+- **Deep or nothing.** With a harder climb worth twice an easier one (12 vs 6), real robots built for the harder one or for none: 1 % of robots hung from the shallow CAGE. Don't give middle tiers the easy climb as a "specialist" option; give them the hard climb at a low success rate. 2024's chain-climb rates fit the deep CAGE tier by tier.
+- **Every tier reaches the top goal.** Real tiers 3-5 put most of their CORAL on L4, the highest level. The blind middle tiers (arms to L3, a trough-and-L2 scorer) couldn't. After 2024's "every tier did every kind of scoring", this is the second season where the middle tiers reached the hardest target: build them as weaker versions of the top design, not as robots that skip it.
+- **Line-ups differ by target.** A wide target (the trough, the face's whole width) took less line-up than a precise one (an L4 BRANCH, 6 ft up). `ScoringTarget.alignScale` 0.9 and 1.2 fit. Combine with the tier's `alignSec`.
+- **Bonus RPs get pushed for only when in reach.** Real teams went for 2025's CORAL RP only with a margin ("a 1.5× factor of safety"), and otherwise scored for points. A `botValue` for set bonuses should switch off when the alliance can't finish it in the time left (2025: 0.2 pieces per second per alliance).
+- **Pieces on structures get knocked off, not scored.** Real robots cleared most REEF ALGAE onto the floor to open the BRANCHES under them, and scored only 2.9 of 9 ALGAE a match. When a piece blocks a goal, give the bots a value for clearing it (`botStationValue`) and let them knock it off (`knockOff`).
+- **Bots must load deliberately from pieces next to goals.** Bots keep their intake up; a pickup zone overlapping a scoring zone hands them pieces they didn't want (the blind 2025 build "processed" ALGAE in auto this way). Use `knockOff` stations (which load only on purpose, `RobotCommand.loadFrom`) for pieces resting on a structure.
+- **Thresholds changed at the Championship again** (2025: CORAL RP 7 per level and BARGE RP 16, from 5 and 14). Three seasons out of three.
+
 ## Bot difficulty
 
 `SKILL[difficulty].align` scales every robot type's `alignSec` for the bots of that difficulty. The factors were fitted so teleop scoring matches real event levels with the same robots:
@@ -136,6 +198,8 @@ The 2024 blind build used the 2023 tiers above and nothing from 2024. Against th
 Auto and endgame come from the robot types, so a whole easy match still scores a little above week 1 (72 vs 66), and a hard one below a district championship (109 vs 121). Those events had worse and better robots, not only drivers.
 
 The same factors held for 2024 without refitting. Easy teleop was 16.3 vs week 1's 19.3 (total 40 vs 38), and hard teleop 39.5 vs 39.0 at district championships (total 63 vs 72).
+
+And for 2025: easy teleop CORAL 30 vs week 1's 40 (total 68 vs 73), hard 90 vs 81 at district championships (total 157 vs 147), with hard netting too many ALGAE (37 points vs 21): when every line-up is short, the planner's ALGAE cycles beat CORAL cycles.
 
 ## Strategy hints that mattered
 
@@ -149,6 +213,6 @@ Run `npm run sim -- --game <id> --random --matches 200`, and `--archetypes <id>,
 
 - teleop pieces per robot type with the tier table, after scaling for the new game's cycle (field length, precision);
 - the share of auto points (2023: 27 % of the score) and endgame points (22 %);
-- bonus-RP rates against the designers' intent. 2023's real rates were Sustainability 24 % and Activation 57 % across the season, and 14 % / 52 % at in-season events. 2024's were MELODY 39 % (33 % in-season) and ENSEMBLE 18 % (7 % earned on the STAGE in-season).
+- bonus-RP rates against the designers' intent. 2023's real rates were Sustainability 24 % and Activation 57 % across the season, and 14 % / 52 % at in-season events. 2024's were MELODY 39 % (33 % in-season) and ENSEMBLE 18 % (7 % earned on the STAGE in-season). 2025's were AUTO 65 % (59 % in-season), CORAL 18 % (11 %) and BARGE 47 % (42 %).
 
 Report the gaps in `SOURCES.md`. The blind build still never looks at the new season's matches.

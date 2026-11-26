@@ -42,9 +42,9 @@ describe('calibration helpers', () => {
     const b = { autoPoints: 12, teleopPoints: 40, foulPoints: 5 };
     expect(num(b, 'missing')).toBe(0);
     const [total, auto, teleop] = DEFAULT_METRICS;
-    expect(total!.real(b, 57)).toBe(52);
-    expect(total!.sim(fakeSide())).toBe(94);
-    expect(auto!.real(b, 57)).toBe(12);
-    expect(teleop!.sim(fakeSide())).toBe(74);
+    expect(total!.real(b, 57, {})).toBe(52);
+    expect(total!.sim(fakeSide(), fakeSide())).toBe(94);
+    expect(auto!.real(b, 57, {})).toBe(12);
+    expect(teleop!.sim(fakeSide(), fakeSide())).toBe(74);
   });
 });

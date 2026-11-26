@@ -107,11 +107,16 @@ async function main() {
     const r: number[] = [];
     for (const match of real) {
       for (const side of ['red', 'blue'] as const) {
-        const v = m.real(match.score_breakdown![side], match.alliances[side].score);
+        const opp = side === 'red' ? 'blue' : 'red';
+        const v = m.real(
+          match.score_breakdown![side],
+          match.alliances[side].score,
+          match.score_breakdown![opp],
+        );
         if (v !== null && Number.isFinite(v)) r.push(v);
       }
     }
-    const s = results.flatMap((res) => [m.sim(res.blue), m.sim(res.red)]);
+    const s = results.flatMap((res) => [m.sim(res.blue, res.red), m.sim(res.red, res.blue)]);
     return { name: m.name, real: stats(r), sim: stats(s) };
   });
 
