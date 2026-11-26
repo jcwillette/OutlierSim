@@ -126,6 +126,7 @@ const stage: FieldElement[] = [
     shape: { kind: 'hull', vertices: coreHex(CORE_BOTTOM, CORE_TOP) },
     position: { x: STAGE_C.x, y: STAGE_C.y, z: 0 },
     nav: 'none',
+    clearance: CORE_BOTTOM,
     color: '#9aa3ad',
     opacity: 0.55,
     source: M(27, '5.5 core suspended 2 ft 4¼ in up, 2 ft 3⅞ in at the gussets (0.71 m clearance)'),
@@ -404,8 +405,13 @@ const shooter = (
     reloadSec: number;
     maxRange: number;
     pitchRangeDeg: [number, number];
+    turret?: boolean;
+    passRange?: number;
   },
 ) => ({ pieceTypes: NOTE, height: frameHeight + 0.2, ...s });
+
+/** Calibrated against the real 2024 season (CALIBRATION.md). */
+const REAL = (what: string) => `CALIBRATION.md (real 2024 season): ${what}`;
 
 export const definition: GameDefinition = {
   id: '2024-crescendo',
@@ -445,6 +451,15 @@ export const definition: GameDefinition = {
         side: 'blue',
         region: rect(0, W - AMP_ZONE_DEPTH, AMP_ZONE_LEN, W),
         source: M(24, 'AMP ZONE 10 ft 10 in by 1 ft 5¾ in'),
+      },
+      {
+        // The WING line (Fig 5-5): G414 forbids passing into a WING from the opponent's WING.
+        id: 'wing',
+        name: 'WING',
+        side: 'blue',
+        region: rect(0, 0, WING_X, W),
+        visible: false,
+        source: M(25, 'WING: the area between the ALLIANCE WALL and the WING line'),
       },
       {
         id: 'source-zone',
@@ -662,16 +677,18 @@ export const definition: GameDefinition = {
     },
     source: M(49, 'Table 6-3 FOUL 2, TECH FOUL 5'),
   },
-  // One robot type per seventh of real robots, best to worst. Mechanisms and drivetrains are
-  // engineering estimates from the kickoff manual (R103 125 lb, R104 120 in frame perimeter, R502
-  // 4 drive motors, the 0.71 m STAGE clearance); drive-team line-ups, autos, endgame success and
-  // reliability start from the 2023-calibrated tiers (robot-baselines.md). See SOURCES.md.
+  // Robot types as real 2024 robots were built, one tier per seventh of real robots (best to worst,
+  // by component OPR per event; CALIBRATION.md). The top seventh comes in two builds, dealt in the
+  // proportion they appeared: short robots that drive under the STAGE, and full-size ones that can't.
+  // Mechanisms and drivetrains are engineering estimates (R103 125 lb, R104 120 in frame perimeter,
+  // R502 4 drive motors, the 0.71 m STAGE clearance); drive-team line-ups, autos, climbs and
+  // reliability are fitted to the real season, tier by tier.
   archetypes: [
     {
       id: 'allround',
       name: 'Under-stage all-rounder',
       description:
-        'A top-seventh robot: short, fast swerve with an under-bumper intake and a pivoting shooter that scores the SPEAKER from anywhere in the WING. Places in the AMP and the TRAP, climbs quickly, runs a 4-NOTE auto.',
+        'A top-seventh robot built to fit under the STAGE: swerve, an under-bumper intake, a pivoting shooter that scores from the PODIUM and the WING line, lobs NOTES to partners, scores the AMP, climbs and sometimes scores a TRAP.',
       frame: { length: 0.84, width: 0.84, height: 0.62 },
       mass: onFieldMass(125),
       drive: driveFor(swerve(MOTORS.krakenX60, GEARINGS.mk4L3, 125), 9),
@@ -681,23 +698,55 @@ export const definition: GameDefinition = {
         exitSpeed: 14,
         spreadDeg: 1.0,
         reloadSec: 0.3,
-        maxRange: 4.8,
+        maxRange: 5.5,
         pitchRangeDeg: [18, 66],
+        passRange: 11,
       }),
       place: { amp: 0.6, trap: 3 },
-      alignSec: 2.6,
-      auto: { pieces: 4, success: 0.85 },
+      alignSec: 0.5,
+      auto: { pieces: 2, success: 0.95 },
       endgame: { onstage: 5 },
-      endgameSuccess: { onstage: 0.55 },
+      endgameSuccess: { onstage: 0.4 },
       reliability: 0.97,
-      source:
-        'mechanism: fits under the 0.71 m STAGE (p.27); ground intake of a ring needs no orientation; 4 Kraken X60 on MK4i L3, 125 lb (R103). Drive team, auto, climb and reliability from the top tier of robot-baselines.md',
+      dealWeight: 0.6,
+      source: `mechanism: fits under the 0.71 m STAGE (p.27); 4 Kraken X60 on MK4i L3, 125 lb (R103). ${REAL('tier 7: line-up, auto, climb, TRAP use')}`,
+    },
+    {
+      id: 'fullsize',
+      name: 'Full-size turret shooter',
+      description:
+        'The other top-seventh build: a tall robot (elevator or turret) that shoots from anywhere in the WING without turning and lobs NOTES across the field, but is too tall for the STAGE, so it drives around it. Scores the AMP and climbs; no TRAP.',
+      frame: { length: 0.84, width: 0.84, height: 1.0 },
+      mass: onFieldMass(125),
+      drive: driveFor(
+        swerve(MOTORS.krakenX60, GEARINGS.mk4L3, 125, { tipping: { cgHeight: 0.42, halfWheelbase: 0.29 } }),
+        8,
+      ),
+      capacity: { note: 1 },
+      intake: { pieceTypes: NOTE, timeSec: 0.25, reach: 0.2, maxHeight: 0.3 },
+      shooter: shooter(1.0, {
+        exitSpeed: 15,
+        spreadDeg: 1.0,
+        reloadSec: 0.3,
+        maxRange: 6,
+        pitchRangeDeg: [15, 66],
+        turret: true,
+        passRange: 12,
+      }),
+      place: { amp: 0.8 },
+      alignSec: 1.0,
+      auto: { pieces: 2, success: 0.95 },
+      endgame: { onstage: 6 },
+      endgameSuccess: { onstage: 0.45 },
+      reliability: 0.97,
+      dealWeight: 0.4,
+      source: `mechanism: over 0.71 m tall, so the STAGE core (p.27) blocks it; turret shooter; 4 Kraken X60 on MK4i L3. ${REAL('tier 7, as the under-stage all-rounder')}`,
     },
     {
       id: 'shooter',
-      name: 'Speaker shooter',
+      name: 'Pivot shooter',
       description:
-        'A second-best robot: swerve with a ground intake and a shooter that scores the SPEAKER from mid-range. No AMP or TRAP mechanism; climbs.',
+        'A second-seventh robot: swerve, a ground intake and a pivoting shooter that scores the SPEAKER from the PODIUM, also scores the AMP and climbs. Can lob a NOTE to a partner.',
       frame: { length: 0.84, width: 0.84, height: 0.6 },
       mass: onFieldMass(120),
       drive: driveFor(swerve(MOTORS.falcon500, GEARINGS.mk4L2, 120), 8),
@@ -707,22 +756,23 @@ export const definition: GameDefinition = {
         exitSpeed: 13,
         spreadDeg: 1.5,
         reloadSec: 0.4,
-        maxRange: 3.8,
+        maxRange: 4,
         pitchRangeDeg: [20, 66],
+        passRange: 9,
       }),
-      alignSec: 4.6,
-      auto: { pieces: 2, success: 0.85 },
+      place: { amp: 0.8 },
+      alignSec: 5.0,
+      auto: { pieces: 2, success: 0.8 },
       endgame: { onstage: 7 },
-      endgameSuccess: { onstage: 0.5 },
+      endgameSuccess: { onstage: 0.32 },
       reliability: 0.95,
-      source:
-        'mechanism: fixed-speed flywheel with an adjustable hood; Falcon 500 on MK4i L2, 120 lb. Drive team, auto, climb and reliability from tier 6 of robot-baselines.md',
+      source: `mechanism: hood or pivot shooter, Falcon 500 on MK4i L2, 120 lb; every real tier scored ~30 % of its teleop NOTES in the AMP. ${REAL('tier 6')}`,
     },
     {
       id: 'ampbot',
-      name: 'Amp and subwoofer scorer',
+      name: 'AMP and SUBWOOFER scorer',
       description:
-        'An above-average robot: quick swerve with a ground intake, a fast AMP placer and a simple shooter that scores the SPEAKER only from against the SUBWOOFER. Climbs.',
+        'A third-seventh robot: one roller path feeds the AMP or a fixed-angle shot from against the SUBWOOFER; climbs.',
       frame: { length: 0.8, width: 0.8, height: 0.55 },
       mass: onFieldMass(110),
       drive: driveFor(swerve(MOTORS.neo, GEARINGS.maxSwerveHigh, 110), 9),
@@ -736,38 +786,43 @@ export const definition: GameDefinition = {
         pitchRangeDeg: [52, 68],
       }),
       place: { amp: 0.5 },
-      alignSec: 8.9,
-      auto: { pieces: 2, success: 0.85 },
+      alignSec: 6.0,
+      auto: { pieces: 3, success: 0.74 },
       endgame: { onstage: 6 },
-      endgameSuccess: { onstage: 0.45 },
+      endgameSuccess: { onstage: 0.25 },
       reliability: 0.92,
-      source:
-        'mechanism: one roller path feeds the AMP pocket (2 ft 2 in up, p.25) and a fixed-angle SUBWOOFER shot; NEO MAXSwerve 14T, 110 lb. Drive team, auto, climb and reliability from tier 5 of robot-baselines.md',
+      source: `mechanism: one roller path to the AMP pocket (2 ft 2 in up, p.25) and a fixed SUBWOOFER shot; NEO MAXSwerve 14T, 110 lb. ${REAL('tier 5')}`,
     },
     {
-      id: 'stagebot',
-      name: 'Stage specialist',
+      id: 'tank',
+      name: 'Tank-drive shooter',
       description:
-        'A mid-pack robot: light swerve built for the STAGE: a fast, reliable climb and a TRAP arm. Scores NOTES only in the AMP, slowly.',
-      frame: { length: 0.8, width: 0.8, height: 0.5 },
-      mass: onFieldMass(105),
-      drive: driveFor(swerve(MOTORS.neo, GEARINGS.mk4L2, 105), 9),
+        'A middle-seventh robot on a tank (West Coast) drive: a ground intake, a fixed shooter for shots near the SUBWOOFER, scores the AMP, sometimes climbs.',
+      frame: { length: 0.86, width: 0.76, height: 0.6 },
+      mass: onFieldMass(120),
+      drive: driveFor(tank(MOTORS.falcon500, 4, GEARINGS.tank845, 120), 7),
       capacity: { note: 1 },
-      intake: { pieceTypes: NOTE, timeSec: 0.4, reach: 0.2, maxHeight: 0.3 },
-      place: { amp: 0.8, trap: 2.5 },
-      alignSec: 13.6,
-      auto: { pieces: 1, success: 0.8 },
-      endgame: { onstage: 4 },
-      endgameSuccess: { onstage: 0.45 },
+      intake: { pieceTypes: NOTE, timeSec: 0.35, reach: 0.2, maxHeight: 0.3 },
+      shooter: shooter(0.6, {
+        exitSpeed: 9,
+        spreadDeg: 2.5,
+        reloadSec: 0.5,
+        maxRange: 2.6,
+        pitchRangeDeg: [45, 66],
+      }),
+      place: { amp: 0.8 },
+      alignSec: 10,
+      auto: { pieces: 2, success: 0.55 },
+      endgame: { onstage: 7 },
+      endgameSuccess: { onstage: 0.22 },
       reliability: 0.9,
-      source:
-        'mechanism: hooks on the chain (lowest 2 ft 4¼ in, p.27) and an arm to the TRAP (4 ft 8½ in up, p.28) once ONSTAGE; NEO MK4i L2, 105 lb. Drive team, auto, climb and reliability from tier 4 (the endgame specialist) of robot-baselines.md',
+      source: `mechanism: West Coast drive, 4 Falcon 500 (R502) at 8.45:1 on 6 in wheels, 120 lb; tank stayed competitive in 2024 (Chief Delphi, "Competitive Tank Drive in Crescendo Examples"). ${REAL('tier 4')}`,
     },
     {
       id: 'midbot',
-      name: 'Subwoofer shooter',
+      name: 'SUBWOOFER shooter',
       description:
-        'A below-average robot: swerve with a slow intake and a fixed shooter that scores the SPEAKER from close to the SUBWOOFER. Climbs, sometimes.',
+        'A fifth-seventh robot: swerve and a fixed-angle shooter that scores from against the SUBWOOFER, scores the AMP; its climber works now and then.',
       frame: { length: 0.84, width: 0.84, height: 0.6 },
       mass: onFieldMass(118),
       drive: driveFor(swerve(MOTORS.neo, GEARINGS.mk4L2, 118), 7),
@@ -780,43 +835,69 @@ export const definition: GameDefinition = {
         maxRange: 2.4,
         pitchRangeDeg: [45, 68],
       }),
-      alignSec: 12.1,
-      auto: { pieces: 1, success: 0.65 },
+      place: { amp: 1.0 },
+      alignSec: 11,
+      auto: { pieces: 2, success: 0.5 },
       endgame: { onstage: 8 },
-      endgameSuccess: { onstage: 0.3 },
+      endgameSuccess: { onstage: 0.13 },
       reliability: 0.88,
-      source:
-        'mechanism: fixed-angle shooter; NEO MK4i L2, 118 lb. Drive team, auto, climb and reliability from tier 3 of robot-baselines.md',
+      source: `mechanism: fixed-angle shooter; NEO MK4i L2, 118 lb; SUBWOOFER-only shooters were common (Chief Delphi, "Source Choke Point" thread). ${REAL('tier 3')}`,
     },
     {
       id: 'kitbot',
-      name: 'Kitbot',
+      name: 'KitBot',
       description:
-        'A second-to-bottom robot: Kit of Parts tank drive with a roller that takes NOTES from the SOURCE or the floor and flings them into the SPEAKER from against the SUBWOOFER, or places them in the AMP. No climber: parks.',
+        'The Kit of Parts robot as most rookies built it: a tank drive and a launcher that shoots from against the SUBWOOFER and loads only at the SOURCE (no floor intake); scores the AMP; a few added a climber.',
       frame: { length: 0.86, width: 0.76, height: 0.5 },
       mass: onFieldMass(90),
       drive: driveFor(tank(MOTORS.cim, 4, GEARINGS.tank1071, 90, { traction: 1.0 }), 5),
       capacity: { note: 1 },
-      intake: { pieceTypes: NOTE, timeSec: 0.6, maxHeight: 0.3 },
+      intake: { pieceTypes: NOTE, timeSec: 0.6, maxHeight: 0.3, floor: false },
       shooter: shooter(0.5, {
         exitSpeed: 7,
-        spreadDeg: 4,
+        spreadDeg: 2.5,
         reloadSec: 0.8,
         maxRange: 2.0,
         pitchRangeDeg: [55, 68],
       }),
       place: { amp: 1.2 },
-      alignSec: 16.8,
-      auto: { pieces: 1, success: 0.45 },
+      alignSec: 10,
+      auto: { pieces: 1, success: 0.5 },
+      endgame: { onstage: 10 },
+      endgameSuccess: { onstage: 0.12 },
       reliability: 0.78,
-      source:
-        'mechanism: Kit of Parts tank, 4 CIM, 10.71:1, 6 in wheels, 90 lb; one roller for the SUBWOOFER and the AMP. Drive team, auto and reliability from tier 2 of robot-baselines.md',
+      source: `mechanism: 2024 Kit of Parts launcher (loads through the launcher at the SOURCE), 4 CIM, 10.71:1, 6 in wheels, 90 lb. ${REAL('tier 2')}`,
+    },
+    {
+      id: 'starter',
+      name: 'Low-resource robot',
+      description:
+        'A bottom-seventh robot: a heavy tank drive and a simple roller that scores the AMP or from against the SUBWOOFER, often breaks down, rarely climbs. Plays defense when given the job.',
+      frame: { length: 0.93, width: 0.93, height: 0.45 },
+      mass: onFieldMass(115, { bumpersLb: 15 }),
+      drive: driveFor(tank(MOTORS.cim, 4, GEARINGS.tank1071, 115, { bumpersLb: 15, traction: 1.2 }), 5),
+      capacity: { note: 1 },
+      intake: { pieceTypes: NOTE, timeSec: 0.5, maxHeight: 0.3 },
+      shooter: shooter(0.45, {
+        exitSpeed: 7,
+        spreadDeg: 5,
+        reloadSec: 0.8,
+        maxRange: 2.0,
+        pitchRangeDeg: [55, 68],
+      }),
+      place: { amp: 1.2 },
+      alignSec: 26,
+      auto: { pieces: 1, success: 0.3 },
+      endgame: { onstage: 10 },
+      endgameSuccess: { onstage: 0.05 },
+      reliability: 0.75,
+      source: `mechanism: KoP-style tank, 4 CIM, simple roller; the real bottom tier still scored ~1 NOTE a match. ${REAL('tier 1')}`,
     },
     {
       id: 'defender',
       name: 'Defender',
       description:
-        'A bottom-seventh scorer: heavy, wide tank with high-grip treads. Plays defense in mid-field by default, now and then flings a NOTE in from the SUBWOOFER, and parks.',
+        'A dedicated defense robot: low, heavy, high-traction tank drive and a token roller. Never dealt by the random preset (real defense was mostly played by capable robots given the job); pick it, or give any robot the defense role.',
       frame: { length: 0.93, width: 0.93, height: 0.4 },
       mass: onFieldMass(125, { bumpersLb: 15 }),
       drive: driveFor(
@@ -836,8 +917,9 @@ export const definition: GameDefinition = {
       auto: { pieces: 0, success: 0.3 },
       reliability: 0.75,
       defaultRole: 'defense',
+      dealWeight: 0,
       source:
-        'mechanism: max weight (R103) and frame (R104), 4 Falcon 500 (R502 allows 4 drive motors) at 10.71:1 on high-traction tread; G423 keeps it out of the SOURCE and AMP ZONES. Drive team, auto and reliability from the bottom tier of robot-baselines.md',
+        'mechanism: max weight (R103) and frame (R104), 4 Falcon 500 (R502) at 10.71:1 on high-traction tread; G423 keeps it out of the SOURCE and AMP ZONES',
     },
   ],
   defaultArchetype: 'allround',
@@ -851,26 +933,42 @@ export const definition: GameDefinition = {
     {
       id: 'typical',
       name: 'Typical qualification alliance',
-      description: 'One strong all-rounder, a subwoofer shooter and a rookie kitbot.',
+      description: 'One strong all-rounder, a SUBWOOFER shooter and a rookie KitBot.',
       robots: [{ archetype: 'allround' }, { archetype: 'midbot' }, { archetype: 'kitbot' }],
+    },
+    {
+      id: 'double-feed',
+      name: 'Double feed',
+      description:
+        'A playoff tactic from week 6 on: two robots load at the SOURCE and lob every NOTE into the WING, where a full-size turret shooter scores them at close range.',
+      robots: [
+        { archetype: 'fullsize' },
+        { archetype: 'allround', role: 'feeder' },
+        { archetype: 'shooter', role: 'feeder' },
+      ],
+    },
+    {
+      id: 'feed-and-choke',
+      name: 'Feed and choke',
+      description:
+        "One feeder supplies a full-size shooter while the third robot holds the opponents up beside their SOURCE, using the STAGE as a choke point (tall robots can't slip under it).",
+      robots: [
+        { archetype: 'fullsize' },
+        { archetype: 'allround', role: 'feeder' },
+        { archetype: 'shooter', role: 'source-defense' },
+      ],
     },
     {
       id: 'amplify',
       name: 'Amplify',
       description:
-        'An AMP scorer keeps the SPEAKER AMPLIFIED while two shooters cycle into it: 5 points a NOTE.',
-      robots: [{ archetype: 'ampbot' }, { archetype: 'allround' }, { archetype: 'shooter' }],
-    },
-    {
-      id: 'specialists',
-      name: 'Specialists',
-      description: 'Split the jobs: a SPEAKER shooter, an AMP scorer and a robot that owns the STAGE.',
-      robots: [{ archetype: 'shooter' }, { archetype: 'ampbot' }, { archetype: 'stagebot' }],
+        'An AMP scorer keeps the SPEAKER AMPLIFIED while two shooters cycle into it: 5 points a NOTE, up to 4 NOTES a press.',
+      robots: [{ archetype: 'ampbot', role: 'amp' }, { archetype: 'allround' }, { archetype: 'shooter' }],
     },
     {
       id: 'shutdown',
       name: 'Shutdown defense',
-      description: 'Two scorers and a heavy defender slowing the other alliance in mid-field.',
+      description: 'Two scorers and a defender waiting in front of the opponents’ SUBWOOFER.',
       robots: [
         { archetype: 'allround' },
         { archetype: 'shooter' },
@@ -879,34 +977,56 @@ export const definition: GameDefinition = {
       strategy: 'aggressive',
     },
     {
+      id: 'source-choke',
+      name: 'Source choke',
+      description:
+        'Two scorers and a defender at the opponents’ SOURCE, between their STAGE and the wall (the Chief Delphi "Source Choke Point").',
+      robots: [
+        { archetype: 'allround' },
+        { archetype: 'shooter' },
+        { archetype: 'defender', role: 'source-defense' },
+      ],
+    },
+    {
       id: 'ensemble',
       name: 'Ensemble first',
-      description: 'Make sure of the STAGE: three climbers head for the chains early for the ENSEMBLE RP.',
-      robots: [{ archetype: 'stagebot' }, { archetype: 'ampbot' }, { archetype: 'midbot' }],
+      description: 'Three climbers head for the chains early for the ENSEMBLE RP.',
+      robots: [{ archetype: 'shooter' }, { archetype: 'ampbot' }, { archetype: 'tank' }],
       strategy: 'early-endgame',
     },
     {
       id: 'ideal',
-      name: 'Monte Carlo pick',
+      name: 'Monte Carlo pick (qualifications)',
       description:
-        'The best alliance the Monte Carlo search found: three under-stage all-rounders as TRAP specialists, closing out (climbing early once the lead is safe) for the ENSEMBLE RP.',
+        'The most ranking points per match the Monte Carlo search found with the calibrated robots: two under-stage all-rounders as TRAP specialists and a full-size shooter, climbing early once the lead is safe (SOURCES.md, "Alliance composition").',
       robots: [
         { archetype: 'allround', role: 'trap' },
         { archetype: 'allround', role: 'trap' },
-        { archetype: 'allround', role: 'trap' },
+        { archetype: 'fullsize' },
       ],
       strategy: 'close-out',
     },
     {
+      id: 'ideal-playoff',
+      name: 'Monte Carlo pick (playoffs)',
+      description:
+        'The best playoff alliance the search found: a full-size turret shooter, an all-rounder feeding it from the SOURCE, and an all-rounder scoring. It beat three all-rounders 88 % of the time.',
+      robots: [
+        { archetype: 'fullsize' },
+        { archetype: 'allround', role: 'feeder' },
+        { archetype: 'allround' },
+      ],
+    },
+    {
       id: 'rookies',
       name: 'Rookie alliance',
-      description: 'Three kitbots: SUBWOOFER shots, the AMP, parking, and the occasional breakdown.',
+      description:
+        'Three KitBots: SUBWOOFER shots and the AMP from the SOURCE, and the occasional breakdown.',
       robots: [{ archetype: 'kitbot' }, { archetype: 'kitbot' }, { archetype: 'kitbot' }],
     },
   ],
   // Jobs a bot can be given in the lineup menu besides scoring freely and defense. They change what
-  // the bot goes for in TELEOP, never the robot; AUTO routines are unchanged. Measured with
-  // `npm run alliances` (SOURCES.md, "Alliance composition").
+  // the bot goes for in TELEOP, never the robot; AUTO routines are unchanged.
   roles: [
     {
       id: 'amp',
@@ -928,15 +1048,45 @@ export const definition: GameDefinition = {
         'In the last 20 s, a NOTE in a TRAP counts three times what the planner would give it, so it goes for the TRAP before climbing.',
       targetWeights: { 'trap-1': 3, 'trap-2': 3, 'trap-3': 3 },
     },
+    {
+      id: 'feeder',
+      name: 'Feeder',
+      description:
+        "Loads at the SOURCE and lobs each NOTE into the WING for its partners (from outside the opponents' WING, G414), unless it's already close enough to score it. Needs a robot that can pass.",
+      targetWeights: {},
+      feeds: true,
+      source: 'Chief Delphi, "Did the 2 passing bots strategy … break the game?" (East Bay 2024)',
+    },
+    {
+      id: 'source-defense',
+      name: 'SOURCE defense',
+      description:
+        "Plays defense beside the opponents' SOURCE, holding up robots on their way in and out between their STAGE and the wall.",
+      targetWeights: {},
+      defense: 'source',
+      source: 'Chief Delphi, "Effective Crescendo Defense: The Source Choke Point" (March 2024)',
+    },
   ],
+  passing: {
+    // In the WING between the SUBWOOFER and the AMP, where partners pick passed NOTES up.
+    landing: [
+      { x: 2.4, y: 6.6 },
+      { x: 3.6, y: 6.8 },
+    ],
+    notFromOpponent: ['wing'],
+    minDistance: 7,
+    source: M(66, "G414 no NOTE may be launched into or through a WING from the opponent's WING (TELEOP)"),
+  },
   rules,
   botHints: {
     endgameLeadSec: 2,
     defenseShare: 0,
-    // Bots keep defense, and their paths, away from the opponent's SOURCE and AMP ZONES (G423), its
-    // PODIUM (G422) and its STAGE ZONE (G424 protects robots climbing there at any time, and every
-    // robot in the last 20 s). The zones grown by half a robot: the fouls count any part of either.
-    protectedZones: ['bot-source-zone', 'bot-amp-zone', 'podium', 'bot-stage-zone'],
+    // Bots keep defense, and their paths, away from the opponent's SOURCE and AMP ZONES (G423) and
+    // its PODIUM (G422), grown by half a robot: the fouls count any part of either robot. The
+    // opponent's STAGE ZONE (G424 B) only from 5 s before the last 20 s: until then robots drive
+    // under the opponent's STAGE on their way to and from the SOURCE, as real robots did.
+    protectedZones: ['bot-source-zone', 'bot-amp-zone', 'podium'],
+    endgamePathZones: ['bot-stage-zone'],
     endgameProtectedZones: [],
   },
 };

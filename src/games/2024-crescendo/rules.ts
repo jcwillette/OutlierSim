@@ -1,12 +1,13 @@
 import type { Alliance, GameRules, RulesContext } from '../../engine/sim/types.ts';
-import { CHAINS, L, SPEAKER_Y, chainAt } from './layout.ts';
+import { AMP_X, CHAINS, L, SPEAKER_Y, W, chainAt } from './layout.ts';
 
 /**
- * CRESCENDO mechanics the schema can't express (kickoff manual, 6.5.3-6.5.5 and Table 6-2):
+ * CRESCENDO mechanics the schema can't express (manual 6.5.3-6.5.5 and Table 6-2, as played in the
+ * 2024 season: CALIBRATION.md):
  *  - AMPLIFICATION: NOTES through the AMP bank toward AMPLIFICATION (2 at most). With 2 banked the
- *    HUMAN PLAYER presses the AMP button and the SPEAKER is AMPLIFIED for 10 s: 5 points per NOTE
- *    instead of 2. NOTES through the AMP while AMPLIFIED don't bank. The kickoff manual has no
- *    4-NOTE cap (that came with Team Update 01, after the cutoff).
+ *    HUMAN PLAYER presses the AMP button and the SPEAKER is AMPLIFIED for 10 s or 4 SPEAKER NOTES,
+ *    whichever comes first (Team Update 01): 5 points per NOTE instead of 2. NOTES through the AMP
+ *    while AMPLIFIED don't bank. (The blind build played the kickoff text, without the 4-NOTE cap.)
  *  - Coopertition: in the first 45 s of TELEOP a HUMAN PLAYER may spend a banked NOTE on the
  *    Coopertition button. If both alliances do, the MELODY threshold drops from 18 to 15 NOTES.
  *  - TRAPS are open only in the last 20 s (a ROBOT must be ONSTAGE to reach one; see SOURCES.md).
@@ -20,9 +21,10 @@ import { CHAINS, L, SPEAKER_Y, chainAt } from './layout.ts';
  * right now (AUTO or TELEOP, AMPLIFIED with its 10 s countdown), the AMP bank, the Coopertition
  * window's countdown and when the TRAPS open.
  *
- * The HUMAN PLAYERS here are the same for every alliance and robot type: they press AMP as soon as
- * an alliance robot holding a NOTE is within shooting range (or time is running out) and always
- * cooperate. Nothing prefers an alliance or a direction (ADR 0007).
+ * The HUMAN PLAYERS here are the same for every alliance and robot type, and play as real ones did:
+ * they hold a full AMP bank until two robots have a NOTE and one is in range (or the bank has waited
+ * a while, or time is running out), cooperate in about 4 matches in 5, and seldom land a HIGH NOTE.
+ * Nothing prefers an alliance or a direction (ADR 0007).
  */
 
 const ALLIANCES: Alliance[] = ['blue', 'red'];
@@ -34,32 +36,68 @@ export const TRAP_POINTS = { auto: 0, teleop: 5 };
 const TRAPS_OPEN_REMAINING = 20;
 /** AMPLIFICATION length, s (Manual 6.5.3). */
 export const AMPLIFY_SEC = 10;
+/** AMPLIFICATION also ends after this many SPEAKER NOTES (Team Update 01, 9 January 2024). */
+export const AMPLIFY_NOTES = 4;
 /** SPEAKER NOTE points while AMPLIFIED (Table 6-2: 5, over 2 otherwise in TELEOP). */
 const AMPLIFIED_POINTS = 5;
 export const AMPLIFIED_MULTIPLIER = AMPLIFIED_POINTS / SPEAKER_POINTS.teleop;
 /** Coopertition window: the first 45 s of TELEOP (remaining time above 1:30, Manual 6.5.5). */
 const COOP_UNTIL_REMAINING = 90;
 const COOP_SEC = 45;
-/** MELODY: 18 AMP and SPEAKER NOTES, 15 with the Coopertition Bonus (Table 6-2, kickoff). */
+/**
+ * MELODY: 18 AMP and SPEAKER NOTES, 15 with the Coopertition Bonus (Table 6-2), the threshold of
+ * every week 1-6 event. District championships played 21 (18), the Championship 25 (21) (Team
+ * Updates 18 and 21); the sim has no event level, so it plays the in-season value.
+ */
 export const MELODY_NOTES = 18;
 export const MELODY_NOTES_COOP = 15;
 /**
  * Chance one HIGH NOTE thrown from the AMP corner lands on a MICROPHONE (a 1.66 in post 7 ft 4¼ in
- * up, ~5-6 m away). An estimate for a practiced HUMAN PLAYER; no match data used.
+ * up, ~5-6 m away). Real HUMAN PLAYERS hit 0.23 MICROPHONES per alliance per match with 3 throws
+ * (CALIBRATION.md); the blind build guessed 0.25 per throw.
  */
-export const SPOTLIGHT_CHANCE = 0.25;
+export const SPOTLIGHT_CHANCE = 0.04;
+/**
+ * Chance an alliance's HUMAN PLAYER is willing to press Coopertition this match. With an AMP NOTE in
+ * the first 45 s of TELEOP needed too, both alliances cooperated in 60 % of real qualification
+ * matches (44 % in week 1, 94 % at the Championship); the blind build always pressed.
+ */
+export const COOP_WILLING = 0.8;
+/**
+ * A full bank waits at most this long (s) for a second robot with a NOTE before the HUMAN PLAYER
+ * presses for one robot in range: real alliances held the AMPLIFICATION for their shooters.
+ */
+const HOLD_MAX_SEC = 12;
+/**
+ * What bots add to an AMP NOTE that banks toward AMPLIFICATION (`botValue`). Fitted so random
+ * alliances score the real share of NOTES in the AMP (24 %); the blind build used 2.
+ */
+export const AMP_BANK_VALUE = 1.65;
+/** The same for the AMP NOTE that fills the bank (2 NOTES), which makes a press possible. */
+const AMP_FILL_VALUE = 2.8;
 const HIGH_NOTES = 3;
 /** A robot holding a NOTE this close to its SPEAKER (m) is about to shoot: worth AMPLIFYING for. */
 const READY_RANGE = 5.5;
+/** A second robot with a NOTE this close (m) can shoot before an AMPLIFICATION runs out. */
+const COMING_RANGE = 10;
 
 interface AllianceState {
   /** NOTES banked toward AMPLIFICATION / Coopertition (0-2). */
   bank: number;
   /** Match time AMPLIFICATION ends, or 0. */
   ampUntil: number;
+  /** SPEAKER NOTES scored in this AMPLIFICATION (it ends at `AMPLIFY_NOTES`). */
+  ampNotes: number;
+  /** Match time the bank filled (2 NOTES), or -1. */
+  fullSince: number;
   coopPressed: boolean;
+  /** This match's HUMAN PLAYER presses Coopertition if it can (`COOP_WILLING`). */
+  coopWilling: boolean;
 }
 
+/** Each alliance's AMP pocket on the far guardrail (mirror symmetry), and "about to score it" range, m. */
+const AMP_AT = { blue: { x: AMP_X, y: W }, red: { x: L - AMP_X, y: W } };
+const AMP_NEAR = 2.5;
 /** Each alliance's SPEAKER opening (mirror symmetry: same y, opposite ends). */
 const SPEAKER = { blue: { x: 0.3, y: SPEAKER_Y }, red: { x: L - 0.3, y: SPEAKER_Y } };
 
@@ -137,14 +175,10 @@ function humanPlayers(ctx: RulesContext): void {
   const robots = ctx.robots();
   for (const a of ALLIANCES) {
     const st = s[a];
-    if (st.ampUntil && st.ampUntil <= ctx.time) {
-      st.ampUntil = 0;
-      ctx.setTargetMultiplier(`speaker.${a}`, 1);
-      ctx.announce(`${a.toUpperCase()} AMPLIFICATION over: SPEAKER back to ${pts(SPEAKER_POINTS.teleop)}`, a);
-    }
+    if (st.ampUntil && st.ampUntil <= ctx.time) endAmplification(ctx, a);
     if (ctx.phase !== 'teleop') continue;
     // Coopertition first: one banked NOTE, in the first 45 s of TELEOP.
-    if (!st.coopPressed && st.bank >= 1 && coopWindow(ctx)) {
+    if (st.coopWilling && !st.coopPressed && st.bank >= 1 && coopWindow(ctx)) {
       st.coopPressed = true;
       st.bank -= 1;
       ctx.announce(`${a.toUpperCase()} pressed the Coopertition button`, a);
@@ -159,15 +193,24 @@ function humanPlayers(ctx: RulesContext): void {
       }
       continue;
     }
-    if (st.ampUntil || st.bank < 2) continue;
-    const ready = robots.some(
-      (r) =>
-        r.alliance === a &&
-        r.held.length > 0 &&
-        Math.hypot(r.x - SPEAKER[a].x, r.y - SPEAKER[a].y) < READY_RANGE,
-    );
+    if (st.ampUntil || st.bank < 2) {
+      st.fullSince = -1;
+      continue;
+    }
+    if (st.fullSince < 0) st.fullSince = ctx.time;
+    // Hold the press until two robots have a NOTE and one of them is in range, or the bank has
+    // waited long enough for one robot in range, or time is running out.
+    const near = (r: { x: number; y: number }, d: number) =>
+      Math.hypot(r.x - SPEAKER[a].x, r.y - SPEAKER[a].y) < d;
+    const holding = robots.filter((r) => r.alliance === a && r.held.length > 0);
+    const inRange = holding.some((r) => near(r, READY_RANGE));
+    const coming = holding.filter((r) => near(r, COMING_RANGE)).length;
+    const waited = ctx.time - st.fullSince >= HOLD_MAX_SEC;
+    const ready = inRange && (coming >= 2 || waited);
     if (!ready && ctx.remaining > AMPLIFY_SEC + 2) continue;
     st.bank = 0;
+    st.ampNotes = 0;
+    st.fullSince = -1;
     st.ampUntil = ctx.time + AMPLIFY_SEC;
     ctx.setTargetMultiplier(`speaker.${a}`, AMPLIFIED_MULTIPLIER);
     ctx.announce(
@@ -177,12 +220,23 @@ function humanPlayers(ctx: RulesContext): void {
   }
 }
 
+function endAmplification(ctx: RulesContext, a: Alliance): void {
+  state(ctx)[a].ampUntil = 0;
+  ctx.setTargetMultiplier(`speaker.${a}`, 1);
+  ctx.announce(`${a.toUpperCase()} AMPLIFICATION over: SPEAKER back to ${pts(SPEAKER_POINTS.teleop)}`, a);
+}
+
 export const rules: GameRules = {
   onInit(ctx) {
-    ctx.vars.amp = {
-      blue: { bank: 0, ampUntil: 0, coopPressed: false },
-      red: { bank: 0, ampUntil: 0, coopPressed: false },
-    } satisfies Record<Alliance, AllianceState>;
+    const fresh = (): AllianceState => ({
+      bank: 0,
+      ampUntil: 0,
+      ampNotes: 0,
+      fullSince: -1,
+      coopPressed: false,
+      coopWilling: ctx.random() < COOP_WILLING,
+    });
+    ctx.vars.amp = { blue: fresh(), red: fresh() } satisfies Record<Alliance, AllianceState>;
     for (const a of ALLIANCES) {
       for (let i = 1; i <= CHAINS.length; i++) ctx.setTargetEnabled(`trap-${i}.${a}`, false);
     }
@@ -200,8 +254,14 @@ export const rules: GameRules = {
 
   onScore(ctx, ev) {
     const a = ev.alliance;
-    if (ev.targetId !== `amp.${a}`) return;
     const st = state(ctx)[a];
+    if (ev.targetId === `speaker.${a}` && amplified(ctx, a)) {
+      // Team Update 01: the 4th AMPLIFIED NOTE ends the AMPLIFICATION.
+      if (++st.ampNotes >= AMPLIFY_NOTES) endAmplification(ctx, a);
+      showStatus(ctx);
+      return;
+    }
+    if (ev.targetId !== `amp.${a}`) return;
     if (!amplified(ctx, a) && st.bank < 2) st.bank++;
     showStatus(ctx);
   },
@@ -219,17 +279,45 @@ export const rules: GameRules = {
 
   /**
    * What drive teams aim for (bots only; never scored): a SPEAKER NOTE is worth 3 more while
-   * AMPLIFIED, and an AMP NOTE that banks toward AMPLIFICATION about 2 more (half of one press's
-   * gain, which usually AMPLIFIES one or two NOTES), plus 1.5 for the Coopertition NOTE early in
-   * TELEOP.
+   * AMPLIFIED, and in TELEOP an AMP NOTE that banks toward AMPLIFICATION about 2 more (half of one
+   * press's gain), plus 1.5 for the Coopertition NOTE early in TELEOP, and half a point less when it
+   * can't bank. In AUTO the AMP is worth only its 2 points: real autos shot the SPEAKER (0.03 AUTO AMP
+   * NOTES per alliance per match).
    */
   botValue(ctx, alliance, targetId) {
     const st = state(ctx)[alliance];
     if (targetId === `speaker.${alliance}`) return ctx.phase === 'teleop' && amplified(ctx, alliance) ? 3 : 0;
-    if (targetId !== `amp.${alliance}`) return 0;
-    if (amplified(ctx, alliance) || st.bank >= 2) return 0;
-    const coop = !st.coopPressed && st.bank < 1 && (ctx.phase === 'auto' || coopWindow(ctx)) ? 1.5 : 0;
-    return 2 + coop;
+    if (targetId !== `amp.${alliance}` || ctx.phase !== 'teleop') return 0;
+    // A NOTE through the AMP that can't bank (bank full, or AMPLIFIED) is a 1-point NOTE: drive teams
+    // shot those into the SPEAKER instead.
+    if (amplified(ctx, alliance) || st.bank >= 2) return -0.5;
+    const coop = st.coopWilling && !st.coopPressed && st.bank < 1 && coopWindow(ctx) ? 1.5 : 0;
+    // The NOTE that fills the bank is the one that lets the HUMAN PLAYER press.
+    return (st.bank === 1 ? AMP_FILL_VALUE : AMP_BANK_VALUE) + coop;
+  },
+
+  /**
+   * Bots hold a ready SPEAKER shot while the AMP bank is full and the HUMAN PLAYER is waiting to
+   * press (or a partner is about to fill it), as real drive teams did: the HUMAN PLAYER presses once
+   * two robots are ready.
+   */
+  botHold(ctx, alliance, targetId) {
+    if (targetId !== `speaker.${alliance}` || ctx.phase !== 'teleop') return false;
+    const st = state(ctx)[alliance];
+    if (amplified(ctx, alliance) || ctx.remaining <= AMPLIFY_SEC + 2) return false;
+    if (st.bank >= 2) return true;
+    // One NOTE banked and a partner about to put the second through the AMP: wait for it too.
+    return (
+      st.bank === 1 &&
+      ctx
+        .robots()
+        .some(
+          (r) =>
+            r.alliance === alliance &&
+            r.held.length > 0 &&
+            Math.hypot(r.x - AMP_AT[alliance].x, r.y - AMP_AT[alliance].y) < AMP_NEAR,
+        )
+    );
   },
 
   onMatchEnd(ctx) {

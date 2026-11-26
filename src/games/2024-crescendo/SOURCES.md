@@ -2,6 +2,8 @@
 
 **Built blind from the kickoff materials only** (owner's instruction for this stress test: nothing made after kickoff, 6 January 2024). No match results, scouting data, event statistics, real-match video or remembered results were used. The only reference model was this repository's own 2023 build and the skill's season-to-season robot baselines (`robot-baselines.md`, calibrated on 2023, general knowledge for seasons from 2024 on).
 
+**Then calibrated to the real 2024 season** at the owner's request (26 November 2026, ADR 0012): the rules as played, robot types as real teams built them, fitted tier by tier to every official 2024 qualification match on The Blue Alliance, and the strategies discussed on Chief Delphi (passing, SOURCE defense, timed AMPLIFICATION). **`CALIBRATION.md` is the record of that: every discrepancy, change and lesson.** This file keeps the manual's numbers and the blind build's reasoning; sections the calibration replaced say so.
+
 This is an unofficial simulation for team practice. **Confidence**: high (stated), med (derived from drawings), low (estimated or assumed). "p.N" = manual page of the copy below.
 
 ## What was read, and how the kickoff manual was recovered
@@ -12,11 +14,13 @@ This is an unofficial simulation for team practice. **Confidence**: high (stated
 - **Reveal video**: not used. YouTube refuses downloads from the cloud container. If the owner uploads it, the visual check can be repeated against it.
 - **Archive**: keep a copy of the kickoff PDF and the field drawings at the next kickoff (`work/` is git-ignored).
 
-### Post-kickoff changes the sim deliberately does not play
+### Post-kickoff changes
+
+The blind build played the kickoff values below. Since the calibration (ADR 0012) the sim plays **Team Update 01's 4-NOTE cap**; the other rows are unchanged (MELODY keeps the in-season 18 / 15: district championships and the Championship aren't modeled as event levels).
 
 | Team Update  | Change after kickoff                                                                                                                | Sim (kickoff)                                                                                                                       |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| TU01 (9 Jan) | AMPLIFICATION also ends after 4 SPEAKER NOTES ("meant to be in the original release")                                               | **10 s, no NOTE cap**                                                                                                               |
+| TU01 (9 Jan) | AMPLIFICATION also ends after 4 SPEAKER NOTES ("meant to be in the original release")                                               | Blind: 10 s, no NOTE cap. **Now: 10 s or 4 NOTES**                                                                                  |
 | TU01         | Field width "~802 cm" corrected to "~821 cm"; SPEAKER depth "16 in" to "1 ft 6 in"; G413 "~132 cm" / "~40 cm"                       | The inch figures, which the kickoff text and Fig 6-2 already agree with (26 ft 11¼ in, 1 ft 6 in, 4 ft, 1 ft)                       |
 | TU02         | Banking capped at 2 NOTES for AMPLIFICATION / Coopertition; G424 A reworded; ONSTAGE contact list                                   | The kickoff text: "another 2 NOTES after AMPLIFICATION ends", which the sim plays as a bank of at most 2; G424 A not modeled anyway |
 | TU14         | SPEAKER NOTES assessed for 5 s (was 3 s) after TELEOP                                                                               | Not modeled (shots in the air at the buzzer count when they land, as the engine does for any game)                                  |
@@ -68,232 +72,178 @@ Bots treat the opponent's SOURCE ZONE, AMP ZONE, PODIUM and STAGE ZONE as protec
 
 ## Simplifications
 
+- **Passing** (since ADR 0012): robots with a `passRange` lob a NOTE onto a landing spot in their WING (between the SUBWOOFER and the AMP) for a partner. The engine refuses passes from the opponent's WING (G414), so G414 is never broken rather than called. Bots pass only as the `feeder` role.
 - **Shooting**: the SPEAKER is a sensor volume under a solid hood, between the top of the wall and the hood's front edge. Shooters take the fastest shot they can (lowest hood angle) that is still rising at the middle of the opening, as the opening faces down and out (engine: `ScoringTarget.arc: 'rising'`, new for this game). Misses come from each robot type's aim spread; flat long shots miss more, because the opening seen along a flat path is only ~12 cm tall. NOTES are launched from the robot's center, above its frame.
-- **G404 / G414** (no shots from outside the WING in AUTO, no full-court passes) aren't called. Every shooter's range keeps its shots inside its own WING, and bots never pass NOTES.
+- **G404** (no shots from outside the WING in AUTO) isn't called: every shooter's range keeps its shots inside its own WING. G414 (no passes from the opponent's WING): see Passing.
 - **G405** (AUTO center-line crossing), G403 / G409's 2-NOTE rules (robots hold 1), G406-G408, G416 (chain length), G417-G419, G421, G425-G430 aren't modeled.
 - **G424 A** (contact with an opponent robot that is off the carpet in its STAGE ZONE, at any time) isn't called. Climbs happen in the last 20 s, where G424 B covers them, and bots stay out of the opponent's STAGE ZONE anyway.
 - **Climbing** is a timed action with a success chance (`endgameSuccess`) on one of six chain halves (two robots per chain, so HARMONY is possible). The robot doesn't rise. A failed climb earns nothing and the robot may try again; a robot left in the STAGE ZONE then PARKS. Bots don't plan HARMONY on purpose: it happens when two of them take the two halves of one chain.
 - **TRAP**: a placement target per chain, open only in the last 20 s (a robot must be ONSTAGE to reach a TRAP 4 ft 8½ in up; G413 keeps a robot standing on the carpet under 4 ft). Its place time stands for scoring from the chain, and the climb is a separate action, so a TRAP robot climbs after placing instead of before.
-- **SPOTLIT**: the HUMAN PLAYER throws the 3 HIGH NOTES at the MICROPHONES over the most ONSTAGE robots first; each lands with a 25 % chance (an estimate for a practiced player tossing a ring onto a 1.66 in post 7 ft up from 5-6 m). Every ONSTAGE robot under a spotlit MICROPHONE gets +1. Decided at the end of the match.
-- **HUMAN PLAYERS** are the same for every alliance: they press AMP once a robot of theirs holding a NOTE is within 5.5 m of the SPEAKER (or with 12 s left), and always press Coopertition with their first banked NOTE in the first 45 s of TELEOP. Both alliances cooperate in about 9 matches in 10, so MELODY usually needs 15 NOTES. The Coopertition point (a ranking tiebreaker) isn't tracked.
-- **Bots value the AMP**: an AMP NOTE that banks toward AMPLIFICATION is worth 2 more to them than its point (half of what a press usually gains), plus 1.5 for the Coopertition NOTE early in TELEOP; a SPEAKER NOTE is worth 3 more while AMPLIFIED (`botValue`, never scored).
+- **SPOTLIT**: the HUMAN PLAYER throws the 3 HIGH NOTES at the MICROPHONES over the most ONSTAGE robots first; every ONSTAGE robot under a spotlit MICROPHONE gets +1. Decided at the end of the match. Each throw lands with a 4 % chance, fitted to the real 0.11 SPOTLIT points per alliance (blind: 25 %, an estimate for a practiced player).
+- **HUMAN PLAYERS** are the same for every alliance (since ADR 0012, as real ones played): with 2 NOTES banked they press AMP once two robots of theirs hold a NOTE within 10 m of the SPEAKER and one is within 5.5 m, or after the full bank has waited 12 s, or with 12 s left. Each is willing to press Coopertition in 80 % of matches (with its first banked NOTE in the first 45 s of TELEOP), so both alliances cooperate in about 60 % of matches, as in 2024. The Coopertition point (a ranking tiebreaker) isn't tracked. Blind: pressed for one robot, always cooperated.
+- **Bots value the AMP** in TELEOP only (`botValue`, never scored): an AMP NOTE that banks is worth 1.65 more, the one that fills the bank 2.8 more, plus 1.5 for the Coopertition NOTE; half a point less when it can't bank. A SPEAKER NOTE is worth 3 more while AMPLIFIED, and bots hold a ready SPEAKER shot (`botHold`, up to 14 s) while the bank is full or a partner is about to fill it. Fitted to the real AMP share (24 % of NOTES) and AUTO AMP NOTES (0.03). Blind: +2 in AUTO and TELEOP, no holding.
 - **SOURCE**: a hand-over station: a robot lined up in front of the CHUTE (0.42-0.95 m out, middle 1.2 m) gets a NOTE after 1 s, one every 1.5 s, 45 per alliance. NOTES aren't modeled sliding down the CHUTE or bouncing off the floor. Floor-intake and CHUTE-intake robots are treated alike.
 - **SPEAKER and AMP NOTES leave play**. Field staff and the HUMAN PLAYERS returning NOTES to the SOURCE AREAS isn't modeled; 45 per SOURCE plus the field NOTES was more than any alliance used (34 at most).
-- **Every robot type fits under the STAGE** (≤ 0.62 m tall): the 0.71 m clearance is a design driver the manual makes explicit, and the engine has one navigation grid for all robot types. A taller design would have to drive around it.
+- **Robots and the STAGE**: the STAGE core has a 0.71 m `clearance`. Every robot type but the full-size turret shooter (1.0 m) fits under it; the full-size robot's nav grid treats the core as a wall, and physics stops it. Bots keep their paths out of the opponent's STAGE ZONE only from 5 s before the last 20 s (`endgamePathZones`, G424 B), so before that short robots drive under the opponent's STAGE to and from the SOURCE. Blind: every type fitted, and bots avoided the opponent's STAGE ZONE all match.
 - **PARK** counts any part of the bumpers in the STAGE ZONE; the engine tests the robot's center, so PARK uses the STAGE ZONE grown by 0.4 m.
 - **Rapier**: a resting NOTE settles a few micrometers differently on each half of the field (a cylinder's contact isn't mirror-exact), so `tests/symmetry.test.ts` stops comparing a robot's position once it goes after a loose piece; its plans are still compared all through the first 1.5 s.
 
 ## Archetype rationale
 
-Seven robot types, one per seventh of real robots (best to worst), from `robot-baselines.md`. Drivetrains and mechanism times are engineering estimates from the kickoff manual's constraints: under-stage height (0.71 m), the 4-drive-motor limit (R502, new in 2024), 125 lb (R103), a ring that a roller grabs from any direction, a SPEAKER that accepts shots from range, an AMP that wants a placement against the wall. The drive team's teleop line-up (`alignSec`), auto routines, endgame success and reliability start from the 2023-calibrated tiers:
+**Replaced by the calibration** (ADR 0012): the robot types are now designs real teams built in 2024, fitted tier by tier to real robots. `CALIBRATION.md` has every value, blind and now, and the real tiers they match. In short, one type per seventh of real robots (best to worst):
 
-- **Line-up per pickup and per placement** keeps the tier values (2.6 s top … 20.2 s bottom). The engine adds it to pickups and AMP / TRAP placements, not to SPEAKER shots, so a shooter's cycle carries one line-up where a 2023 robot carried two. That is the "scale down for a forgiving pickup and a big target" the baselines ask for: ground pickup of a ring needs no orientation, and a shot needs no pole to line up on. Shot misses come from the aim spread instead.
-- **Auto pieces**: the WING NOTES are 1.45 m apart and ~1.6 m from the SUBWOOFER, so each extra NOTE costs ~3 s against ~8 s for a 2023 cone. The 2023 caps are doubled: top tier 4, tier 6 and 5 two, lower tiers 1, the defender 0, with the tier success rates.
-- **Climbs**: each attempt succeeds 55 / 50 / 45 / 45 / 30 % of the time (top to tier 3), retried while time allows, so the tiers end ONSTAGE 74 / 66 / 63 / 88 / 44 % of matches: a little below their 2023 endgame rates (a chain climb is harder than a ramp dock), except the stage specialist. The bottom two tiers have no climber and park.
+| Tier | Robot type                                  | Build                                                                                               |
+| ---- | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 7    | Under-stage all-rounder (dealt 0.6 of tier) | MK4i L3, 4 Kraken X60, 0.62 m tall; pivot shooter to 5.5 m, passes 11 m, AMP, climb, TRAP           |
+| 7    | Full-size turret shooter (0.4 of tier)      | MK4i L3, 4 Kraken X60, 1.0 m tall (drives around the STAGE); turret to 6 m, passes 12 m, AMP, climb |
+| 6    | Pivot shooter                               | MK4i L2, 4 Falcon 500; shooter to 4 m, passes 9 m, AMP, climb                                       |
+| 5    | AMP and SUBWOOFER scorer                    | MAXSwerve 14T, 4 NEO; one roller path to the AMP or a SUBWOOFER shot, climb                         |
+| 4    | Tank-drive shooter                          | West Coast drive, 4 Falcon 500 at 8.45:1; fixed shooter to 2.6 m, AMP, sometimes climbs             |
+| 3    | SUBWOOFER shooter                           | MK4i L2, 4 NEO; fixed shooter to 2.4 m, AMP, rarely climbs                                          |
+| 2    | KitBot                                      | KoP tank, 4 CIM; launcher from the SUBWOOFER, loads only at the SOURCE, AMP, a few climb            |
+| 1    | Low-resource robot                          | KoP-style tank, 4 CIM; simple roller to the AMP or SUBWOOFER, often breaks down                     |
+| —    | Defender (not dealt at random)              | 4 Falcon 500 tank on tread, max weight; plays defense                                               |
 
-| Robot (tier)                 | Drivetrain                                | Weighed / on field | Top speed, accel., 5 m | Pieces                                                                       | Line-up | Auto    | Climb       | Reliability |
-| ---------------------------- | ----------------------------------------- | ------------------ | ---------------------- | ---------------------------------------------------------------------------- | ------- | ------- | ----------- | ----------- |
-| Under-stage all-rounder (7)  | MK4i L3, 4 Kraken X60                     | 125 / 152 lb       | 14.5 ft/s, 28, 1.39 s  | ground 0.25 s; shooter 14 m/s, 1.0°, 4.8 m, hood 18-66°; AMP 0.6 s; TRAP 3 s | 2.6 s   | 4, 85 % | 5 s, 55 %   | 0.97        |
-| Speaker shooter (6)          | MK4i L2, 4 Falcon 500                     | 120 / 147 lb       | 14.0 ft/s, 30, 1.40 s  | ground 0.3 s; shooter 13 m/s, 1.5°, 3.8 m                                    | 4.6 s   | 2, 85 % | 7 s, 50 %   | 0.95        |
-| Amp and subwoofer scorer (5) | MAXSwerve 14T, 4 NEO                      | 110 / 137 lb       | 13.4 ft/s, 28, 1.47 s  | ground 0.3 s; AMP 0.5 s; SUBWOOFER shot 8 m/s, 2.5°, 2.0 m                   | 8.9 s   | 2, 85 % | 6 s, 45 %   | 0.92        |
-| Stage specialist (4)         | MK4i L2, 4 NEO                            | 105 / 132 lb       | 12.5 ft/s, 31, 1.52 s  | ground 0.4 s; AMP 0.8 s; TRAP 2.5 s                                          | 13.6 s  | 1, 80 % | 4 s, 45 %   | 0.90        |
-| Subwoofer shooter (3)        | MK4i L2, 4 NEO                            | 118 / 145 lb       | 12.5 ft/s, 28, 1.54 s  | ground 0.45 s; shooter 8.5 m/s, 3°, 2.4 m                                    | 12.1 s  | 1, 65 % | 8 s, 30 %   | 0.88        |
-| Kitbot (2)                   | Kit of Parts tank, 4 CIM, 10.71:1, 6 in   | 90 / 117 lb        | 10.0 ft/s, 32, 1.80 s  | roller 0.6 s; SUBWOOFER fling 7 m/s, 4°, 2.0 m; AMP 1.2 s                    | 16.8 s  | 1, 45 % | none: parks | 0.78        |
-| Defender (1)                 | tank, 4 Falcon 500 (R502), 10.71:1, tread | 125 / 153 lb       | 12.0 ft/s, 31, 1.56 s  | roller 0.5 s; SUBWOOFER fling 7 m/s, 5°; defends by default                  | 20.2 s  | 0, 30 % | none: parks | 0.75        |
-
-Shooters launch from 0.2 m above their frame. Hood ranges set where a robot can shoot from: the subwoofer-only robots' 52-68° hoods reach the opening only from 1.2-2.0 m away. Turn rates (`maxOmega` 5-9 rad/s) are driver comfort.
+The blind build's types (from the 2023 tiers): an under-stage all-rounder, a SPEAKER shooter with no AMP, the AMP and SUBWOOFER scorer, a stage specialist (climb 4 s, TRAP), a SUBWOOFER shooter, a kitbot with a floor intake, and a defender as the bottom tier. Line-ups 2.6-20.2 s, autos of 4 / 2 / 2 / 1 / 1 / 1 / 0 NOTES, climbs at 55 / 50 / 45 / 45 / 30 % per try.
 
 ### Alliance presets
 
-- **Powerhouse**: three all-rounders.
-- **Typical qualification alliance**: all-rounder, subwoofer shooter, kitbot.
-- **Amplify**: AMP scorer, all-rounder, SPEAKER shooter.
-- **Specialists**: SPEAKER shooter, AMP scorer, stage specialist.
-- **Shutdown defense**: all-rounder, SPEAKER shooter and a defender, on _aggressive_.
-- **Ensemble first**: stage specialist, AMP scorer, subwoofer shooter, on _early endgame_.
-- **Monte Carlo pick**: three all-rounders as TRAP specialists, on _close out_ (see "Alliance composition" below).
-- **Rookie alliance**: three kitbots.
+- **Powerhouse**: three under-stage all-rounders.
+- **Typical qualification alliance**: all-rounder, SUBWOOFER shooter, KitBot.
+- **Double feed** (real: East Bay 2024 and later playoffs): a full-size shooter fed by two feeders.
+- **Feed and choke**: a full-size shooter, one feeder, and a pivot shooter on SOURCE defense.
+- **Amplify**: an AMP specialist and two shooters.
+- **Shutdown defense**: all-rounder, pivot shooter and a defender in front of the opponents' SUBWOOFER, on _aggressive_.
+- **Source choke** (Chief Delphi "Source Choke Point"): all-rounder, pivot shooter and a defender by the opponents' SOURCE.
+- **Ensemble first**: pivot shooter, AMP scorer and tank-drive shooter, on _early endgame_.
+- **Monte Carlo pick (qualifications)** and **(playoffs)**: see "Alliance composition".
+- **Rookie alliance**: three KitBots.
 
 ## Plausibility
 
-`npm run plausibility -- --game 2024-crescendo` (each lineup against itself, 12 matches per cell, breakdowns on; means per alliance per match). Validation and the bots' geometry audit: 0 errors, 0 warnings.
+`npm run plausibility -- --game 2024-crescendo` with the calibrated robots (each lineup against itself, 12 matches per cell, breakdowns on; means per alliance per match). Validation and the bots' geometry audit: 0 errors, 0 warnings.
 
-| Lineup                         | Difficulty | Total | Auto | Teleop | Endgame | Fouls drawn | Pieces | melody RP | ensemble RP | Broke down | Mech failed |
-| ------------------------------ | ---------- | ----- | ---- | ------ | ------- | ----------- | ------ | --------- | ----------- | ---------- | ----------- |
-| Powerhouse                     | easy       | 77    | 38   | 29     | 9       | 0           | 20.3   | 100%      | 79%         | 3%         | 1%          |
-| Powerhouse                     | normal     | 91    | 39   | 43     | 9       | 1           | 24.3   | 100%      | 71%         | 3%         | 8%          |
-| Powerhouse                     | hard       | 115   | 41   | 65     | 8       | 2           | 30.9   | 100%      | 58%         | 1%         | 4%          |
-| Typical qualification alliance | easy       | 44    | 22   | 16     | 6       | 0           | 12.5   | 4%        | 8%          | 4%         | 31%         |
-| Typical qualification alliance | normal     | 51    | 19   | 25     | 6       | 1           | 15.5   | 50%       | 33%         | 1%         | 17%         |
-| Typical qualification alliance | hard       | 69    | 22   | 40     | 5       | 2           | 21.4   | 100%      | 29%         | 3%         | 15%         |
-| Amplify                        | easy       | 62    | 31   | 22     | 8       | 0           | 16.5   | 79%       | 42%         | 4%         | 10%         |
-| Amplify                        | normal     | 75    | 30   | 34     | 10      | 1           | 21.2   | 100%      | 67%         | 1%         | 4%          |
-| Amplify                        | hard       | 95    | 33   | 52     | 8       | 3           | 26.8   | 100%      | 63%         | 6%         | 8%          |
-| Specialists                    | easy       | 49    | 23   | 16     | 10      | 0           | 12.6   | 13%       | 46%         | 3%         | 10%         |
-| Specialists                    | normal     | 53    | 19   | 24     | 10      | 0           | 15.3   | 63%       | 54%         | 3%         | 14%         |
-| Specialists                    | hard       | 76    | 19   | 46     | 9       | 3           | 23.5   | 100%      | 67%         | 6%         | 7%          |
-| Shutdown defense               | easy       | 54    | 24   | 20     | 7       | 3           | 14.5   | 50%       | 29%         | 8%         | 13%         |
-| Shutdown defense               | normal     | 62    | 25   | 28     | 7       | 3           | 18.1   | 100%      | 38%         | 4%         | 19%         |
-| Shutdown defense               | hard       | 77    | 23   | 43     | 6       | 6           | 22.0   | 96%       | 50%         | 8%         | 22%         |
-| Ensemble first                 | easy       | 34    | 14   | 11     | 10      | 0           | 8.3    | 0%        | 42%         | 3%         | 14%         |
-| Ensemble first                 | normal     | 42    | 17   | 15     | 10      | 0           | 11.3   | 0%        | 58%         | 6%         | 8%          |
-| Ensemble first                 | hard       | 55    | 16   | 29     | 10      | 0           | 17.1   | 88%       | 50%         | 3%         | 15%         |
-| Rookie alliance                | easy       | 14    | 5    | 5      | 2       | 3           | 4.0    | 0%        | 0%          | 8%         | 24%         |
-| Rookie alliance                | normal     | 17    | 7    | 7      | 2       | 1           | 5.4    | 0%        | 0%          | 13%        | 32%         |
-| Rookie alliance                | hard       | 21    | 5    | 11     | 2       | 2           | 7.9    | 0%        | 8%          | 11%        | 40%         |
+| Lineup                            | Difficulty | Total | Auto | Teleop | Endgame | Fouls drawn | Pieces | melody RP | ensemble RP | Broke down | Mech failed |
+| --------------------------------- | ---------- | ----- | ---- | ------ | ------- | ----------- | ------ | --------- | ----------- | ---------- | ----------- |
+| Powerhouse                        | easy       | 70    | 34   | 28     | 8       | 0           | 19.2   | 79%       | 54%         | 3%         | 3%          |
+| Powerhouse                        | normal     | 84    | 33   | 40     | 7       | 4           | 22.7   | 100%      | 58%         | 3%         | 8%          |
+| Powerhouse                        | hard       | 102   | 35   | 56     | 7       | 4           | 26.8   | 100%      | 54%         | 1%         | 4%          |
+| Typical qualification alliance    | easy       | 43    | 18   | 20     | 5       | 0           | 12.8   | 4%        | 8%          | 4%         | 31%         |
+| Typical qualification alliance    | normal     | 52    | 19   | 27     | 6       | 1           | 15.6   | 33%       | 25%         | 1%         | 17%         |
+| Typical qualification alliance    | hard       | 67    | 18   | 44     | 4       | 1           | 21.0   | 100%      | 13%         | 3%         | 15%         |
+| Double feed                       | easy       | 82    | 32   | 42     | 8       | 0           | 20.9   | 96%       | 38%         | 3%         | 8%          |
+| Double feed                       | normal     | 106   | 31   | 66     | 7       | 3           | 27.5   | 100%      | 38%         | 1%         | 1%          |
+| Double feed                       | hard       | 125   | 31   | 84     | 7       | 3           | 31.4   | 100%      | 46%         | 6%         | 3%          |
+| Feed and choke                    | easy       | 73    | 31   | 30     | 7       | 4           | 17.9   | 79%       | 25%         | 4%         | 6%          |
+| Feed and choke                    | normal     | 90    | 30   | 46     | 6       | 8           | 22.3   | 96%       | 38%         | 4%         | 7%          |
+| Feed and choke                    | hard       | 110   | 33   | 57     | 6       | 14          | 24.9   | 100%      | 54%         | 3%         | 3%          |
+| Amplify                           | easy       | 63    | 29   | 25     | 7       | 1           | 16.1   | 63%       | 46%         | 0%         | 10%         |
+| Amplify                           | normal     | 76    | 29   | 37     | 7       | 3           | 19.9   | 88%       | 50%         | 1%         | 4%          |
+| Amplify                           | hard       | 88    | 27   | 54     | 6       | 1           | 25.5   | 100%      | 21%         | 6%         | 13%         |
+| Shutdown defense                  | easy       | 49    | 21   | 23     | 6       | 0           | 13.5   | 4%        | 13%         | 4%         | 13%         |
+| Shutdown defense                  | normal     | 55    | 22   | 26     | 5       | 2           | 15.5   | 46%       | 25%         | 8%         | 10%         |
+| Shutdown defense                  | hard       | 70    | 23   | 39     | 5       | 4           | 19.4   | 92%       | 33%         | 7%         | 13%         |
+| Source choke                      | easy       | 49    | 23   | 18     | 6       | 2           | 13.4   | 13%       | 29%         | 7%         | 11%         |
+| Source choke                      | normal     | 56    | 21   | 24     | 5       | 6           | 15.8   | 29%       | 46%         | 7%         | 15%         |
+| Source choke                      | hard       | 68    | 21   | 34     | 6       | 7           | 19.0   | 83%       | 54%         | 8%         | 21%         |
+| Ensemble first                    | easy       | 47    | 22   | 17     | 8       | 0           | 12.4   | 0%        | 17%         | 6%         | 8%          |
+| Ensemble first                    | normal     | 57    | 27   | 22     | 7       | 0           | 15.4   | 50%       | 13%         | 6%         | 6%          |
+| Ensemble first                    | hard       | 80    | 24   | 47     | 7       | 1           | 22.3   | 96%       | 33%         | 7%         | 13%         |
+| Monte Carlo pick (qualifications) | easy       | 71    | 33   | 31     | 7       | 0           | 19.6   | 96%       | 46%         | 3%         | 1%          |
+| Monte Carlo pick (qualifications) | normal     | 83    | 33   | 40     | 7       | 2           | 23.1   | 100%      | 54%         | 3%         | 8%          |
+| Monte Carlo pick (qualifications) | hard       | 98    | 35   | 55     | 7       | 1           | 26.9   | 100%      | 63%         | 1%         | 6%          |
+| Monte Carlo pick (playoffs)       | easy       | 86    | 33   | 44     | 8       | 2           | 23.1   | 100%      | 42%         | 1%         | 7%          |
+| Monte Carlo pick (playoffs)       | normal     | 111   | 33   | 70     | 7       | 1           | 29.7   | 100%      | 33%         | 0%         | 6%          |
+| Monte Carlo pick (playoffs)       | hard       | 124   | 34   | 82     | 7       | 2           | 33.0   | 100%      | 33%         | 0%         | 6%          |
+| Rookie alliance                   | easy       | 18    | 7    | 6      | 3       | 2           | 4.6    | 0%        | 8%          | 11%        | 31%         |
+| Rookie alliance                   | normal     | 22    | 7    | 9      | 3       | 2           | 6.1    | 0%        | 13%         | 19%        | 32%         |
+| Rookie alliance                   | hard       | 33    | 7    | 17     | 4       | 5           | 10.0   | 4%        | 21%         | 10%        | 33%         |
 
-ONSTAGE robots per alliance per match:
-
-| Lineup                         | Difficulty | onstage |
-| ------------------------------ | ---------- | ------- |
-| Powerhouse                     | easy       | 2.38    |
-| Powerhouse                     | normal     | 2.25    |
-| Powerhouse                     | hard       | 1.96    |
-| Typical qualification alliance | easy       | 1.33    |
-| Typical qualification alliance | normal     | 1.38    |
-| Typical qualification alliance | hard       | 1.13    |
-| Amplify                        | easy       | 2.25    |
-| Amplify                        | normal     | 2.29    |
-| Amplify                        | hard       | 1.88    |
-| Specialists                    | easy       | 2.50    |
-| Specialists                    | normal     | 2.38    |
-| Specialists                    | hard       | 1.96    |
-| Shutdown defense               | easy       | 1.67    |
-| Shutdown defense               | normal     | 1.42    |
-| Shutdown defense               | hard       | 1.46    |
-| Ensemble first                 | easy       | 2.42    |
-| Ensemble first                 | normal     | 2.50    |
-| Ensemble first                 | hard       | 2.50    |
-| Rookie alliance                | easy       | 0.00    |
-| Rookie alliance                | normal     | 0.00    |
-| Rookie alliance                | hard       | 0.00    |
-
-Points per robot per match, by robot type:
-
-| Robot    | Matches | Points |
-| -------- | ------- | ------ |
-| ampbot   | 216     | 17.7   |
-| allround | 432     | 30.6   |
-| shooter  | 216     | 29.1   |
-| stagebot | 144     | 9.1    |
-| midbot   | 144     | 13.8   |
-| kitbot   | 288     | 5.2    |
-| defender | 72      | 2.5    |
-
-Checks:
-
-- PASS Difficulty ordering for Powerhouse: easy 77 < normal 91 < hard 115
-- PASS Difficulty ordering for Typical qualification alliance: easy 44 < normal 51 < hard 69
-- PASS Difficulty ordering for Amplify: easy 62 < normal 75 < hard 95
-- PASS Difficulty ordering for Specialists: easy 49 < normal 53 < hard 76
-- PASS Difficulty ordering for Shutdown defense: easy 54 < normal 62 < hard 77
-- PASS Difficulty ordering for Ensemble first: easy 34 < normal 42 < hard 55
-- PASS Difficulty ordering for Rookie alliance: easy 14 < normal 17 < hard 21
-- WARN MELODY (18 AMP & SPEAKER NOTES, 15 with Coopertition): up to 100% of alliances at normal (bonus RPs are stretch goals; most matches reaching one suggests robots that are too strong or a misread threshold)
-- PASS ENSEMBLE (10 STAGE points and 2 ROBOTS ONSTAGE): up to 71% of alliances at normal (bonus RPs are stretch goals; most matches reaching one suggests robots that are too strong or a misread threshold)
-- PASS Pieces: at most 34 by one alliance in one match; ceiling 59 (available 59: 3 preloaded + 11 staged on the field (both alliances' and neutral ones) + 45 from its human players; target capacity unbounded)
-- PASS Every target was scored in
-- PASS Every endgame action was completed
-- PASS Every robot type scored
-- PASS Blue vs red with identical setups: wins 127 : 118 of 252 (z 0.6), score 59.0 : 58.6
-
-The MELODY warning comes from the strong presets (Powerhouse, Amplify), which reach 15-18 NOTES every match. The ordinary Typical alliance reaches it in about half its matches at normal, mostly because both HUMAN PLAYERS always cooperate (threshold 15). Random lineups (`npm run sim -- --random --matches 100`, normal): **47.8 points per alliance** (auto 17.9, teleop 21.6, endgame 6.5, fouls 1.8), 10.0 SPEAKER + 4.1 AMP + 0.2 TRAP NOTES, 1.5 robots ONSTAGE, **MELODY 46 %, ENSEMBLE 24 %**. Nothing was tuned toward a real 2024 rate.
+Checks: difficulty ordering passes for every lineup; ENSEMBLE at most 75 % at normal; at most 36 NOTES by one alliance (ceiling 59); every target scored, every endgame action completed, every robot type scored; blue vs red with identical setups: wins 170 : 178 of 360 (z 0.4), score 69.6 : 70.1. MELODY warns, as before: the strong presets reach it every match (real district championship and Championship alliances did too, at their higher thresholds).
 
 Head-to-head against a Typical alliance (`--against typical --matches 32 --difficulties normal`):
 
 | Blue lineup                    | Difficulty | Blue score | Red score | Blue wins | Blue melody RP | Blue ensemble RP | Red teleop | Fouls on blue / red |
 | ------------------------------ | ---------- | ---------- | --------- | --------- | -------------- | ---------------- | ---------- | ------------------- |
-| Powerhouse                     | normal     | 99         | 47        | 100%      | 100%           | 78%              | 20         | 0.1 / 0.1           |
-| Typical qualification alliance | normal     | 53         | 50        | 47%       | 59%            | 28%              | 22         | 0.2 / 0.7           |
-| Amplify                        | normal     | 80         | 47        | 100%      | 100%           | 53%              | 21         | 0.0 / 1.0           |
-| Specialists                    | normal     | 55         | 50        | 72%       | 84%            | 41%              | 22         | 0.0 / 0.2           |
-| Shutdown defense               | normal     | 64         | 51        | 81%       | 100%           | 25%              | 22         | 0.6 / 0.8           |
-| Ensemble first                 | normal     | 39         | 51        | 16%       | 0%             | 59%              | 21         | 0.1 / 0.1           |
-| Rookie alliance                | normal     | 17         | 55        | 0%        | 0%             | 0%               | 27         | 0.2 / 0.2           |
+| Powerhouse                     | normal     | 84         | 47        | 100%      | 97%            | 44%              | 22         | 0.3 / 0.1           |
+| Typical qualification alliance | normal     | 49         | 50        | 53%       | 41%            | 9%               | 25         | 0.1 / 0.1           |
+| Double feed                    | normal     | 94         | 54        | 97%       | 97%            | 22%              | 28         | 0.7 / 0.2           |
+| Feed and choke                 | normal     | 96         | 54        | 97%       | 100%           | 34%              | 26         | 1.0 / 0.7           |
+| Amplify                        | normal     | 72         | 49        | 94%       | 100%           | 22%              | 25         | 0.2 / 0.1           |
+| Shutdown defense               | normal     | 55         | 56        | 53%       | 59%            | 13%              | 28         | 0.8 / 0.3           |
+| Source choke                   | normal     | 57         | 51        | 56%       | 47%            | 41%              | 24         | 0.8 / 0.6           |
+| Ensemble first                 | normal     | 56         | 51        | 72%       | 69%            | 19%              | 27         | 0.0 / 0.1           |
+| Rookie alliance                | normal     | 21         | 58        | 0%        | 0%             | 16%              | 33         | 0.5 / 0.4           |
 
-### Against the 2023-calibrated tiers
+Random lineups and the comparison with the real season: `CALIBRATION.md`.
 
-Random lineups, 80 matches at normal, per robot per match (`robot-baselines.md` tier in brackets: 2023 teleop + auto pieces; endgame = docked or engaged; LEAVE = mobility):
+### The blind build's numbers
 
-| Robot (tier)                 | NOTES | 2023 pieces | ONSTAGE | 2023 endgame | LEAVE | 2023 leave |
-| ---------------------------- | ----- | ----------- | ------- | ------------ | ----- | ---------- |
-| Under-stage all-rounder (7)  | 9.8   | 7.5         | 74 %    | 71 %         | 83 %  | 85 %       |
-| Speaker shooter (6)          | 7.9   | 5.4         | 66 %    | 72 %         | 81 %  | 68 %       |
-| Amp and subwoofer scorer (5) | 4.9   | 4.3         | 63 %    | 71 %         | 82 %  | 59 %       |
-| Stage specialist (4)         | 3.3   | 3.4         | 88 %    | 66 %         | 75 %  | 55 %       |
-| Subwoofer shooter (3)        | 3.4   | 2.6         | 44 %    | 57 %         | 64 %  | 53 %       |
-| Kitbot (2)                   | 1.8   | 2.0         | parks   | 49 %         | 37 %  | 44 %       |
-| Defender (1)                 | 0.9   | 1.2         | parks   | 33 %         | 25 %  | 29 %       |
-
-The good shooters score 30-45 % more pieces than their 2023 tier, as intended: a SPEAKER shot carries no line-up (only the pickup does), the ring needs no orientation, and the WING NOTES sit close to the SPEAKER, so autos also leave the zone more often. Per-attempt climb success (55 / 50 / 45 / 45 / 30 %, retried while there is time) was set so each tier ends ONSTAGE a little less often than it docked in 2023, a chain climb being harder than driving onto a ramp; the stage specialist is the exception by design. Shot accuracy in the sim: ~85 % for the shooters, ~55 % for the SUBWOOFER-only robots.
-
-### Blue vs red
-
-400 identical Typical-vs-Typical matches with the final robots (`npm run sim -- --lineups typical,typical --matches 400 --seed 5001`): wins 186 : 197 (z -0.6), total 51.2 : 51.5 (z -0.5), auto z -1.5, teleop z +0.7, endgame 5.9 : 6.1 (z -1.0), MELODY 57 % : 56 %, ENSEMBLE 25 % : 24 %. The first build had red's endgame at 8.65 against blue's 7.08 (z -10): HARMONY counted red robots on blue's chain positions. Fixed in `rules.ts` and covered by a test.
+Before the calibration, random lineups at normal scored 47.8 points per alliance (auto 17.9, teleop 21.6, endgame 6.5, fouls 1.8), 1.5 robots ONSTAGE, MELODY 46 %, ENSEMBLE 24 %. The blind tiers scored 9.8 / 7.9 / 4.9 / 3.3 / 3.4 / 1.8 / 0.9 NOTES per robot, with ONSTAGE 74 / 66 / 63 / 88 / 44 / 0 / 0 %. `CALIBRATION.md` sets these against the real season. Blue vs red then: 400 identical Typical-vs-Typical matches, wins 186 : 197 (z −0.6). The first blind build had red's endgame at 8.65 against blue's 7.08 (z −10), from HARMONY counting red robots on blue's chain positions; that was fixed in `rules.ts` and is covered by a test.
 
 ## Alliance composition (Monte Carlo)
 
-The owner asked for the ideal alliance with the Monte Carlo match-ups, leaving the robot types and their tuning as they are. New specialist roles and strategies were allowed. `npm run alliances` plays every candidate on the same seeds against an opponent field, with the spectator menu's `runMatchup`: normal bots unless noted, breakdowns on. The candidate plays blue on half the seeds and red on the other half. Two fields:
+**Re-run on the calibrated robots** (ADR 0012). `npm run alliances` plays every candidate on the same seeds against two opponent fields, with the spectator menu's `runMatchup`: normal bots, breakdowns on, the candidate on blue for half the seeds and red for the other half.
 
-- **random**: the menu's random preset, three different robot types dealt per match. This stands in for a qualification schedule, so the measure is ranking points (RP) per match.
-- **powerhouse**: three all-rounders on balanced, the strongest alliance the robot types allow. This stands in for a playoff final, so the measure is the win share (ties count half).
+- **random**: the menu's random preset, which stands in for a qualification schedule. The measure is ranking points (RP) per match.
+- **powerhouse**: three under-stage all-rounders on balanced, which stands in for a playoff final. The measure is the win share.
 
-**Every composition** (all 84 multisets of the seven robot types, default roles, balanced, 60 matches each vs random, seeds 1-60; `--candidates all`):
+Candidates: the top-tier builds in every mix, the real strategies (feeders, SOURCE defense) and the blind build's pick (200 matches per field, seeds 5001-5200):
 
-| Composition                              | RP / match | Win  | Margin | ENSEMBLE |
-| ---------------------------------------- | ---------- | ---- | ------ | -------- |
-| all-rounder ×3                           | 3.78       | 100% | +56.2  | 78%      |
-| all-rounder ×2, AMP scorer               | 3.68       | 98%  | +40.6  | 72%      |
-| all-rounder ×2, SPEAKER shooter          | 3.62       | 100% | +50.0  | 62%      |
-| all-rounder ×2, stage specialist         | 3.58       | 97%  | +35.5  | 65%      |
-| all-rounder ×2, subwoofer shooter        | 3.55       | 98%  | +34.4  | 60%      |
-| all-rounder, SPEAKER shooter, AMP scorer | 3.53       | 98%  | +31.5  | 57%      |
-| all-rounder, SPEAKER shooter ×2          | 3.50       | 93%  | +39.1  | 63%      |
-| SPEAKER shooter ×3                       | 3.33       | 92%  | +30.6  | 53%      |
-| all-rounder ×2, kitbot                   | 3.22       | 93%  | +30.1  | 37%      |
-| all-rounder ×2, defender (defends)       | 3.18       | 93%  | +27.4  | 33%      |
-| defender ×3                              | 0.00       | 0%   | −53.1  | 0%       |
+#### Against random
 
-MELODY is 97-100 % for every composition above but the last, so the RP gaps come from ENSEMBLE and the odd loss. With two all-rounders, the third robot's RP barely depends on its type. Its playoff value does: against Powerhouse (round 2, 200 matches), all-rounder ×2 + SPEAKER shooter wins 39 %, and all-rounder ×2 + AMP scorer 14 %.
+| #   | Alliance                                            | Win  | 95% CI   | Score | Opp. | Margin ± SE | RP   | melody | ensemble | Auto | Teleop | Endgame | Fouls for / against |
+| --- | --------------------------------------------------- | ---- | -------- | ----- | ---- | ----------- | ---- | ------ | -------- | ---- | ------ | ------- | ------------------- |
+| 1   | allround:trap,allround:trap,fullsize@close-out      | 99%  | 96%-100% | 80.8  | 45.5 | 35.4 ± 1.2  | 3.54 | 99%    | 58%      | 33.5 | 37.2   | 9.3     | 0.8 / 0.6           |
+| 2   | allround,allround,fullsize                          | 100% | 97%-100% | 86.6  | 46.4 | 40.3 ± 1.4  | 3.51 | 100%   | 53%      | 33.5 | 44.4   | 7.2     | 1.5 / 1.9           |
+| 3   | allround,allround,allround                          | 97%  | 93%-98%  | 82.5  | 46.9 | 35.6 ± 1.4  | 3.46 | 99%    | 55%      | 33.4 | 41.0   | 7.1     | 1.1 / 1.9           |
+| 4   | allround:trap,allround:trap,allround:trap@close-out | 98%  | 95%-99%  | 77.0  | 46.5 | 30.4 ± 1.2  | 3.46 | 99%    | 52%      | 33.4 | 34.1   | 8.9     | 0.6 / 1.1           |
+| 5   | allround:trap,fullsize,fullsize@close-out           | 98%  | 95%-99%  | 80.5  | 46.1 | 34.4 ± 1.3  | 3.40 | 99%    | 45%      | 33.4 | 37.7   | 8.9     | 0.5 / 0.7           |
+| 6   | allround,fullsize,fullsize                          | 99%  | 96%-99%  | 85.7  | 46.8 | 38.9 ± 1.3  | 3.39 | 100%   | 43%      | 33.4 | 43.9   | 7.2     | 1.3 / 1.6           |
+| 7   | fullsize,allround:feeder,allround                   | 100% | 98%-100% | 108.0 | 47.8 | 60.3 ± 1.4  | 3.35 | 100%   | 35%      | 33.3 | 67.1   | 7.0     | 0.7 / 2.7           |
+| 8   | fullsize,fullsize,allround:feeder                   | 100% | 98%-100% | 104.5 | 47.8 | 56.7 ± 1.3  | 3.21 | 100%   | 21%      | 32.6 | 64.1   | 7.2     | 0.6 / 2.7           |
+| 9   | fullsize,allround:feeder,shooter:feeder             | 99%  | 96%-99%  | 100.8 | 48.0 | 52.8 ± 1.7  | 3.16 | 99%    | 21%      | 31.5 | 61.4   | 7.0     | 0.8 / 2.4           |
+| 10  | fullsize,fullsize,fullsize                          | 97%  | 94%-99%  | 84.7  | 46.5 | 38.2 ± 1.3  | 3.15 | 99%    | 22%      | 33.0 | 43.5   | 7.3     | 0.9 / 1.7           |
+| 11  | fullsize,allround,shooter:source-defense            | 86%  | 80%-90%  | 71.5  | 50.2 | 21.4 ± 1.5  | 3.00 | 87%    | 43%      | 31.5 | 30.0   | 6.3     | 3.7 / 5.8           |
+| 12  | allround,allround,defender:source-defense           | 74%  | 68%-80%  | 59.9  | 46.7 | 13.2 ± 1.4  | 2.57 | 77%    | 32%      | 23.6 | 28.5   | 5.2     | 2.5 / 3.4           |
 
-**How three all-rounders play**: paired differences from plain three all-rounders on balanced, on the same seeds (z in brackets). Round 2: 200 matches per field, seeds 1001-1200. Round 3, for the new ideas: 300, seeds 2001-2300.
+#### Against Powerhouse
 
-| Setup (all-rounder ×3 unless named)      | Round | vs random: RP | vs random: margin | vs Powerhouse: win | vs Powerhouse: RP |
-| ---------------------------------------- | ----- | ------------- | ----------------- | ------------------ | ----------------- |
-| _early endgame_                          | 3     | +0.12 (3.5)   | −6.7 (−15.7)      | −13.2 % (−5.5)     | −0.17 (−2.6)      |
-| _max cycles_                             | 2     | −0.07 (−1.3)  | +2.8 (3.3)        | +0.0 %             | −0.03 (−0.3)      |
-| _aggressive_                             | 2     | −0.03 (−0.6)  | −0.6 (−0.6)       | +5.2 % (1.5)       | +0.09 (1.0)       |
-| one plays defense                        | 2     | −0.17 (−3.5)  | −12.1 (−12.4)     | −19.8 % (−5.3)     | −0.51 (−5.7)      |
-| new: one AMP specialist                  | 2     | +0.06 (1.3)   | +3.4 (3.5)        | −1.0 % (−0.2)      | −0.08 (−0.8)      |
-| new: one AMP specialist                  | 3     | −0.12 (−2.9)  | −1.4 (−2.0)       | +5.7 % (1.9)       | +0.03 (0.4)       |
-| new: all three SPEAKER only              | 2     | +0.03 (0.6)   | −4.8 (−5.6)       | −23.2 % (−5.7)     | −0.47 (−5.0)      |
-| new: all three TRAP specialists          | 3     | +0.09 (3.9)   | −0.2 (−0.7)       | +1.8 % (1.4)       | +0.07 (1.8)       |
-| new: _close out_                         | 3     | +0.13 (3.9)   | −6.4 (−15.2)      | −0.2 % (−1.0)      | −0.02 (−1.5)      |
-| new: TRAP specialists ×3, _close out_    | 3     | +0.13 (3.9)   | −6.4 (−15.2)      | +2.0 % (1.6)       | +0.06 (1.4)       |
-| new: AMP specialist, TRAP specialists ×2 | 3     | −0.03 (−0.7)  | −0.8 (−1.1)       | +6.0 % (2.0)       | +0.10 (1.3)       |
+| #   | Alliance                                            | Win | 95% CI  | Score | Opp. | Margin ± SE | RP   | melody | ensemble | Auto | Teleop | Endgame | Fouls for / against |
+| --- | --------------------------------------------------- | --- | ------- | ----- | ---- | ----------- | ---- | ------ | -------- | ---- | ------ | ------- | ------------------- |
+| 1   | fullsize,allround:feeder,allround                   | 88% | 83%-92% | 104.8 | 83.7 | 21.0 ± 1.2  | 3.16 | 100%   | 40%      | 33.4 | 62.6   | 7.3     | 1.4 / 2.3           |
+| 2   | fullsize,fullsize,allround:feeder                   | 85% | 79%-89% | 100.7 | 83.7 | 16.9 ± 1.2  | 2.93 | 100%   | 23%      | 32.9 | 59.4   | 6.8     | 1.6 / 2.1           |
+| 3   | allround:trap,allround:trap,fullsize@close-out      | 64% | 57%-70% | 83.0  | 79.6 | 3.5 ± 0.9   | 2.81 | 99%    | 56%      | 33.9 | 40.0   | 7.3     | 1.9 / 1.6           |
+| 4   | allround:trap,fullsize,fullsize@close-out           | 62% | 55%-68% | 83.0  | 79.2 | 3.8 ± 1.0   | 2.81 | 99%    | 58%      | 33.5 | 39.3   | 7.7     | 2.6 / 1.2           |
+| 5   | allround,allround,fullsize                          | 63% | 56%-69% | 84.0  | 80.3 | 3.7 ± 1.0   | 2.79 | 99%    | 55%      | 33.9 | 40.7   | 7.0     | 2.4 / 2.0           |
+| 6   | fullsize,allround:feeder,shooter:feeder             | 76% | 70%-82% | 98.2  | 86.4 | 11.8 ± 1.1  | 2.76 | 99%    | 25%      | 31.3 | 59.0   | 6.9     | 0.9 / 3.0           |
+| 7   | fullsize,fullsize,fullsize                          | 68% | 61%-74% | 85.9  | 78.7 | 7.2 ± 1.2   | 2.75 | 100%   | 40%      | 33.0 | 41.5   | 7.3     | 4.1 / 1.8           |
+| 8   | allround:trap,allround:trap,allround:trap@close-out | 54% | 47%-61% | 80.9  | 80.3 | 0.6 ± 1.1   | 2.69 | 96%    | 65%      | 33.5 | 38.6   | 7.2     | 1.6 / 1.6           |
+| 9   | allround,fullsize,fullsize                          | 60% | 53%-67% | 83.6  | 78.7 | 4.9 ± 1.1   | 2.66 | 99%    | 47%      | 33.5 | 40.0   | 7.3     | 2.9 / 1.3           |
+| 10  | allround,allround,allround                          | 53% | 46%-60% | 80.9  | 81.2 | -0.3 ± 1.3  | 2.65 | 98%    | 63%      | 33.5 | 38.1   | 7.2     | 2.1 / 2.4           |
+| 11  | fullsize,allround,shooter:source-defense            | 17% | 12%-23% | 73.3  | 87.9 | -14.6 ± 1.2 | 1.80 | 83%    | 64%      | 31.3 | 28.4   | 6.5     | 7.1 / 6.4           |
+| 12  | allround,allround,defender:source-defense           | 11% | 8%-16%  | 62.2  | 82.4 | -20.2 ± 1.2 | 1.47 | 67%    | 57%      | 23.4 | 25.9   | 5.1     | 7.7 / 3.4           |
 
-- **Climbing early** is where the qualification RP is: ENSEMBLE goes from 73 % to 86 % against random alliances. Climbing early regardless (_early endgame_) gives up 13 % of wins against an equal alliance. The new _close out_ strategy climbs early only when the lead is already safe by the scoreboard, so it gets the RP and keeps the wins.
-- **TRAP specialists** add ENSEMBLE in close matches: in the last 20 s a robot holding a NOTE goes for a TRAP (5 points) before it climbs. With a safe lead under _close out_ they are already climbing when the TRAPS open, so they change nothing there.
-- **The AMP specialist** went one way in round 2 and the other in round 3: no reliable effect. The planner already values banking AMP NOTES (`botValue`). Keeping all three robots off the AMP (SPEAKER only) costs 5 points a match against random alliances and 23 % of wins against Powerhouse, so AMPLIFICATION matters. Who feeds the AMP doesn't.
-- Defense never pays here: the two remaining scorers lose more than the defender takes off the opponents.
+**Verdict**:
 
-**Confirmation** on new seeds, TRAP specialists ×3 on _close out_ against plain three all-rounders:
+- **Qualifications**: _Monte Carlo pick (qualifications)_, two under-stage all-rounders as TRAP specialists and a full-size shooter, on _close out_. It earns 3.54 RP a match. Every all-rounder / full-size mix is within 0.15 RP of it, so the robots are nearly all of it: what wins RP is the ENSEMBLE (58 %), which climbing early with a safe lead buys.
+- **Playoffs**: _Monte Carlo pick (playoffs)_, a full-size turret shooter, an all-rounder feeding it from the SOURCE and an all-rounder scoring. It beat three all-rounders 88 % of the time by 21 points (three all-rounders against themselves: 53 %). One feeder beats two: the second feeder starves its own scoring. This is the passing meta of 2024's later events (Chief Delphi, East Bay and FiT Mercury).
+- **SOURCE defense** loses in both fields here: 11-17 % against Powerhouse, and it is called for more fouls than it draws. The sim's defense is weaker than Chief Delphi describes (`CALIBRATION.md`, remaining gaps), so read this as "not with these bots", not as a real-world verdict.
 
-| Field, difficulty                         | RP                  | Win                 | ENSEMBLE  |
-| ----------------------------------------- | ------------------- | ------------------- | --------- |
-| Powerhouse, normal (600, seeds 3001-3600) | 2.79 vs 2.70 (+3.5) | 50 % vs 49 % (+1.1) | 79 vs 71% |
-| random, hard (300, seeds 4001-4300)       | 3.81 vs 3.75 (+2.1) | 100 % vs 100 %      | 82 vs 75% |
-| Powerhouse, hard (300, seeds 4001-4300)   | 2.81 vs 2.66 (+3.1) | 48 % vs 45 % (+2.2) | 84 vs 77% |
+Reproduce: `npm run alliances -- --game 2024-crescendo --candidates '<the list above, ;-separated>' --vs random,powerhouse --matches 200 --seed 5001`. About 0.7 s per match per core.
 
-**Verdict**: the ideal alliance is **three under-stage all-rounders**, all three as TRAP specialists, on _close out_. It is the menu's _Monte Carlo pick_ preset. The robots are nearly all of it: the best way of playing adds about 0.1 RP a match (one RP over a 10-match event) and no measurable playoff edge over three all-rounders playing balanced. Without three all-rounders, two all-rounders and a SPEAKER shooter is next best. Never pick a defender, and keep someone feeding the AMP.
+### The blind build's search (superseded)
 
-Reproduce: `npm run alliances -- --game 2024-crescendo --candidates all --vs random --matches 60`, then `--candidates 'allround:trap,allround:trap,allround:trap@close-out;powerhouse' --vs random,powerhouse --matches 300`. About 0.7 s per match per core.
+With the blind robot types, the search found three under-stage all-rounders, all TRAP specialists, on _close out_ (3.78 RP against random alliances, no measurable playoff edge over three all-rounders playing balanced). Two all-rounders and a SPEAKER shooter came next, and defense never paid. It had no feeders, no full-size robot and no SOURCE defense to try. Git history has the full tables.
 
 ## Open questions
 
 - **Reveal video**: not used. Upload it to repeat the visual check (stage and SUBWOOFER shapes, NOTE staging, SOURCE CHUTE).
-- **Positions read off Fig 6-2** (SPEAKER y, SUBWOOFER widths, AMP width, SOURCE corner, STAGE triangle, WING line) are ±5-10 cm. The official field drawings from kickoff would settle them.
-- **Coopertition**: the HUMAN PLAYERS always cooperate. Whether real teams press the button in most matches is a strategy call the manual leaves open; turning it off makes MELODY need 18 NOTES.
-- **AMPLIFICATION timing**: the HUMAN PLAYER presses as soon as a robot is ready to shoot. Holding the bank for a moment when two robots are ready would score more.
-- **The kickoff AMPLIFICATION has no NOTE cap**, and TU01 says the cap was meant to be there. The sim follows the kickoff text, so an alliance with three fast shooters can score more than 4 AMPLIFIED NOTES in 10 s.
-- **Climb and TRAP success** are estimates from 2023's Charge Station tiers; how hard a chain climb and a TRAP really are is unknown before the season.
+- **Positions read off Fig 6-2** (SPEAKER y, SUBWOOFER widths, AMP width, SOURCE corner, STAGE triangle, WING line) are ±5-10 cm. The official field drawings would settle them; now that post-kickoff material is allowed for 2024 (ADR 0012), the January field drawings could be used.
+
+Answered by the real season (`CALIBRATION.md`):
+
+- **Coopertition**: both alliances cooperated in 60 % of qualification matches (44 % in week 1, 94 % at the Championship), not always. Now 80 % willingness per HUMAN PLAYER.
+- **AMPLIFICATION timing**: real alliances held the bank and their shots for the press. Now modeled (`botHold` and the HUMAN PLAYER's wait).
+- **The 4-NOTE cap** (TU01) is played since the calibration.
+- **Climb and TRAP success**: a chain climb was much harder than a 2023 dock. Real tiers ended ONSTAGE in 61 / 47 / 39 / 33 / 24 / 12 / 5 % of matches; TRAP NOTES were 0.10 per alliance, nearly all by the top tier.
