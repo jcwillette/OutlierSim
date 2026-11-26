@@ -1446,7 +1446,7 @@ export function describeBot(m: Match, r: Robot, brain: BotBrain | undefined): st
   const p = brain?.currentPlan;
   if (!p) return 'Idle';
   const job = m.def.roles?.find((x) => x.id === brain?.role)?.name;
-  const role = brain?.role === 'defense' ? ' (defender)' : job ? ` (${job})` : '';
+  const role = job ? ` (${job})` : brain?.defends ? ' (defender)' : '';
   const lapse = brain?.lapsing ? ' · not watching teammates' : '';
   return describePlan(m, p) + role + lapse;
 }
@@ -1463,6 +1463,8 @@ function describePlan(m: Match, p: BotBrain['currentPlan']): string {
       return `Taking it to ${m.targets.get(p.targetId)?.target.name ?? 'a target'}`;
     case 'shoot':
       return `Lining up a shot at ${m.targets.get(p.targetId)?.target.name ?? 'a target'}`;
+    case 'pass':
+      return 'Passing it up the field to a teammate';
     case 'endgame':
       return `Heading for ${m.game.endgame.find((e) => e.id === p.actionId)?.name ?? 'the endgame'}`;
     case 'park':

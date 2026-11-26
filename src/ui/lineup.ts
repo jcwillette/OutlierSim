@@ -105,13 +105,15 @@ export function resolveLineup(
   const archetypes: Record<number, string> = {};
   const roles: Partial<Record<number, RobotRole>> = {};
   const all = def.archetypes.map((a) => a.id);
+  const weighted = def.archetypes.some((a) => a.dealWeight !== undefined);
   (['blue', 'red'] as const).forEach((a, side) => {
     // Shuffled deck per alliance, so random slots on one alliance differ from each other.
-    const deck = [...all];
-    for (let i = deck.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [deck[i], deck[j]] = [deck[j]!, deck[i]!];
-    }
+    const deck = weighted ? weightedDeck(def, random) : [...all];
+    if (!weighted)
+      for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j]!, deck[i]!];
+      }
     let k = 0;
     choice[a].slots.forEach((slot, station) => {
       const id = side * 3 + station;
@@ -121,4 +123,21 @@ export function resolveLineup(
     });
   });
   return { archetypes, roles, strategies: { blue: choice.blue.strategy, red: choice.red.strategy } };
+}
+
+/**
+ * A deck in the order a weighted draw without replacement deals it (`RobotArchetype.dealWeight`,
+ * default 1; 0 never dealt), so robot types turn up as often as they did in the real season.
+ */
+function weightedDeck(def: GameDefinition, random: () => number): string[] {
+  const left = def.archetypes.filter((x) => (x.dealWeight ?? 1) > 0);
+  const deck: string[] = [];
+  while (left.length) {
+    const total = left.reduce((t, x) => t + (x.dealWeight ?? 1), 0);
+    let pick = random() * total;
+    let i = 0;
+    while (i < left.length - 1 && pick >= (left[i]!.dealWeight ?? 1)) pick -= left[i++]!.dealWeight ?? 1;
+    deck.push(left.splice(i, 1)[0]!.id);
+  }
+  return deck;
 }

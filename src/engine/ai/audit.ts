@@ -2,7 +2,7 @@ import { expandDefinition, restHeight } from '../sim/expand.ts';
 import { footprint, footprintOverlaps, pointInRegion, regionCenter } from '../sim/math.ts';
 import type { GameDefinition, Region2D, RobotArchetype, Vec2 } from '../sim/types.ts';
 import { approachHeading, findShotSpots, navInflation } from './bot.ts';
-import { AllianceNav, obstacleFootprints } from './navgrid.ts';
+import { AllianceNav, navHeight, obstacleFootprints } from './navgrid.ts';
 
 /**
  * Static checks that the bots can actually play a definition, using their own navigation: every
@@ -35,12 +35,14 @@ export function auditDefinition(def: GameDefinition): AuditIssue[] {
   const game = expandDefinition(def);
   const starts = game.startPoses.blue;
 
-  // One nav grid per robot size, shared by the archetypes of that size.
-  const grids = new Map<number, AllianceNav>();
+  // One nav grid per robot size (and height, for structures a tall robot can't drive under).
+  const grids = new Map<string, AllianceNav>();
   const navs: Nav[] = def.archetypes.map((arch) => {
     const inflate = navInflation(arch.frame);
-    let grid = grids.get(inflate);
-    if (!grid) grids.set(inflate, (grid = new AllianceNav(game, inflate, 'blue')));
+    const height = navHeight(game, arch.frame.height);
+    const key = `${inflate}:${height}`;
+    let grid = grids.get(key);
+    if (!grid) grids.set(key, (grid = new AllianceNav(game, inflate, 'blue', height)));
     const memo = new Map<string, boolean>();
     const g = grid;
     const reach = (p: Vec2) => {
