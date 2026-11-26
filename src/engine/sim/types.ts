@@ -79,6 +79,11 @@ export interface FieldElement {
    * - 'none': ignore it (bumps, or a structure robots fit under).
    */
   nav?: 'auto' | 'wall' | 'ramp' | 'none';
+  /**
+   * For a structure robots drive under (`nav: 'none'`): the height, m, below which a robot fits.
+   * Robots whose frame is taller treat it as a wall (their nav grid), as physics already does.
+   */
+  clearance?: number;
   /** CSS color, or 'alliance' to use the owning alliance color (blue/red), 'neutral' for gray. */
   color?: string;
   opacity?: number;
@@ -481,6 +486,11 @@ export interface RobotArchetype {
     reach?: number;
     /** Highest piece-center height the intake can grab, meters. Default 0.3. */
     maxHeight?: number;
+    /**
+     * Can pick pieces up off the floor. Default true; false for a robot that only takes pieces
+     * from human player stations (2024's KitBot loaded through its shooter at the SOURCE).
+     */
+    floor?: boolean;
   };
   /** Target tag -> seconds to place one piece (the mechanism; see `alignSec` for the drive team). */
   place?: Record<string, number>;
@@ -509,6 +519,11 @@ export interface RobotArchetype {
     turret?: boolean;
     /** Compensates for robot velocity when shooting on the move. */
     shootOnMove?: boolean;
+    /**
+     * Can lob a held piece to a teammate up to this far, m (`GameDefinition.passing`, `RobotCommand.pass`).
+     * Omit: the robot doesn't pass.
+     */
+    passRange?: number;
   };
   /** Endgame action id -> seconds to perform. Missing = cannot do it. */
   endgame?: Record<string, number>;
@@ -532,6 +547,11 @@ export interface RobotArchetype {
   auto?: AutoRoutine;
   /** What a bot driving this robot does by default: score, or play defense all teleop. */
   defaultRole?: RobotRole;
+  /**
+   * How often the menu's random preset deals this type, relative to the others (default 1; 0 =
+   * never dealt, menu and lineups only). Set it to the real season's share of such robots.
+   */
+  dealWeight?: number;
   source?: Citation;
 }
 
@@ -577,6 +597,18 @@ export interface SpecialistRole {
    * longer trip for that target.
    */
   targetWeights: Record<string, number>;
+  /**
+   * A feeder: in teleop it fetches pieces far from its goal and passes them toward its teammates
+   * (`GameDefinition.passing`) instead of carrying them, unless it's already within the passing
+   * `minDistance`. Needs a shooter with a `passRange`.
+   */
+  feeds?: boolean;
+  /**
+   * A defender (like the built-in 'defense' role) that waits at a different post: 'goal' in front of
+   * where the opponents score (ADR 0010, the default), 'source' just outside the opponents' loading
+   * area, holding up robots on their way in as well as carriers on their way out.
+   */
+  defense?: 'goal' | 'source';
   source?: Citation;
 }
 
@@ -694,6 +726,12 @@ export interface GameRules {
    * changes the score. Called often while bots plan, so keep it cheap.
    */
   botValue?(ctx: RulesContext, alliance: Alliance, targetId: string): number;
+  /**
+   * Bots only: true while a bot that is ready to score in `targetId` should hold the piece instead,
+   * because it is about to be worth more (2024: a full AMP bank, the HUMAN PLAYER about to AMPLIFY).
+   * A bot holds at most `HOLD_LIMIT_SEC` per arrival, then scores anyway.
+   */
+  botHold?(ctx: RulesContext, alliance: Alliance, targetId: string): boolean;
 }
 
 /** Optional strategy hints for the generic bot AI. */
@@ -730,6 +768,27 @@ export interface BotHints {
    * the zones of `endgameOnly` `fouls.contact` rules.
    */
   endgameProtectedZones?: string[];
+  /**
+   * Opponent zone base ids bots keep their paths out of (if they can) only from 5 s before the
+   * endgame, where `protectedZones` apply all match: places that are legal and useful to drive
+   * through until then (2024: the opponent's STAGE ZONE, G424 B). Default none.
+   */
+  endgamePathZones?: string[];
+}
+
+/**
+ * Passing: a robot with a shooter lobs a piece to a spot on the floor for a teammate to pick up
+ * (2024: feeders shooting NOTES from the SOURCE side into their WING). Engine-checked: teleop only, a
+ * shooter `passRange`, and not from the opponent's zones listed in `notFromOpponent`.
+ */
+export interface PassingRules {
+  /** Where passes land, in blue's frame (mirrored or rotated for red): spots near the alliance's goal. */
+  landing: Vec2[];
+  /** The opponent's zone base ids a robot may not pass from (2024 G414: the opponent's WING). */
+  notFromOpponent?: string[];
+  /** Bots don't pass from closer than this to the landing spot, m: they carry it. Default 6. */
+  minDistance?: number;
+  source?: Citation;
 }
 
 // ---------------------------------------------------------------- the definition
@@ -764,6 +823,8 @@ export interface GameDefinition {
   lineups?: AllianceLineup[];
   /** Specialist jobs bots can be given besides 'score' and 'defense' (lineup slot roles). */
   roles?: SpecialistRole[];
+  /** Robots may lob pieces to teammates (shooters with a `passRange`). Omit: nobody passes. */
+  passing?: PassingRules;
   rules?: GameRules;
   botHints?: BotHints;
 }

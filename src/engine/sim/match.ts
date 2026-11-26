@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GRAVITY, shotAt, type ShotSolution } from './ballistics.ts';
+import { GRAVITY, shotAt, solveShot, type ShotSolution } from './ballistics.ts';
 import { expandDefinition, type ExpandedGame, type XEndgame, type XStation, type XTarget } from './expand.ts';
 import { BREAKDOWN_RECOVER_SEC, MECH_RECOVER_SEC, STALL_SEC, faultRates } from './faults.ts';
 import { ScoreLedger } from './ledger.ts';
@@ -9,6 +9,7 @@ import { Referee, type ContactWarning, type PinCount } from './referee.ts';
 import {
   clamp,
   eulerToQuat,
+  flipPoint,
   rotateVec,
   footprint,
   footprintOverlaps,
@@ -31,6 +32,7 @@ import type {
   RobotInfo,
   RulesContext,
   ScoreCategory,
+  Vec2,
   Vec3,
 } from './types.ts';
 
@@ -50,6 +52,11 @@ export interface RobotCommand {
   targetId?: string;
   /** The piece to ask for at a human player station that offers a `choice`. */
   pieceType?: string;
+  /**
+   * Lob a held piece so it lands here (passing to a teammate, `GameDefinition.passing`): needs a
+   * shooter with a `passRange`, teleop, and a spot the game allows passing from.
+   */
+  pass?: Vec2;
 }
 
 export const IDLE: RobotCommand = Object.freeze({
@@ -946,7 +953,7 @@ export class Match {
     } else r.stationDwell = 0;
     if (cmd.score) {
       if (!this.tryStartPlace(r)) this.tryShoot(r);
-    }
+    } else if (cmd.pass) this.tryPass(r, cmd.pass);
     if (cmd.eject && r.held.length > 0) this.eject(r);
   }
 
@@ -1097,6 +1104,7 @@ export class Match {
     let best: Piece | null = null;
     let bestD = Infinity;
     for (const p of this.pieces) {
+      if (intake.floor === false) break;
       if (p.status !== 'field' || !intake.pieceTypes.includes(p.type.id) || !r.canHold(p.type.id)) continue;
       const pos = p.position;
       if (pos.z > maxH) continue;
@@ -1215,6 +1223,11 @@ export class Match {
   /** Extra points the game's rules tell bots a piece in `targetId` is worth now (`GameRules.botValue`). */
   botValue(alliance: Alliance, targetId: string): number {
     return this.def.rules?.botValue?.(this.rulesCtx, alliance, targetId) ?? 0;
+  }
+
+  /** The game's rules tell bots to hold a ready piece for `targetId` for now (`GameRules.botHold`). */
+  botHold(alliance: Alliance, targetId: string): boolean {
+    return this.def.rules?.botHold?.(this.rulesCtx, alliance, targetId) ?? false;
   }
 
   /**
@@ -1348,6 +1361,78 @@ export class Match {
     p.setPosition(pos);
     p.setVelocity(vel);
     p.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  }
+
+  /** Where this robot's alliance lands its passes (`GameDefinition.passing`, mirrored for red). */
+  passLandings(alliance: Alliance): Vec2[] {
+    const spots = this.def.passing?.landing ?? [];
+    return alliance === 'blue'
+      ? spots
+      : spots.map((p) => flipPoint(p, this.def.field.symmetry, this.def.field));
+  }
+
+  /** The landing spot nearest this robot that it could pass to from here right now, or null. */
+  passSpot(r: Robot): Vec2 | null {
+    if (!this.canPassFrom(r, r)) return null;
+    const range = r.archetype.shooter!.passRange!;
+    let best: Vec2 | null = null;
+    let bestD = Infinity;
+    for (const p of this.passLandings(r.alliance)) {
+      const d = Math.hypot(p.x - r.x, p.y - r.y);
+      if (d <= range && d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Whether robot `r` may pass from `at`: it has a shooter with a `passRange` and working
+   * mechanisms, it's teleop, and `at` isn't in one of the opponent's zones the game forbids passing
+   * from (`passing.notFromOpponent`, 2024 G414: the opponent's WING).
+   */
+  canPassFrom(r: Robot, at: Vec2): boolean {
+    const rules = this.def.passing;
+    if (!rules || !r.archetype.shooter?.passRange || r.mechDown || this.phase !== 'teleop') return false;
+    const opp = r.alliance === 'blue' ? 'red' : 'blue';
+    const banned = rules.notFromOpponent ?? [];
+    return !this.game.zones.some(
+      (z) => z.alliance === opp && banned.includes(z.baseId) && pointInRegion(at, z.region),
+    );
+  }
+
+  private tryPass(r: Robot, to: Vec2): void {
+    const sh = r.archetype.shooter;
+    if (!sh?.passRange || r.shootCooldown > 0 || !this.canPassFrom(r, r)) return;
+    const pieceType = r.held.find((h) => sh.pieceTypes.includes(h));
+    if (!pieceType) return;
+    const heading = Math.atan2(to.y - r.y, to.x - r.x);
+    if (!sh.turret) {
+      r.aimYaw = heading;
+      if (Math.abs(wrapAngle(heading - r.yaw)) > (5 * Math.PI) / 180) return;
+    }
+    const piece = this.pieces.find(
+      (p) => p.status === 'held' && p.heldBy === r.id && p.type.id === pieceType,
+    )!;
+    const oz = Math.max(sh.height, r.archetype.frame.height + piece.radius + 0.02);
+    const d = Math.hypot(to.x - r.x, to.y - r.y);
+    if (d > sh.passRange) return;
+    // A lob: steeper than the minimum-energy shot, so it clears robots and drops in.
+    const sol = solveShot(sh.exitSpeed, d, piece.radius - oz, 'high', sh.pitchRangeDeg);
+    if (sol === null) return;
+    const spread = (sh.spreadDeg * Math.PI) / 180;
+    const yaw = heading + gaussian(this.random) * spread;
+    const pitch = sol.pitch + gaussian(this.random) * spread;
+    let vx = sol.speed * Math.cos(pitch) * Math.cos(yaw);
+    let vy = sol.speed * Math.cos(pitch) * Math.sin(yaw);
+    if (!sh.shootOnMove) {
+      vx += r.vx;
+      vy += r.vy;
+    }
+    r.held.splice(r.held.indexOf(pieceType), 1);
+    this.release(piece, { x: r.x, y: r.y, z: oz }, { x: vx, y: vy, z: sol.speed * Math.sin(pitch) });
+    r.shootCooldown = sh.reloadSec;
   }
 
   private eject(r: Robot): void {

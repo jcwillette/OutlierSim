@@ -16,6 +16,14 @@ const SLOW_MIN_HEIGHT = 0.05;
 /** A* cost multiplier for slow ground: bots cross a ramp only when it saves real distance. */
 const SLOW_COST = 3;
 
+/**
+ * The height a robot's nav grid is built for: its frame height if some structure is too low for it
+ * (`FieldElement.clearance`), else 0, so every robot that fits under everything shares one grid.
+ */
+export function navHeight(game: ExpandedGame, frameHeight: number): number {
+  return game.elements.some((e) => e.clearance !== undefined && frameHeight > e.clearance) ? frameHeight : 0;
+}
+
 /** A circle bots should path around this time (e.g. a parked robot). */
 export interface DynamicObstacle {
   x: number;
@@ -47,12 +55,19 @@ function convexHull2D(points: Vec2[]): Vec2[] {
  * 2D footprints of the solid field elements bots drive around (walls), or with `slow`, of the ones
  * they drive over slowly (ramps, platforms). `FieldElement.nav` decides, or by default the height:
  * parts at least `DRIVABLE_HEIGHT` tall that reach below `robotHeight` are walls, lower ones at least
- * `SLOW_MIN_HEIGHT` tall are ramps.
+ * `SLOW_MIN_HEIGHT` tall are ramps. `frameHeight`: a robot this tall also treats the structures it
+ * doesn't fit under (`FieldElement.clearance`) as walls.
  */
-export function obstacleFootprints(game: ExpandedGame, robotHeight = 0.5, slow = false): Region2D[] {
+export function obstacleFootprints(
+  game: ExpandedGame,
+  robotHeight = 0.5,
+  slow = false,
+  frameHeight = 0,
+): Region2D[] {
   const out: Region2D[] = [];
   for (const e of game.elements) {
-    if (e.solid === false || e.nav === 'none') continue;
+    const tooLow = !slow && e.clearance !== undefined && frameHeight > e.clearance;
+    if (e.solid === false || (e.nav === 'none' && !tooLow)) continue;
     const q = eulerToQuat(e.rotation);
     let verts: Array<{ x: number; y: number; z: number }>;
     switch (e.shape.kind) {
@@ -83,8 +98,9 @@ export function obstacleFootprints(game: ExpandedGame, robotHeight = 0.5, slow =
     });
     const minZ = Math.min(...world.map((w) => w.z));
     const maxZ = Math.max(...world.map((w) => w.z));
-    const kind =
-      e.nav === 'wall' || e.nav === 'ramp'
+    const kind = tooLow
+      ? 'wall'
+      : e.nav === 'wall' || e.nav === 'ramp'
         ? e.nav
         : maxZ >= DRIVABLE_HEIGHT
           ? minZ > robotHeight
@@ -138,10 +154,12 @@ export class NavGrid {
   private readonly open = new NodeHeap();
   private dynScratch: Uint8Array | null = null;
 
+  /** `frameHeight`: the robot's height, for structures it doesn't fit under (`FieldElement.clearance`). */
   constructor(
     readonly game: ExpandedGame,
     readonly inflate: number,
     cell = 0.12,
+    frameHeight = 0,
   ) {
     const { length: L, width: W } = game.def.field;
     this.cell = cell;
@@ -155,7 +173,7 @@ export class NavGrid {
     this.came = new Int32Array(this.cols * this.rows);
     this.stamp = new Uint32Array(this.cols * this.rows);
     this.closedAt = new Uint32Array(this.cols * this.rows);
-    const obstacles = obstacleFootprints(game).map((o) => withBounds(o, inflate));
+    const obstacles = obstacleFootprints(game, 0.5, false, frameHeight).map((o) => withBounds(o, inflate));
     const ramps = obstacleFootprints(game, 0.5, true).map((o) => withBounds(o, inflate * 0.5));
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
@@ -445,18 +463,19 @@ export class AllianceNav {
     game: ExpandedGame,
     inflate: number,
     readonly alliance: Alliance,
+    frameHeight = 0,
   ) {
     const field = game.def.field;
     if (alliance === 'blue') {
       this.flip = null;
       this.flipZone = null;
-      this.grid = new NavGrid(game, inflate);
+      this.grid = new NavGrid(game, inflate, undefined, frameHeight);
     } else {
       const { length: L, width: W, symmetry } = field;
       this.flip =
         symmetry === 'rotational' ? (p) => ({ x: L - p.x, y: W - p.y }) : (p) => ({ x: L - p.x, y: p.y });
       this.flipZone = (r) => flipRegion(r, symmetry, field);
-      this.grid = new NavGrid(fieldFromRed(game), inflate);
+      this.grid = new NavGrid(fieldFromRed(game), inflate, undefined, frameHeight);
     }
   }
 

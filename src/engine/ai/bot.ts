@@ -30,7 +30,7 @@ import type {
   SpecialistRole,
   Vec2,
 } from '../sim/types.ts';
-import { AllianceNav, type DynamicObstacle } from './navgrid.ts';
+import { AllianceNav, navHeight, type DynamicObstacle } from './navgrid.ts';
 import { PointIndex } from './spatial.ts';
 
 /**
@@ -79,6 +79,8 @@ type Plan =
   | { kind: 'station'; stationId: string; point: Vec2; pieceType?: string }
   | { kind: 'place'; targetId: string; point: Vec2; face?: Vec2 }
   | { kind: 'shoot'; targetId: string; point: Vec2; aim: Vec2 }
+  /** Feeder: lob the held piece from `point` so it lands at `to` (`GameDefinition.passing`). */
+  | { kind: 'pass'; point: Vec2; to: Vec2 }
   | { kind: 'endgame'; actionId: string; zoneIndex: number; point: Vec2 }
   | { kind: 'park'; point: Vec2 }
   /** Auto routine: drive out of the starting zone (`leaveZoneInAuto` awards). */
@@ -118,6 +120,8 @@ interface MatchAI {
   bodyFouling: Record<Alliance, { always: ZoneCheck[]; endgame: ZoneCheck[] }>;
   /** Path penalty for each alliance's robots: the opponent's protected zones. */
   penalty: Record<Alliance, { key: string; regions: Region2D[] } | undefined>;
+  /** The same plus `botHints.endgamePathZones`, used from 5 s before the endgame (undefined: none declared). */
+  endgamePenalty: Record<Alliance, { key: string; regions: Region2D[] } | undefined>;
   /** Each alliance's carrying lane (where it fetches and scores), for defenders. */
   lanes: Record<Alliance, Lane>;
 }
@@ -174,6 +178,14 @@ function aiFor(m: Match): MatchAI {
       const zones = m.game.zones.filter((z) => z.alliance === opp && always.includes(z.baseId));
       return { key: `protected:${opp}`, regions: zones.map((z) => z.region) };
     };
+    const late = hints?.endgamePathZones ?? [];
+    const endgamePenalty = (a: Alliance) => {
+      if (!late.length) return undefined;
+      const opp = other(a);
+      const ids = [...always, ...late];
+      const zones = m.game.zones.filter((z) => z.alliance === opp && ids.includes(z.baseId));
+      return { key: `protected-endgame:${opp}`, regions: zones.map((z) => z.region) };
+    };
     s = {
       claims: { blue: new Map(), red: new Map() },
       intents: { blue: new Map(), red: new Map() },
@@ -190,6 +202,7 @@ function aiFor(m: Match): MatchAI {
         red: { always: regions('red', bodyAlways), endgame: regions('red', bodyEndgame) },
       },
       penalty: { blue: penalty('blue'), red: penalty('red') },
+      endgamePenalty: { blue: endgamePenalty('blue'), red: endgamePenalty('red') },
       lanes: { blue: laneFor(m, 'blue'), red: laneFor(m, 'red') },
     };
     matchAI.set(m, s);
@@ -218,12 +231,14 @@ function gridFor(m: Match, r: Robot): AllianceNav {
   let g = robotGrids.get(r);
   if (g) return g;
   const inflate = navInflation(r.archetype.frame);
+  // Robots too tall for a structure others drive under (`FieldElement.clearance`) get their own grid.
+  const height = navHeight(m.game, r.archetype.frame.height);
   let grids = navGrids.get(m.def);
   if (!grids) navGrids.set(m.def, (grids = new Map()));
-  const key = `${r.alliance}:${inflate}`;
+  const key = height ? `${r.alliance}:${inflate}:${height}` : `${r.alliance}:${inflate}`;
   g = grids.get(key);
   if (!g) {
-    g = new AllianceNav(m.game, inflate, r.alliance);
+    g = new AllianceNav(m.game, inflate, r.alliance, height);
     grids.set(key, g);
   }
   robotGrids.set(r, g);
@@ -311,6 +326,10 @@ export interface BotOptions {
 
 /** Seconds a tunnel-vision lapse lasts (uniform in this range). */
 const LAPSE_SEC: [number, number] = [2, 4];
+/** Longest a bot holds a ready shot when the game asks it to (`GameRules.botHold`), s. */
+const HOLD_LIMIT_SEC = 14;
+/** `PassingRules.minDistance` default, m. */
+const DEFAULT_PASS_MIN = 6;
 /** Each point of robot unreliability (1 - reliability) adds this much lapse fraction. */
 const LAPSE_PER_UNRELIABILITY = 1.5;
 
@@ -380,6 +399,17 @@ export class BotBrain implements RobotController {
     return { runs: this.autoRun.runs, piecesLeft: (auto.pieces ?? Infinity) - used };
   }
 
+  /** The game's specialist role this bot plays, if any (looked up once). */
+  private specialistRole(m: Match): SpecialistRole | null {
+    if (this.specialist === undefined) this.specialist = m.def.roles?.find((x) => x.id === this.role) ?? null;
+    return this.specialist;
+  }
+
+  /** Plays defense: the built-in 'defense' role, or a game role with a `defense` post. */
+  get defends(): boolean {
+    return this.role === 'defense' || !!this.specialist?.defense;
+  }
+
   /** In a tunnel-vision lapse right now (ignoring teammates' calls and right of way). */
   get lapsing(): boolean {
     return this.now < this.lapseUntil;
@@ -413,6 +443,7 @@ export class BotBrain implements RobotController {
       return IDLE;
     }
     this.wasOut = false;
+    this.specialistRole(m);
     // A dead auto routine: the robot sits still until teleop.
     if (this.routine(m, r)?.runs === false) return IDLE;
     if (r.mechDown !== this.wasMechDown) {
@@ -475,7 +506,11 @@ export class BotBrain implements RobotController {
     const p = this.plan;
     if (
       r.mechDown &&
-      (p.kind === 'acquire' || p.kind === 'station' || p.kind === 'place' || p.kind === 'shoot')
+      (p.kind === 'acquire' ||
+        p.kind === 'station' ||
+        p.kind === 'place' ||
+        p.kind === 'shoot' ||
+        p.kind === 'pass')
     )
       return false;
     switch (p.kind) {
@@ -494,6 +529,8 @@ export class BotBrain implements RobotController {
       }
       case 'leave':
         return m.phase === 'auto' && stillToLeave(m, r);
+      case 'pass':
+        return m.phase === 'teleop' && r.held.length > 0;
       case 'defend': {
         const o = m.robots[p.opponentId]!;
         if ((this.harassCooldown.get(o.id) ?? 0) > m.time) return false; // broke off (pin count)
@@ -526,9 +563,9 @@ export class BotBrain implements RobotController {
   /** How much the bot wants `t`: the game's `botHints.targetWeights`, times its specialist role's in teleop. */
   private weight(m: Match, t: XTarget): number {
     const w = m.def.botHints?.targetWeights?.[t.baseId] ?? 1;
-    if (this.specialist === undefined) this.specialist = m.def.roles?.find((x) => x.id === this.role) ?? null;
-    if (!this.specialist || m.phase === 'auto') return w;
-    return w * (this.specialist.targetWeights[t.baseId] ?? 1);
+    const role = this.specialistRole(m);
+    if (!role || m.phase === 'auto') return w;
+    return w * (role.targetWeights[t.baseId] ?? 1);
   }
 
   /** The robot could score in `t` now (open, not full, its alliance's) and the game wants it to. */
@@ -613,6 +650,7 @@ export class BotBrain implements RobotController {
     if (intake) {
       const grab = intake.timeSec + m.alignSec(r);
       for (const p of m.pieces) {
+        if (intake.floor === false) break;
         if (p.status !== 'field' || !intake.pieceTypes.includes(p.type.id)) continue;
         if (p.position.z > (intake.maxHeight ?? 0.3) + 0.2) continue;
         if (this.claimedByOther(m, r, `piece:${p.id}`)) continue;
@@ -713,6 +751,7 @@ export class BotBrain implements RobotController {
     // Getting a piece in once it's in reach: the mechanism plus the drive team's line-up (teleop).
     const grab = intake.timeSec + m.alignSec(r);
     for (const p of m.pieces) {
+      if (intake.floor === false) break; // station-only intake
       if (p.status !== 'field' || !intake.pieceTypes.includes(p.type.id) || !r.canHold(p.type.id)) continue;
       const pos = p.position;
       if (pos.z > (intake.maxHeight ?? 0.3) + 0.2) continue; // in flight
@@ -722,6 +761,7 @@ export class BotBrain implements RobotController {
       // them to pick the piece up aren't worth the contact fouls.
       if (nearProtectedZone(m, pos, other(r.alliance), halfSize(r), false)) continue;
       if (this.blacklist.has(p.id) && (this.blacklist.get(p.id) ?? 0) > m.time) continue;
+      if (this.leaveForTeammates(m, r, pos)) continue;
       const approachYaw = this.approachYaw(m, r, pos);
       if (approachYaw === null) continue; // no way to get an intake on it (e.g. against a wall)
       const point = { x: pos.x, y: pos.y };
@@ -825,6 +865,7 @@ export class BotBrain implements RobotController {
       case 'acquire':
         return drive + grab;
       case 'shoot':
+      case 'pass':
         return drive + (r.archetype.shooter?.reloadSec ?? 0);
       default:
         return drive;
@@ -919,7 +960,7 @@ export class BotBrain implements RobotController {
    * mark, wait in the opponents' carrying lane (`guard`) instead of wandering off to score.
    */
   private defenseOption(m: Match, r: Robot, force = false): Option | null {
-    if ((this.role !== 'defense' && !force) || m.phase !== 'teleop') return null;
+    if ((!this.defends && !force) || m.phase !== 'teleop') return null;
     const current = this.plan.kind === 'defend' && this.plan.until === undefined ? this.plan.opponentId : -1;
     let best: { o: Robot; u: number } | null = null;
     let kept = 0;
@@ -949,7 +990,8 @@ export class BotBrain implements RobotController {
   private markValue(m: Match, r: Robot, o: Robot): number {
     const carrying = o.held.length > 0 && opponentPieceValue(m, o) > 0;
     if (!carrying && !this.nearPost(m, r, o)) return 0;
-    const value = carrying ? 1 : EMPTY_MARK_VALUE;
+    // At the opponents' loading area, holding up robots on their way in is the job.
+    const value = carrying ? 1 : this.specialist?.defense === 'source' ? 1 : EMPTY_MARK_VALUE;
     const vo = Math.max(o.speed, CARRIER_PACE * o.archetype.drive.maxSpeed);
     const gate = carrying ? this.gate(m, r, o, scoringSpot(m, o, o), o.alliance, 0) : null;
     // Still well out: can we be waiting at its gate by the time it gets there? (Soonest arrival first.)
@@ -989,7 +1031,12 @@ export class BotBrain implements RobotController {
       x: spots.reduce((t, q) => t + q.x, 0) / spots.length,
       y: spots.reduce((t, q) => t + q.y, 0) / spots.length,
     };
-    const post = this.gate(m, r, from, goal, opp, GUARD_DEPTH) ?? gridFor(m, r).nearestFree(from);
+    // A source post: walk out from the loading area toward their goal instead (the 2024 choke point).
+    const post =
+      this.specialist?.defense === 'source' && lane.source
+        ? (this.gate(m, r, goal, lane.source, opp, SOURCE_GUARD_DEPTH) ??
+          gridFor(m, r).nearestFree(lane.source))
+        : (this.gate(m, r, from, goal, opp, GUARD_DEPTH) ?? gridFor(m, r).nearestFree(from));
     this.post[phase] = post;
     return post;
   }
@@ -1076,8 +1123,10 @@ export class BotBrain implements RobotController {
     const routine = this.routine(m, r);
     const score = !routine || routine.piecesLeft > 0;
     const fetch = room && (!routine || routine.piecesLeft > r.held.length);
+    // A feeder far from its goal passes what it holds instead of carrying it.
+    const pass = score ? this.passOption(m, r) : null;
     const opts = [
-      ...(score ? this.scoreOptions(m, r) : []),
+      ...(pass ? [pass] : score ? this.scoreOptions(m, r) : []),
       ...(fetch ? this.acquireOptions(m, r) : []),
       ...(harass ? [harass] : []),
     ];
@@ -1091,6 +1140,70 @@ export class BotBrain implements RobotController {
         !('point' in o.plan) ||
         this.busyTime(m, r, o.plan) + this.travelBetween(r, o.plan.point, reserve.point) * 1.4 + reserve.sec <
           m.remaining,
+    );
+  }
+
+  /** A feeder in teleop (`SpecialistRole.feeds`, `GameDefinition.passing`), with a shooter that passes. */
+  private feeding(m: Match, r: Robot): boolean {
+    return (
+      m.phase === 'teleop' &&
+      !!m.def.passing &&
+      !!this.specialistRole(m)?.feeds &&
+      !!r.archetype.shooter?.passRange &&
+      !r.mechDown
+    );
+  }
+
+  /** The alliance's landing spot nearest `p`, and how far it is. */
+  private nearestLanding(m: Match, r: Robot, p: Vec2): { to: Vec2; d: number } | null {
+    let best: { to: Vec2; d: number } | null = null;
+    for (const to of m.passLandings(r.alliance)) {
+      const d = Math.hypot(to.x - p.x, to.y - p.y);
+      if (!best || d < best.d) best = { to, d };
+    }
+    return best;
+  }
+
+  /**
+   * Feeder holding a piece, at least `passing.minDistance` from its landing spot: pass it from the
+   * first spot toward the landing that is in range and where passing is allowed. Null otherwise
+   * (then it carries the piece and scores it itself).
+   */
+  private passOption(m: Match, r: Robot): Option | null {
+    if (!this.feeding(m, r)) return null;
+    const sh = r.archetype.shooter!;
+    if (!r.held.some((h) => sh.pieceTypes.includes(h))) return null;
+    const near = this.nearestLanding(m, r, r);
+    if (!near || near.d < (m.def.passing!.minDistance ?? DEFAULT_PASS_MIN)) return null;
+    const grid = gridFor(m, r);
+    const ux = (near.to.x - r.x) / near.d;
+    const uy = (near.to.y - r.y) / near.d;
+    for (let k = 0; k * 0.25 < near.d; k++) {
+      const p = k === 0 ? { x: r.x, y: r.y } : { x: r.x + ux * k * 0.25, y: r.y + uy * k * 0.25 };
+      if (near.d - k * 0.25 > sh.passRange! * 0.9) continue;
+      if (!m.canPassFrom(r, p) || (k > 0 && !grid.isFree(p))) continue;
+      const pts = m.def.targets.reduce((best, t) => Math.max(best, t.points.teleop), 0);
+      return {
+        plan: { kind: 'pass', point: p, to: near.to },
+        utility: (pts / (this.travelTime(m, r, p) + sh.reloadSec + 0.5)) * this.noise(m),
+      };
+    }
+    return null;
+  }
+
+  /** A feeder leaves loose pieces near its landing spots to the teammates it feeds, while one can score. */
+  private leaveForTeammates(m: Match, r: Robot, pos: Vec2): boolean {
+    if (!this.feeding(m, r)) return false;
+    const near = this.nearestLanding(m, r, pos);
+    if (!near || near.d >= (m.def.passing!.minDistance ?? DEFAULT_PASS_MIN)) return false;
+    return m.robots.some(
+      (o) =>
+        o !== r &&
+        o.alliance === r.alliance &&
+        !o.isOut(m.time) &&
+        !o.mechDown &&
+        !o.endgameDone &&
+        o.archetype.intake?.floor !== false,
     );
   }
 
@@ -1116,7 +1229,7 @@ export class BotBrain implements RobotController {
       'close-out': 1,
     }[this.strategy];
     const weight = (m.def.botHints?.defenseOpportunism ?? 1) * strategyWeight;
-    if (weight <= 0 || m.phase !== 'teleop' || r.held.length > 0 || this.role === 'defense') return null;
+    if (weight <= 0 || m.phase !== 'teleop' || r.held.length > 0 || this.defends) return null;
     let best: Option | null = null;
     for (const o of m.robots) {
       if (o.action || o.held.length === 0 || !this.worthDefending(m, r, o)) continue;
@@ -1220,7 +1333,8 @@ export class BotBrain implements RobotController {
       Math.hypot(goal.x - this.pathGoal.x, goal.y - this.pathGoal.y) > 0.3 ||
       this.pathAge > 1
     ) {
-      const zones = aiFor(m).penalty[r.alliance];
+      const ai = aiFor(m);
+      const zones = (defenseEndgame(m) ? ai.endgamePenalty[r.alliance] : undefined) ?? ai.penalty[r.alliance];
       this.path = finalApproach ? [goal] : grid.findPath(r, goal, this.parkedRobots(m, r), zones);
       // Parked robots can wall off the only way around (e.g. a barrier end): then path through them.
       if (!this.path.length && !finalApproach) this.path = grid.findPath(r, goal, [], zones);
@@ -1425,9 +1539,25 @@ export class BotBrain implements RobotController {
         if (near) this.arrivedFor += dt;
         const canNow = m.canShootAt(r, p.targetId);
         const settled = near && r.speed < 0.25 && this.arrivedFor >= this.skill.dwell;
-        const fire = canNow && (settled || (sh.shootOnMove ?? false));
+        // The game says the shot is about to be worth more (`GameRules.botHold`): wait a little.
+        const hold = settled && this.arrivedFor < HOLD_LIMIT_SEC && m.botHold(r.alliance, p.targetId);
+        const fire = canNow && !hold && (settled || (sh.shootOnMove ?? false));
         const omega = s.dist < 2.5 && !sh.turret ? this.faceCmd(m, r, yaw) : this.travelFace(m, r, s);
         return { ...cmd, vx: near ? 0 : s.vx, vy: near ? 0 : s.vy, omega, score: fire, targetId: p.targetId };
+      }
+      case 'pass': {
+        const s = this.steer(m, r, p.point, false);
+        const range = r.archetype.shooter?.passRange ?? 0;
+        // Allowed and in range: stop, turn to the landing spot and lob it.
+        const ready = m.canPassFrom(r, r) && Math.hypot(p.to.x - r.x, p.to.y - r.y) <= range;
+        const yaw = Math.atan2(p.to.y - r.y, p.to.x - r.x);
+        return {
+          ...cmd,
+          vx: ready ? 0 : s.vx,
+          vy: ready ? 0 : s.vy,
+          omega: ready ? this.faceCmd(m, r, yaw) : this.travelFace(m, r, s),
+          ...(ready && r.speed < 0.4 ? { pass: p.to } : {}),
+        };
       }
       case 'endgame': {
         const s = this.steer(m, r, p.point, false);
@@ -1611,6 +1741,8 @@ function samePlan(a: Plan, b: Plan): boolean {
         a.targetId === b.targetId &&
         Math.hypot(a.point.x - b.point.x, a.point.y - b.point.y) < 0.8
       );
+    case 'pass':
+      return b.kind === 'pass' && Math.hypot(a.to.x - b.to.x, a.to.y - b.to.y) < 0.1;
     case 'endgame':
       return b.kind === 'endgame' && a.actionId === b.actionId && a.zoneIndex === b.zoneIndex;
     case 'defend':
@@ -1636,6 +1768,8 @@ const EMPTY_LEASH = 3;
 const EMPTY_MARK_VALUE = 0.4;
 /** A guarding defender waits this far (m) out from the opponents' gate (`gate`). */
 const GUARD_DEPTH = 0.5;
+/** How far past the opponents' loading-area zones a source-post defender waits (`SpecialistRole.defense`). */
+const SOURCE_GUARD_DEPTH = 1.5;
 /** A marked opponent this close (m) to its gate gets met; farther out, the defender waits at the gate. */
 const STEP_OUT = 3.5;
 /** Within this distance (m) of its mark a defender drives straight at it instead of path planning. */
@@ -1991,7 +2125,7 @@ export function zoneCheck(region: Region2D): ZoneCheck {
 /** A bot that is defending (role or current plan): not worth defending against. */
 function isDefending(o: Robot): boolean {
   const b = o.controller instanceof BotBrain ? o.controller : null;
-  return !!b && (b.role === 'defense' || b.currentPlan.kind === 'defend');
+  return !!b && (b.defends || b.currentPlan.kind === 'defend');
 }
 
 /** Best points the opponent could get for a piece it is carrying (its open targets, this period). */

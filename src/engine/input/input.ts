@@ -11,6 +11,8 @@ export interface DriverInput {
   score: boolean;
   endgame: boolean;
   eject: boolean;
+  /** Lob the held piece to the nearest passing spot (games with `passing`). */
+  pass: boolean;
 }
 
 export type ButtonEvent =
@@ -36,6 +38,7 @@ export const KEY_HELP: Array<[string, string]> = [
   ['Shift', 'intake (when auto-intake is off)'],
   ['G', 'endgame action (climb etc.)'],
   ['R', 'eject a piece'],
+  ['T', 'pass: lob a piece to a teammate (games with passing)'],
   ['F', 'switch the piece to ask for (stations with a choice)'],
   ['V', 'switch the level / target Space places on (when there are several)'],
   ['C', 'cycle camera'],
@@ -64,6 +67,7 @@ export const PAD_HELP: Array<[string, string]> = [
   ['LT', 'intake'],
   ['A', 'endgame'],
   ['B', 'eject'],
+  ['Left stick press', 'pass (games with passing)'],
   ['X', 'switch the piece to ask for'],
   ['D-pad ← →', 'switch the level to place on'],
   ['Y', 'camera'],
@@ -137,6 +141,7 @@ export class InputManager {
     let score = this.down('Space');
     let endgame = this.down('KeyG');
     let eject = this.down('KeyR');
+    let pass = this.down('KeyT');
 
     const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
     const pad = [...pads].find((p) => p?.connected);
@@ -155,6 +160,7 @@ export class InputManager {
       score ||= btn(7);
       endgame ||= btn(0);
       eject ||= btn(1);
+      pass ||= btn(10);
       const pressed = pad.buttons.map((_, i) => btn(i));
       const edge = (i: number) => pressed[i] && !this.prevPadButtons[i];
       if (edge(2)) this.emit('piece');
@@ -167,7 +173,7 @@ export class InputManager {
       if (edge(9)) this.emit('pause');
       this.prevPadButtons = pressed;
     }
-    return { moveX, moveY, turn, intake, score, endgame, eject };
+    return { moveX, moveY, turn, intake, score, endgame, eject, pass };
   }
 }
 
@@ -191,6 +197,7 @@ export class PlayerController implements RobotController {
     score: false,
     endgame: false,
     eject: false,
+    pass: false,
   };
 
   constructor(
@@ -220,12 +227,16 @@ export class PlayerController implements RobotController {
       score: i.score,
       endgame: i.endgame,
       eject: i.eject,
+      ...(i.pass && !i.score ? passTo(m.passSpot(r)) : {}),
       ...(this.pieceType ? { pieceType: this.pieceType } : {}),
       // Place on the chosen level (only matters where several targets share a spot).
       ...(i.score && this.placeRank > 0 ? placeTarget(this.placeChoice(m, r)) : {}),
     };
   }
 }
+
+const passTo = (p: { x: number; y: number } | null): { pass?: { x: number; y: number } } =>
+  p ? { pass: p } : {};
 
 const placeTarget = (o: { target: { id: string } } | undefined): { targetId?: string } =>
   o ? { targetId: o.target.id } : {};
