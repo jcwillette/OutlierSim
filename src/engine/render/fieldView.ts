@@ -138,6 +138,8 @@ export class FieldView {
   constructor(
     readonly game: ExpandedGame,
     private playerId: number | null,
+    /** `shadowMapSize`: the sun's shadow map edge in texels (smaller saves GPU memory on phones). */
+    opts: { shadowMapSize?: number } = {},
   ) {
     const { length: L, width: W, wallHeight: H } = game.def.field;
     this.scene.background = new THREE.Color(0x14171c);
@@ -150,7 +152,8 @@ export class FieldView {
     sun.position.set(L * 0.3, W * 0.2, 12);
     sun.target.position.set(L / 2, W / 2, 0);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    const shadowSize = opts.shadowMapSize ?? 2048;
+    sun.shadow.mapSize.set(shadowSize, shadowSize);
     Object.assign(sun.shadow.camera, {
       left: -L / 1.6,
       right: L / 1.6,
@@ -343,6 +346,30 @@ export class FieldView {
       }
     }
     if (v.status && key === 'stall') v.status.visible = Math.floor(time * 3) % 2 === 0;
+  }
+
+  /**
+   * Free the scene's GPU buffers (geometries, materials, textures). Each match builds a new view, so
+   * without this every match leaked its whole field into GPU memory until a phone's browser lost
+   * the WebGL context (a white page with a sad-face icon).
+   */
+  dispose(): void {
+    const geos = new Set<THREE.BufferGeometry>();
+    const mats = new Set<THREE.Material>();
+    this.scene.traverse((o) => {
+      (o as THREE.DirectionalLight).shadow?.dispose();
+      const m = o as THREE.Mesh;
+      if (m.geometry) geos.add(m.geometry);
+      if (m.material) for (const x of Array.isArray(m.material) ? m.material : [m.material]) mats.add(x);
+    });
+    for (const g of this.pieceGeo.values()) geos.add(g);
+    for (const x of this.pieceMat.values()) mats.add(x);
+    for (const g of geos) g.dispose();
+    for (const x of mats) {
+      for (const v of Object.values(x)) if (v instanceof THREE.Texture) v.dispose();
+      x.dispose();
+    }
+    this.scene.clear();
   }
 
   /** Move the ring marker to another robot (spectator follow), or hide it with null. */

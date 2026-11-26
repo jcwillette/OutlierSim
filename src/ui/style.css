@@ -342,10 +342,66 @@ label.check {
   border-left-color: var(--red);
 }
 
-.status {
+/* Status panel on the left, camera label (and touch buttons) on the right; on a narrow screen the
+   right-hand stack wraps onto its own row instead of covering the panel. */
+.bottombar {
   position: absolute;
   left: 12px;
+  right: 12px;
   bottom: 12px;
+  display: flex;
+  flex-wrap: wrap-reverse;
+  /* wrap-reverse swaps the cross axis: flex-start is the bottom edge. */
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+.camstack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  margin-left: auto;
+  max-width: 100%;
+}
+.touchbar {
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+.touchbar button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 10px;
+  background: var(--panel);
+  font-weight: 700;
+  touch-action: manipulation;
+}
+.gl-lost {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--text);
+  z-index: 10;
+}
+.gl-lost p {
+  max-width: 420px;
+  margin: 0;
+  line-height: 1.45;
+}
+.touch-note {
+  color: var(--accent);
+  margin-top: 8px;
+}
+.status {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -384,10 +440,7 @@ label.check {
   color: #ff9f43;
 }
 .camlabel {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  max-width: calc(100% - 24px);
+  max-width: 100%;
   font-size: 12px;
   color: var(--muted);
   background: var(--panel);
@@ -457,6 +510,33 @@ ul.fouls .red {
   }
   .status {
     min-width: 0;
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .topstack {
+    top: 60px;
+    width: calc(100vw - 16px);
+  }
+  /* Stack the alliances' chips and let long ones wrap, rather than run off both edges. */
+  .indicators {
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    max-width: 100%;
+  }
+  .ind-group,
+  .ind-group.blue,
+  .ind-group.red {
+    align-items: center;
+    max-width: 100%;
+  }
+  .chip {
+    white-space: normal;
+    text-align: center;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 12px;
   }
   .card {
     padding: 16px;

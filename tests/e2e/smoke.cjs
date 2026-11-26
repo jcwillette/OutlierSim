@@ -114,13 +114,22 @@ const OUT = path.join(__dirname, '..', '..', 'test-results');
         return s.player === null && s.brains.size === 6 ? 0 : 1;
       });
       await w.screenshot({ path: path.join(OUT, `${id}-watch.png`) });
+      // A new match must free the last one's GPU buffers (phones lose the WebGL context otherwise).
+      const gpu = () => w.evaluate(() => globalThis.outlierSim.renderer.info.memory);
+      const mem0 = await gpu();
+      await w.evaluate(() => globalThis.outlierSim.start());
+      await w.waitForTimeout(500);
+      const mem1 = await gpu();
+      const leak = mem1.geometries > mem0.geometries || mem1.textures > mem0.textures;
       const wok =
         label === 'Watch match' &&
         werrors.length === 0 &&
         following.startsWith('Following Red 1') &&
-        players === 0;
+        players === 0 &&
+        !leak;
       console.log(
-        `${wok ? 'PASS' : 'FAIL'} ${id} (watch${preset ? `, blue=${preset}` : ''}): ${following}, non-bot robots=${players}`,
+        `${wok ? 'PASS' : 'FAIL'} ${id} (watch${preset ? `, blue=${preset}` : ''}): ${following}, non-bot robots=${players}, ` +
+          `GPU geometries ${mem0.geometries} -> ${mem1.geometries} after a new match`,
       );
       if (!wok) {
         failed++;
