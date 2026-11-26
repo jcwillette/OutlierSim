@@ -405,6 +405,13 @@ const targets: ScoringTarget[] = [
     },
     aimPoint: { x: BARGE_X, y: NET_Y, z: BARGE_TOP - 0.15 },
     arc: 'high',
+    // A robot whose elevator reaches over the BARGE's 8 ft 5 in top drops the ALGAE in from its
+    // side of the BARGE, under the NET.
+    place: {
+      zone: rect(BARGE_X - 1.15, NET_Y - 1.5, BARGE_X - 0.45, NET_Y + 1.5),
+      facePoint: { x: BARGE_X + 6, y: NET_Y },
+      faceToleranceRad: 0.7,
+    },
     source: `${SRC_PTS} ALGAE in NET 4; ${M(47, '6.5.1 above the NET, within its perimeter')}; ${M(27, '5.4.2')}`,
   },
 ];
@@ -454,6 +461,8 @@ const reefAlgae: HumanPlayerStation[] = FACES.map((k) => {
     supply: 1,
     handoffHeight: z,
     auto: true,
+    // Not a loading area: defenders read the CORAL STATIONS as where robots come from.
+    lane: false,
     display: { ...reefPoint(k, REEF_APOTHEM - 0.05), z },
     source: `${M(45, '6.3.4.2 6 ALGAE per REEF on pairs of BRANCHES, Fig 6-3 alternating high and low')}; ${M(17, '4 robots harvest ALGAE from the REEF')}`,
   };
@@ -486,24 +495,12 @@ const CORAL_ALGAE = ['coral', 'algae'];
  */
 const ROBOT_SRC = `${M(78, 'R103 115 lb, R104 120 in perimeter, 3 ft 6 in tall, R105 1 ft 6 in extension')}; tiers from robot-baselines.md`;
 
-/** An ALGAE "shooter": the elevator lifts the ball over the BARGE's 8 ft 5 in top and flicks it into the NET. */
-const netFlick = (spreadDeg: number, maxRange: number) => ({
-  pieceTypes: ['algae'],
-  tags: ['net'],
-  exitSpeed: 7,
-  spreadDeg,
-  reloadSec: 0.8,
-  maxRange,
-  height: 2.05,
-  pitchRangeDeg: [45, 85] as [number, number],
-});
-
 const archetypes: RobotArchetype[] = [
   {
     id: 'elevator',
     name: 'Full-REEF elevator',
     description:
-      'A top-seventh robot: swerve, a ground and CORAL STATION intake, an elevator that scores CORAL on every level up to L4, an ALGAE arm that clears both REEF positions and flicks ALGAE into the NET or the PROCESSOR, and a deep-CAGE climber.',
+      'A top-seventh robot: swerve, a ground and CORAL STATION intake, an elevator that scores CORAL on every level up to L4, an ALGAE arm that clears both REEF positions and lifts ALGAE over the BARGE into the NET (or scores the PROCESSOR), and a deep-CAGE climber.',
     frame: { length: 0.9, width: 0.9, height: 1.0 },
     mass: onFieldMass(115),
     drive: driveFor(
@@ -513,8 +510,8 @@ const archetypes: RobotArchetype[] = [
     capacity: { coral: 1, algae: 1 },
     totalCapacity: 2,
     intake: { pieceTypes: CORAL_ALGAE, timeSec: 0.3, reach: 0.25, maxHeight: 1.45 },
-    place: { L1: 0.4, L2: 0.7, L3: 0.9, L4: 1.3, processor: 0.5 },
-    shooter: netFlick(2.5, 1.6),
+    // NET: the elevator lifts the ALGAE over the BARGE's 8 ft 5 in top and drops it in.
+    place: { L1: 0.4, L2: 0.7, L3: 0.9, L4: 1.3, processor: 0.5, net: 1.2 },
     alignSec: 2.6,
     auto: { pieces: 3, success: 0.9 },
     endgame: { deep: 6 },

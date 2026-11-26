@@ -259,6 +259,11 @@ export interface HumanPlayerStation {
    */
   auto?: boolean;
   /**
+   * Part of the alliance's carrying lane, where defenders wait for its robots (`attachBots`). Default
+   * true; false for a pickup on a scoring structure that isn't a loading area (2025 REEF ALGAE).
+   */
+  lane?: boolean;
+  /**
    * Visual only: where a piece of the station's first type is drawn while the station still has
    * supply for that alliance (a piece resting on a field structure until a robot takes it).
    */

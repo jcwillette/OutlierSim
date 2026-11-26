@@ -146,7 +146,7 @@ function laneFor(m: Match, a: Alliance): Lane {
     if (t.place) targets.push(regionCenter(t.place.zone));
     else if (t.aimPoint) targets.push({ x: t.aimPoint.x, y: t.aimPoint.y });
   }
-  const stations = m.game.stations.filter((st) => !st.alliance || st.alliance === a);
+  const stations = m.game.stations.filter((st) => (!st.alliance || st.alliance === a) && st.lane !== false);
   const home = { x: a === 'blue' ? 0 : m.def.field.length, y: m.def.field.width / 2 };
   return { source: mean(stations.map((st) => regionCenter(st.zone))), goal: mean(targets) ?? home };
 }

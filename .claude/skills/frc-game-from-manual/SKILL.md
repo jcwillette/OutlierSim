@@ -123,6 +123,11 @@ What the 2023 and 2024 blind builds ran into, so the next one doesn't:
 - **Optimistic human players and bonuses** (2024): always pressing Coopertition, landing 25 % of HIGH NOTES and pairing robots on a chain for HARMONY were all several times the real rates (60 %, ~8 %, 7 % of alliances). Estimate human-player feats low.
 - **Bots that never wait** (2024): a multiplier the human player triggers is worth little if bots shoot the moment they arrive. Real drive teams held their shots (see `botHold`).
 - **The manual URL changes**: record the revision and SHA-256 at build time.
+- **The field drawings' AprilTag table is the best position source** (2025): every structure carries tags, with x / y / z and facing in inches. It settled the REEF, PROCESSOR, CORAL STATION and BARGE poses, and the symmetry (rotational in 2025: compare a sided element's tag with its opposite's). Use the welded-field table, and check the drawing's revision block for post-kickoff edits.
+- **Pieces that rest on a structure** (2025 REEF ALGAE) are `supply: 1` stations with `display`, `auto: true` if robots take them in AUTO, and `lane: false`. Without `lane: false` they move the defenders' idea of the loading area into the scoring structure, and the defender parks on a scoring spot.
+- **A scoring structure protected all round** (2025 G427: any part of a robot in the REEF ZONE) needs grown bot zones, or defenders wait where scorers bump into them.
+- **Human-player throws are real pieces** (2025 NET): aim misses where they can't pass through the goal's volume on the way down, or a "miss" scores.
+- **"One robot across" rules** (2025 G421): bots chase loose pieces in pairs unless `botHints.oneAcrossLine` tells them.
 
 ## Optional: compare with real matches (only when the user asks)
 

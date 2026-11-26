@@ -24,7 +24,7 @@ import {
  *  - PROCESSOR to the opposing HUMAN PLAYER: an ALGAE scored in an alliance's PROCESSOR rolls into the
  *    opponent's PROCESSOR AREA. That HUMAN PLAYER throws it at their own NET in TELEOP (G404: not in
  *    AUTO): a real ballistic ALGAE that lands in the NET with `NET_THROW_CHANCE` and otherwise falls
- *    onto the FIELD near the BARGE, where robots can pick it up.
+ *    short onto the FIELD beside the BARGE (the opponents' half), where robots can pick it up.
  *  - Coopertition: at least 2 ALGAE in each alliance's PROCESSOR lowers the CORAL RP to 3 levels.
  *  - G421: no more than 1 robot of an alliance fully beyond the BARGE ZONES on the opponent's side:
  *    MINOR FOUL, then a MAJOR FOUL for every 3 s it isn't corrected.
@@ -142,9 +142,10 @@ function throwAlgae(ctx: RulesContext, a: Alliance): void {
     const across = (ctx.random() - 0.5) * (NET_WIDTH - 0.6);
     to = { x: net.x + across, y: net.y + along, z: 2.2 };
   } else {
-    // Off the near or far side of the BARGE, in the alliance's frame (rotational: x and y both flip).
-    const miss = (ctx.random() < 0.5 ? -1 : 1) * (1.0 + ctx.random() * 0.8);
-    to = { x: net.x + miss, y: net.y + along, z: 0.3 };
+    // Short: it drops on the thrower's side of the BARGE (the opponents' half), clear of the NET.
+    // A long miss would pass down through the NET's volume, which counts as scored.
+    const short = Math.sign(from.x - net.x) * (1.0 + ctx.random() * 0.8);
+    to = { x: net.x + short, y: net.y + along, z: 0.3 };
   }
   ctx.spawnPiece('algae', from, lob(from, to, THROW_T));
 }
@@ -173,11 +174,11 @@ function showStatus(ctx: RulesContext): void {
       full >= need ? { active: true } : undefined,
     );
     ctx.setIndicator(
-      `${a} coop`,
-      coop ? 'Coopertition ✓' : `Coopertition ${Math.min(s.processed, COOP_ALGAE)}/${COOP_ALGAE}`,
+      `${a} Coopertition`,
+      coop ? '✓' : `${Math.min(s.processed, COOP_ALGAE)}/${COOP_ALGAE} in PROCESSOR`,
       coop ? { active: true } : undefined,
     );
-    ctx.setIndicator(`${a} human player`, s.hpAlgae > 0 ? `${s.hpAlgae} ALGAE to throw` : null);
+    ctx.setIndicator(`${a} HUMAN PLAYER`, s.hpAlgae > 0 ? `${s.hpAlgae} ALGAE to throw` : null);
   }
 }
 
@@ -272,8 +273,9 @@ export const rules: GameRules = {
     const st = state(ctx);
     const s = st[alliance];
     const base = targetId.slice(0, targetId.length - alliance.length - 1);
-    if (base === 'processor') return s.processed < COOP_ALGAE ? COOP_VALUE : FEEDS_OPPONENT;
+    // Programmed autos go for points, not bonuses (robot-baselines.md, "Lessons from 2024").
     if (ctx.phase !== 'teleop') return 0;
+    if (base === 'processor') return s.processed < COOP_ALGAE ? COOP_VALUE : FEEDS_OPPONENT;
     const lv = levelOf(base);
     if (lv < 0) return 0;
     const n = s.levels[lv]!;
