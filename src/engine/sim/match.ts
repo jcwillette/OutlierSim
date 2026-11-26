@@ -211,6 +211,10 @@ export class Robot {
   setPosition(p: Vec3): void {
     this.body.setTranslation(this.frame.toPhysics(p), true);
   }
+  /** Turn the robot to a field heading (tests and tools). */
+  setYaw(yaw: number): void {
+    this.body.setRotation(eulerToQuat({ yaw: this.frame.yaw(yaw) }), true);
+  }
   /** Set the robot's field velocity (tests and tools). */
   setVelocity(v: Vec3): void {
     this.body.setLinvel(this.frame.vector(v), true);
@@ -1789,6 +1793,7 @@ export class Match {
       },
       foul: (against, severity, reason) => m.addFoul(against, severity, reason),
       targetCount: (id) => m.targets.get(id)?.count ?? 0,
+      stationUsed: (id, alliance) => m.stationUsed.get(`${id}:${alliance}`) ?? 0,
       setTargetEnabled: (id, enabled) => {
         const ts = m.targets.get(id);
         if (ts) ts.enabled = enabled;

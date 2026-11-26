@@ -131,6 +131,8 @@ function flipTarget(t: ScoringTarget, sym: Symmetry, f: FieldDims): ScoringTarge
   }
   if (t.aimPoint) out.aimPoint = flipVec3(t.aimPoint, sym, f);
   if (t.display) out.display = flipVec3(t.display, sym, f);
+  if (t.displayStep) out.displayStep = flipDir3(t.displayStep, sym);
+  if (t.displayRotation) out.displayRotation = flipEuler(t.displayRotation, sym);
   if (t.afterScore?.kind === 'recycle') {
     out.afterScore = {
       ...t.afterScore,
@@ -147,6 +149,7 @@ function flipStation(s: HumanPlayerStation, sym: Symmetry, f: FieldDims): HumanP
     zone: flipRegion(s.zone, sym, f),
     ...(s.dropPoint ? { dropPoint: flipVec3(s.dropPoint, sym, f) } : {}),
     ...(s.dropVelocity ? { dropVelocity: flipDir3(s.dropVelocity, sym) } : {}),
+    ...(s.display ? { display: flipVec3(s.display, sym, f) } : {}),
   };
 }
 

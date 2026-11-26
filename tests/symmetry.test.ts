@@ -84,6 +84,24 @@ describe.each(GAMES.map((g) => [g.definition.id, g.definition] as const))(
       let maxYaw = 0;
       /** Pairs that went after a loose piece: they steer by where it lies now (see below). */
       const chased = new Set<number>();
+      /**
+       * Pairs that have touched a field element or wall from the side (a corner clipping the REEF
+       * while turning, 2025): Rapier's contacts aren't mirror-exact either, so from then on they're
+       * compared by plan, not position.
+       */
+      const touched = new Set<number>();
+      const touchesElement = (r: (typeof m.robots)[number]) => {
+        const own = r.body.collider(0);
+        let hit = false;
+        m.world.contactPairsWith(own, (other) => {
+          const body = other.parent();
+          if (hit || !body || !body.isFixed()) return;
+          m.world.contactPair(own, other, (manifold) => {
+            if (manifold.numContacts() > 0 && Math.abs(manifold.normal().z) < 0.7) hit = true;
+          });
+        });
+        return hit;
+      };
       // Before pieces start flying or bouncing off robots (Rapier's solver isn't mirror-exact). A
       // piece resting on the carpet isn't mirror-exact either (a cylinder settles a few micrometers
       // differently on each half), so a robot chasing one stops being compared by position.
@@ -96,7 +114,8 @@ describe.each(GAMES.map((g) => [g.definition.id, g.definition] as const))(
           const pb = brains.get(i)!.currentPlan as unknown as Record<string, unknown>;
           const pr = brains.get(i + 3)!.currentPlan as unknown as Record<string, unknown>;
           if (pb.kind === 'acquire') chased.add(i);
-          if (!chased.has(i)) {
+          if (touchesElement(b) || touchesElement(r)) touched.add(i);
+          if (!chased.has(i) && !touched.has(i)) {
             maxPos = Math.max(maxPos, Math.hypot(b.x - rp.x, b.y - rp.y));
             maxYaw = Math.max(maxYaw, Math.abs(wrapAngle(b.yaw - flipYaw(r.yaw))));
           }

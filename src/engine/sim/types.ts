@@ -207,6 +207,13 @@ export interface ScoringTarget {
    * if the target holds several. Omit to hide scored pieces.
    */
   display?: Vec3;
+  /**
+   * Visual only: offset from one displayed piece to the next when the target holds several (pieces
+   * laid side by side in a trough). Default: stacked straight up by the piece's height.
+   */
+  displayStep?: Vec3;
+  /** Visual only: orientation of the displayed pieces (a tube on an angled branch). Default upright. */
+  displayRotation?: Euler;
   source?: Citation;
 }
 
@@ -245,6 +252,22 @@ export interface HumanPlayerStation {
    * takes its own `intake.timeSec` to grab it.
    */
   handoffSec?: number;
+  /**
+   * Bots also use this station during AUTO: a piece lying on a field structure (2025 REEF ALGAE), or
+   * a HUMAN PLAYER the rules let feed in AUTO (2025 G402). Default false: human players feed in TELEOP.
+   * The engine itself never blocks a station by phase.
+   */
+  auto?: boolean;
+  /**
+   * Part of the alliance's carrying lane, where defenders wait for its robots (`attachBots`). Default
+   * true; false for a pickup on a scoring structure that isn't a loading area (2025 REEF ALGAE).
+   */
+  lane?: boolean;
+  /**
+   * Visual only: where a piece of the station's first type is drawn while the station still has
+   * supply for that alliance (a piece resting on a field structure until a robot takes it).
+   */
+  display?: Vec3;
   source?: Citation;
 }
 
@@ -689,6 +712,8 @@ export interface RulesContext {
   addPoints(alliance: Alliance, category: ScoreCategory, points: number, source: string): void;
   foul(against: Alliance, severity: 'minor' | 'major', reason: string): void;
   targetCount(expandedTargetId: string): number;
+  /** Pieces a station (expanded id) has handed to an alliance's robots so far (its `supply` used). */
+  stationUsed(expandedStationId: string, alliance: Alliance): number;
   setTargetEnabled(expandedTargetId: string, enabled: boolean): void;
   setTargetMultiplier(expandedTargetId: string, multiplier: number): void;
   robots(): readonly RobotInfo[];
@@ -774,6 +799,12 @@ export interface BotHints {
    * through until then (2024: the opponent's STAGE ZONE, G424 B). Default none.
    */
   endgamePathZones?: string[];
+  /**
+   * A "one robot at a time on the opponent's side" rule (2025 G421): x, in blue's frame (red's is
+   * `field.length - x`), past which at most one of an alliance's robots may be. Bots don't go past it
+   * for a loose piece, or to defend, while a teammate is already there. Default: no such rule.
+   */
+  oneAcrossLine?: number;
 }
 
 /**
