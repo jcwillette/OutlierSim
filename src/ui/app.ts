@@ -135,6 +135,9 @@ function saveSetup(s: Setup): void {
   }
 }
 
+/** A phone or tablet: no keyboard to rely on, and a small GPU memory budget. */
+const TOUCH = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
 // ------------------------------------------------------------------ app
 
 export class App {
@@ -155,13 +158,28 @@ export class App {
   constructor(root: HTMLElement) {
     this.root = root;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, TOUCH ? 1.25 : 1.5));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.domElement.className = 'view';
     root.append(this.renderer.domElement);
     this.uiLayer = h('div', { class: 'ui' });
     root.append(this.uiLayer);
+    // A browser short of graphics memory (phones, many open tabs) drops the WebGL context and the
+    // canvas goes white. Say so instead of leaving a blank page; Three.js redraws if it comes back.
+    const lost = h(
+      'div',
+      { class: 'gl-lost' },
+      h(
+        'p',
+        {},
+        'The 3D view stopped: the browser ran out of graphics memory. Closing other tabs helps. ' +
+          'It may come back by itself; if not, reload.',
+      ),
+      h('button', { onclick: () => location.reload() }, 'Reload'),
+    );
+    this.renderer.domElement.addEventListener('webglcontextlost', () => root.append(lost));
+    this.renderer.domElement.addEventListener('webglcontextrestored', () => lost.remove());
 
     const games = this.games();
     const saved = loadSetup();
@@ -410,6 +428,13 @@ export class App {
       h('p', { class: 'summary' }, def.summary),
       h('h2', {}, 'Mode'),
       modeToggle,
+      TOUCH && !watching
+        ? h(
+            'p',
+            { class: 'summary small touch-note' },
+            'Driving a robot needs a keyboard or a gamepad. On a phone, choose Watch 6 bots.',
+          )
+        : null,
       ...(watching ? watchSections : playSections),
       h(
         'div',
@@ -1270,6 +1295,7 @@ class Session {
   private followId: number;
   /** Playback speed index into SPEEDS (spectator only). */
   private speedIndex = SPEEDS.indexOf(1);
+  private disposed = false;
 
   constructor(
     private readonly app: App,
@@ -1301,7 +1327,7 @@ class Session {
     });
     this.player = playerId === null ? null : this.match.robots[playerId]!;
     this.followId = playerId ?? 0;
-    this.view = new FieldView(this.match.game, this.followId);
+    this.view = new FieldView(this.match.game, this.followId, { shadowMapSize: TOUCH ? 1024 : 2048 });
     this.rig = watching
       ? new CameraRig(this.match, 'blue', 1, SPECTATOR_CAMERA_MODES)
       : new CameraRig(this.match, setup.alliance, setup.station);
@@ -1322,15 +1348,14 @@ class Session {
       this.player.controller = setup.autoPilot
         ? { command: (m, r, dt) => (m.phase === 'auto' ? autoBrain : controller).command(m, r, dt) }
         : controller;
-      this.hud = new Hud(this.match, {
-        kind: 'play',
-        player: this.player,
-        autoPilot: setup.autoPilot,
-        controller,
-      });
+      this.hud = new Hud(
+        this.match,
+        { kind: 'play', player: this.player, autoPilot: setup.autoPilot, controller },
+        (e) => this.onButton(e),
+      );
     } else {
       this.controller = null;
-      this.hud = new Hud(this.match, { kind: 'watch', brains: this.brains });
+      this.hud = new Hud(this.match, { kind: 'watch', brains: this.brains }, (e) => this.onButton(e));
       this.hud.setFollow(this.followed);
       this.hud.setSpeed(this.speed);
     }
@@ -1347,7 +1372,11 @@ class Session {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.state = 'done';
+    this.view.dispose();
+    this.renderer.renderLists.dispose();
   }
 
   onButton(e: ButtonEvent): void {
@@ -1510,15 +1539,40 @@ class Hud {
   constructor(
     private readonly match: Match,
     private readonly mode: HudMode,
+    /** Sends the touch buttons' presses (the same events as the keys and gamepad buttons). */
+    private readonly press: (e: ButtonEvent) => void,
   ) {
     this.robot = mode.kind === 'play' ? mode.player : match.robots[0]!;
+    const button = (label: string, e: ButtonEvent, title: string) =>
+      h('button', { onclick: () => press(e), title, 'aria-label': title }, label);
+    // Phones have no keys, so spectators get buttons for what the keys do.
+    const touchbar = TOUCH
+      ? h(
+          'div',
+          { class: 'touchbar' },
+          ...(mode.kind === 'watch'
+            ? [
+                button('◀', 'prev', 'Follow the previous robot'),
+                button('▶', 'next', 'Follow the next robot'),
+                button('Cam', 'camera', 'Change camera'),
+                button('−', 'slower', 'Slower'),
+                button('+', 'faster', 'Faster'),
+              ]
+            : [button('Cam', 'camera', 'Change camera')]),
+          button('❚❚', 'pause', 'Pause'),
+        )
+      : null;
     this.root = h(
       'div',
       { class: `hud ${mode.kind === 'watch' ? 'spectating' : ''}` },
       h('div', { class: 'scorebar' }, this.blue, this.clock, this.red),
       h('div', { class: 'topstack' }, this.indicators, this.toasts),
-      h('div', { class: 'status' }, this.name, this.held, this.hint),
-      this.cam,
+      h(
+        'div',
+        { class: 'bottombar' },
+        h('div', { class: 'status' }, this.name, this.held, this.hint),
+        h('div', { class: 'camstack' }, touchbar, this.cam),
+      ),
       this.countdown,
     );
     this.renderName();
@@ -1556,7 +1610,12 @@ class Hud {
       overhead: 'overhead',
       sideline: 'sideline',
     };
-    const cam = `Camera: ${names[this.camMode] ?? this.camMode} (C)`;
+    const name = names[this.camMode] ?? this.camMode;
+    if (TOUCH) {
+      this.cam.textContent = `Camera: ${name}${this.mode.kind === 'watch' ? ` · Speed ${this.speed}×` : ''}`;
+      return;
+    }
+    const cam = `Camera: ${name} (C)`;
     this.cam.textContent =
       this.mode.kind === 'watch' ? `${cam} · Speed ${this.speed}× ([ ]) · Follow: 1-6 / Tab` : cam;
   }
@@ -1576,10 +1635,11 @@ class Hud {
         'div',
         { class: 'card', style: 'width:min(360px,100%);text-align:center' },
         h('h1', {}, 'Paused'),
-        h('p', { class: 'sub' }, 'Press Esc or P to resume.'),
+        h('p', { class: 'sub' }, TOUCH ? 'Tap Resume to carry on.' : 'Press Esc or P to resume.'),
         h(
           'div',
           { class: 'row', style: 'justify-content:center' },
+          h('button', { class: 'primary', onclick: () => this.press('pause') }, 'Resume'),
           h('button', { onclick: toMenu }, 'Quit to menu'),
         ),
       ),
