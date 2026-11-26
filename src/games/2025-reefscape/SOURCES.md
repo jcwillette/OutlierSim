@@ -62,7 +62,7 @@ January updates the sim plays: TU02 (AUTO RP counts non-BYPASSED robots; ALGAE 1
 - **PROCESSOR → the opponent's HUMAN PLAYER → their NET**: "Once an ALGAE passes through the PROCESSOR, it rolls … into the opponent's PROCESSOR AREA" (5.5), and "HUMAN PLAYERS can score ALGAE in their NET once it has been passed to them via their opponent's PROCESSOR" (6.1). The HUMAN PLAYER, behind the opponent's PROCESSOR, throws each ALGAE 2.5 s after getting it and then every 3 s, TELEOP only (G404). The throw is a real ballistic ALGAE: it drops into the NET with a 35 % chance (an estimate, kept low per "Lessons from 2024"; low confidence) and otherwise falls short beside the BARGE, on the thrower's side, as a loose ALGAE.
 - **Coopertition** lowers the CORAL RP to 3 levels; the HUD shows each alliance's CORAL per level, Coopertition and the HUMAN PLAYER's ALGAE.
 - **G421** "No more than 1 ROBOT may be on the opponent's side of the FIELD … with its BUMPERS fully outside and beyond the BARGE ZONES. Violation: MINOR FOUL, and for every 3 seconds in which the situation is not corrected, a MAJOR FOUL." Called in `rules.ts` with the robot's center 0.45 m past the BARGE ZONES' far edge. Bots keep to it (`botHints.oneAcrossLine`).
-- **Bot hints** (`botValue`, TELEOP only): +2 for the first 2 PROCESSOR ALGAE (Coopertition, which helps both alliances), then -1.4 (each one hands the opponents' HUMAN PLAYER a 35 % shot at 4 points); +0.8 for a CORAL on a level short of 5, +2 for the 5th.
+- **Bot hints** (`botValue`, TELEOP only): +2 for the first 2 PROCESSOR ALGAE (Coopertition, which helps both alliances), then -1.4 (each one hands the opponents' HUMAN PLAYER a 35 % shot at 4 points); +1.5 for a CORAL on a level short of 5, +3 for the 5th (real teams build set bonuses on purpose; without it random alliances never made the CORAL RP).
 
 ## Fouls the engine calls (declared in `definition.fouls`)
 
@@ -116,7 +116,94 @@ One type per seventh of real robots, best to worst, as kickoff engineering knowl
 
 ## Plausibility
 
-PLAUSIBILITY_TABLE
+`npm run plausibility -- --game 2025-reefscape` (each lineup against itself, 12 matches per cell, breakdowns on; means per alliance per match). Validation and the bots' geometry audit: 0 errors, 0 warnings.
+
+| Lineup                         | Difficulty | Total | Auto | Teleop | Endgame | Fouls drawn | Pieces | auto RP | coral RP | barge RP | Broke down | Mech failed |
+| ------------------------------ | ---------- | ----- | ---- | ------ | ------- | ----------- | ------ | ------- | -------- | -------- | ---------- | ----------- |
+| Powerhouse                     | easy       | 173   | 47   | 102    | 23      | 0           | 25.8   | 75%     | 21%      | 100%     | 3%         | 1%          |
+| Powerhouse                     | normal     | 238   | 56   | 158    | 23      | 2           | 39.9   | 75%     | 100%     | 92%      | 3%         | 8%          |
+| Powerhouse                     | hard       | 296   | 58   | 215    | 21      | 2           | 61.3   | 92%     | 100%     | 92%      | 1%         | 6%          |
+| Typical qualification alliance | easy       | 83    | 24   | 47     | 11      | 0           | 12.4   | 21%     | 0%       | 58%      | 4%         | 31%         |
+| Typical qualification alliance | normal     | 117   | 25   | 80     | 11      | 1           | 20.2   | 25%     | 0%       | 63%      | 1%         | 17%         |
+| Typical qualification alliance | hard       | 202   | 31   | 160    | 9       | 3           | 39.1   | 42%     | 100%     | 33%      | 3%         | 15%         |
+| REEF and ALGAE                 | easy       | 120   | 35   | 64     | 20      | 1           | 16.8   | 54%     | 0%       | 92%      | 3%         | 10%         |
+| REEF and ALGAE                 | normal     | 161   | 37   | 106    | 16      | 2           | 26.3   | 54%     | 38%      | 58%      | 1%         | 6%          |
+| REEF and ALGAE                 | hard       | 263   | 43   | 206    | 14      | 1           | 48.4   | 92%     | 96%      | 58%      | 6%         | 3%          |
+| BARGE first                    | easy       | 84    | 26   | 36     | 20      | 3           | 10.2   | 58%     | 0%       | 88%      | 3%         | 10%         |
+| BARGE first                    | normal     | 109   | 24   | 65     | 18      | 2           | 15.5   | 50%     | 0%       | 83%      | 3%         | 15%         |
+| BARGE first                    | hard       | 199   | 21   | 158    | 19      | 1           | 32.2   | 25%     | 96%      | 88%      | 4%         | 6%          |
+| Shutdown defense               | easy       | 110   | 32   | 61     | 16      | 2           | 15.4   | 46%     | 0%       | 83%      | 4%         | 6%          |
+| Shutdown defense               | normal     | 152   | 38   | 96     | 15      | 4           | 22.8   | 54%     | 0%       | 71%      | 4%         | 3%          |
+| Shutdown defense               | hard       | 215   | 33   | 149    | 16      | 18          | 33.1   | 38%     | 79%      | 71%      | 8%         | 10%         |
+| CORAL STATION defense          | easy       | 101   | 25   | 59     | 15      | 1           | 14.0   | 13%     | 0%       | 79%      | 4%         | 13%         |
+| CORAL STATION defense          | normal     | 154   | 33   | 98     | 17      | 6           | 22.4   | 25%     | 0%       | 83%      | 8%         | 10%         |
+| CORAL STATION defense          | hard       | 224   | 36   | 158    | 15      | 16          | 36.0   | 25%     | 100%     | 71%      | 7%         | 13%         |
+| Rookie alliance                | easy       | 19    | 8    | 8      | 3       | 0           | 5.4    | 8%      | 0%       | 0%       | 8%         | 24%         |
+| Rookie alliance                | normal     | 28    | 10   | 14     | 3       | 2           | 8.6    | 21%     | 0%       | 4%       | 13%        | 32%         |
+| Rookie alliance                | hard       | 48    | 7    | 33     | 4       | 3           | 17.7   | 4%      | 0%       | 0%       | 11%        | 40%         |
+
+Endgame actions per alliance per match:
+
+| Lineup                         | Difficulty | deep | shallow |
+| ------------------------------ | ---------- | ---- | ------- |
+| Powerhouse                     | easy       | 1.75 | 0.00    |
+| Powerhouse                     | normal     | 1.71 | 0.00    |
+| Powerhouse                     | hard       | 1.50 | 0.00    |
+| Typical qualification alliance | easy       | 0.58 | 0.17    |
+| Typical qualification alliance | normal     | 0.63 | 0.08    |
+| Typical qualification alliance | hard       | 0.33 | 0.17    |
+| REEF and ALGAE                 | easy       | 1.25 | 0.46    |
+| REEF and ALGAE                 | normal     | 0.83 | 0.54    |
+| REEF and ALGAE                 | hard       | 0.67 | 0.42    |
+| BARGE first                    | easy       | 0.79 | 1.42    |
+| BARGE first                    | normal     | 0.71 | 1.29    |
+| BARGE first                    | hard       | 0.67 | 1.46    |
+| Shutdown defense               | easy       | 1.00 | 0.00    |
+| Shutdown defense               | normal     | 0.88 | 0.00    |
+| Shutdown defense               | hard       | 1.04 | 0.00    |
+| CORAL STATION defense          | easy       | 0.96 | 0.00    |
+| CORAL STATION defense          | normal     | 1.17 | 0.00    |
+| CORAL STATION defense          | hard       | 0.92 | 0.00    |
+| Rookie alliance                | easy       | 0.00 | 0.00    |
+| Rookie alliance                | normal     | 0.00 | 0.00    |
+| Rookie alliance                | hard       | 0.00 | 0.00    |
+
+Points per robot per match, by robot type (all lineups):
+
+| Robot          | Matches | Points |
+| -------------- | ------- | ------ |
+| coral-elevator | 288     | 56.4   |
+| pivot-arm      | 144     | 40.5   |
+| tank-arm       | 72      | 24.7   |
+| elevator       | 504     | 77.3   |
+| kitbot         | 288     | 10.3   |
+| defender       | 72      | 5.7    |
+| lowres         | 72      | 3.1    |
+| l2-scorer      | 72      | 24.6   |
+
+Head-to-head against the typical alliance, normal (`--against typical --difficulties normal`, 12 matches each; blue plays the lineup):
+
+| Blue lineup                    | Difficulty | Blue score | Red score | Blue wins | Blue auto RP | Blue coral RP | Blue barge RP | Red teleop | Fouls on blue / red |
+| ------------------------------ | ---------- | ---------- | --------- | --------- | ------------ | ------------- | ------------- | ---------- | ------------------- |
+| Powerhouse                     | normal     | 233        | 125       | 100%      | 83%          | 92%           | 100%          | 85         | 0.2 / 0.2           |
+| Typical qualification alliance | normal     | 123        | 112       | 75%       | 17%          | 0%            | 83%           | 74         | 0.3 / 0.3           |
+| REEF and ALGAE                 | normal     | 158        | 122       | 92%       | 58%          | 67%           | 75%           | 82         | 0.3 / 0.0           |
+| BARGE first                    | normal     | 117        | 120       | 25%       | 50%          | 0%            | 83%           | 79         | 0.0 / 0.2           |
+| Shutdown defense               | normal     | 156        | 134       | 100%      | 33%          | 8%            | 75%           | 85         | 1.4 / 0.0           |
+| CORAL STATION defense          | normal     | 155        | 122       | 100%      | 17%          | 0%            | 92%           | 80         | 0.8 / 0.1           |
+| Rookie alliance                | normal     | 35         | 109       | 0%        | 17%          | 0%            | 0%            | 70         | 0.2 / 0.2           |
+
+**Random alliances** (the menu's random preset, 120 matches at normal): 100 points per alliance (auto 22, teleop 65, endgame 11, fouls 1.6); AUTO RP 18 %, CORAL RP 5 %, BARGE RP 39 %; 0.38 deep and 0.49 shallow CAGES per alliance. Pieces per robot per match: elevator 13.5, CORAL elevator 8.8, pivot arm 5.7, tank-drive arm 3.6, trough-and-L2 3.1, KitBot 2.7, low-resource 2.0. Per alliance: CORAL L1 2.6, L2 1.6, L3 3.3, L4 3.6; PROCESSOR 4.9, NET 2.1 (robots and HUMAN PLAYERS).
+
+Reading the checks:
+
+- **Difficulty ordering** passes for every lineup.
+- **BARGE RP** (WARN, up to 92 %): 14 points is one deep CAGE and a PARK, and the two top tiers climb deep. Typical alliances make it 63 % of the time, random ones 39 %. The threshold is the manual's in-season value; a deep climb at 45 % per try (2024's top-tier chain climb) is the estimate to revisit if this looks too easy.
+- **CORAL RP** (WARN, up to 100 % at normal for three elevators; 0 % for a typical alliance, 5 % for random ones). Coopertition is nearly automatic (both PROCESSORS reach 2 ALGAE in almost every match), so the RP needs 5 CORAL on 3 levels. Bots value a CORAL on a level short of 5 (`botValue`), as real teams build set bonuses; without that, random alliances never made it (they skipped L2). At hard (district-championship drive teams) most lineups with an elevator make it.
+- **Blue vs red**: the table's 105 : 142 wins (z 2.4, red ahead 3.9 points) pools 21 small cells. Mirrored runs with more matches show no bias: typical vs typical, 400 matches without breakdowns, blue − red -0.06 points (z -0.09); shutdown 300 matches -0.9 (z -0.8); powerhouse 300 matches -1.3 (z -1.1), with no pattern by seed parity (flipped physics).
+- **Fouls** drawn: 0-4 points per alliance without a defender, 4-18 with one (G427 contact near the REEF; the defender waits outside grown copies of the zones).
+
+**Cycle math** (the top tier, by hand): CORAL STATION to a REEF face and back is ~3.5 m each way, ~1 s each at 3.5-4 m/s with acceleration; intake 0.3 + hand-off 0.6, placing 0.9-1.3 s, plus 2 × 2.6 s of line-up: ~9.5 s per CORAL, ~11 in 105 s of cycling, less traffic, defense and the endgame. The elevator scores 13.5 pieces of all kinds (about 11 CORAL and ALGAE in TELEOP and 2.5 in AUTO). That is 1.5× 2024's top tier (9.0 NOTES) because this game's cycles are much shorter (2024's ran most of the field) and an ALGAE comes off the REEF next to where the CORAL goes; per piece of line-up and mechanism the tiers are 2023's.
 
 ## Open questions
 

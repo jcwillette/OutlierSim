@@ -68,8 +68,8 @@ const COOP_VALUE = 2;
 /** ...after, it hands the opponents' HUMAN PLAYER a throw at their NET (4 × NET_THROW_CHANCE). */
 const FEEDS_OPPONENT = -4 * NET_THROW_CHANCE;
 /** What bots add to a CORAL on a level still short of the CORAL RP (teleop), and to the one completing it. */
-const LEVEL_VALUE = 0.8;
-const LEVEL_FILL_VALUE = 2;
+const LEVEL_VALUE = 1.5;
+const LEVEL_FILL_VALUE = 3;
 
 export const LEVEL_NAMES = ['L1', 'L2', 'L3', 'L4'] as const;
 /** Level index (0 = L1) of a CORAL target's base id, or -1. */
