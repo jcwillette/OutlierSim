@@ -50,10 +50,10 @@ export const BARGE_RP_POINTS = 14;
 export const BARGE_SOURCES = ['park', 'deep', 'shallow'];
 /**
  * Chance a HUMAN PLAYER's throw lands in the NET: a 16 in ball over the 8 ft 5 in BARGE top into a
- * 4 ft × 12 ft NET, ~3.5 m away. An estimate, kept low (robot-baselines.md, "Human players": real
- * throws at a small far target landed 8 % of the time in 2024; this target is far bigger and nearer).
+ * 4 ft × 12 ft NET, ~3.5 m away. Calibrated (CALIBRATION.md): real alliances netted 0.86 ALGAE per
+ * ALGAE their opponents processed, every week of the season. The blind build guessed 0.35.
  */
-export const NET_THROW_CHANCE = 0.35;
+export const NET_THROW_CHANCE = 0.88;
 /** Seconds from an ALGAE reaching the HUMAN PLAYER to the throw, and between throws. */
 const HP_FIRST_SEC = 2.5;
 const HP_THROW_SEC = 3;
@@ -63,13 +63,34 @@ const G = 9.81;
 /** G421: a robot is beyond the BARGE ZONES when its center is this far past their far edge. */
 const HALF_ROBOT = 0.45;
 const G421_REPEAT_SEC = 3;
-/** What bots add to a PROCESSOR ALGAE: before Coopertition it helps the CORAL RP... */
+/**
+ * Coopertition as played (CALIBRATION.md): 56 % of real alliances put no ALGAE in their PROCESSOR and
+ * 22 % exactly 2. Alliances agreed on it in the queue: both alliances made it in 22 % of matches, one
+ * alliance in 35 %. Each match, both alliances play for it with `COOP_AGREED`; otherwise each one
+ * does on its own with `COOP_ALONE`.
+ */
+export const COOP_AGREED = 0.15;
+export const COOP_ALONE = 0.15;
+/** What bots add to a PROCESSOR ALGAE while their alliance plays for Coopertition and is short of 2... */
 const COOP_VALUE = 2;
-/** ...after, it hands the opponents' HUMAN PLAYER a throw at their NET (4 × NET_THROW_CHANCE). */
+/** ...otherwise it hands the opponents' HUMAN PLAYER a throw at their NET (4 × NET_THROW_CHANCE). */
 const FEEDS_OPPONENT = -4 * NET_THROW_CHANCE;
 /** What bots add to a CORAL on a level still short of the CORAL RP (teleop), and to the one completing it. */
-const LEVEL_VALUE = 1.5;
-const LEVEL_FILL_VALUE = 3;
+const LEVEL_VALUE = 2.5;
+const LEVEL_FILL_VALUE = 4;
+/**
+ * Real alliances went for the CORAL RP only when they could still make it, and otherwise scored for
+ * points (L4 first). Bots push for it while the CORAL it still needs fits in the time left at this
+ * rate (CORAL per second, the whole alliance).
+ */
+const RP_PUSH_RATE = 0.2;
+/**
+ * What bots count for each BRANCH a REEF ALGAE opens when they take it or knock it off (teleop):
+ * real robots cleared the REEF to score L2 and L3, mostly knocking the ALGAE to the floor.
+ */
+const OPEN_BRANCH_VALUE = 0.7;
+/** What bots add to an ALGAE scored in AUTO: real autos scored CORAL. */
+const AUTO_ALGAE_VALUE = -6;
 
 export const LEVEL_NAMES = ['L1', 'L2', 'L3', 'L4'] as const;
 /** Level index (0 = L1) of a CORAL target's base id, or -1. */
@@ -111,6 +132,8 @@ interface AllianceState {
   /** G421: match time the violation began (or -1), and when the next MAJOR FOUL is due. */
   g421Since: number;
   g421Next: number;
+  /** This alliance plays for Coopertition this match (bots only). */
+  coop: boolean;
 }
 
 const state = (ctx: RulesContext) => ctx.vars.reef as Record<Alliance, AllianceState>;
@@ -160,6 +183,18 @@ function beyondBarge(ctx: RulesContext, a: Alliance, robots: ReturnType<RulesCon
   return n;
 }
 
+/**
+ * The CORAL an alliance still needs for the CORAL RP (its fullest 3 levels if it plays for, or has,
+ * Coopertition, else all 4) fits in `remaining` seconds at `RP_PUSH_RATE`.
+ */
+function rpInReach(st: Record<Alliance, AllianceState>, a: Alliance, remaining: number): boolean {
+  const s = st[a];
+  const coop = s.coop || (s.processed >= COOP_ALGAE && st[other(a)].processed >= COOP_ALGAE);
+  const short = s.levels.map((n) => Math.max(0, CORAL_RP_PER_LEVEL - n)).sort((x, y) => x - y);
+  const need = short.slice(0, coop ? CORAL_RP_LEVELS_COOP : 4).reduce((t, n) => t + n, 0);
+  return need <= remaining * RP_PUSH_RATE;
+}
+
 function showStatus(ctx: RulesContext): void {
   const st = state(ctx);
   for (const a of ALLIANCES) {
@@ -185,6 +220,7 @@ function showStatus(ctx: RulesContext): void {
 export const rules: GameRules = {
   onInit(ctx) {
     const st = {} as Record<Alliance, AllianceState>;
+    const agreed = ctx.random() < COOP_AGREED;
     for (const a of ALLIANCES) {
       st[a] = {
         freed: FACES.map(() => false),
@@ -194,6 +230,7 @@ export const rules: GameRules = {
         processed: 0,
         g421Since: -1,
         g421Next: 0,
+        coop: agreed || ctx.random() < COOP_ALONE,
       };
       for (const k of FACES)
         for (const lvl of BLOCKED_BY_ALGAE(k))
@@ -273,13 +310,27 @@ export const rules: GameRules = {
     const st = state(ctx);
     const s = st[alliance];
     const base = targetId.slice(0, targetId.length - alliance.length - 1);
-    // Programmed autos go for points, not bonuses (robot-baselines.md, "Lessons from 2024").
+    // Real autos scored CORAL: the AUTO RP needs one, and it's worth more in AUTO.
+    if (ctx.phase === 'auto' && (base === 'processor' || base === 'net')) return AUTO_ALGAE_VALUE;
+    if (base === 'processor') {
+      // Programmed autos go for points, not bonuses (robot-baselines.md, "Lessons from 2024").
+      if (ctx.phase === 'teleop' && s.coop && s.processed < COOP_ALGAE) return COOP_VALUE;
+      return FEEDS_OPPONENT;
+    }
     if (ctx.phase !== 'teleop') return 0;
-    if (base === 'processor') return s.processed < COOP_ALGAE ? COOP_VALUE : FEEDS_OPPONENT;
     const lv = levelOf(base);
     if (lv < 0) return 0;
     const n = s.levels[lv]!;
-    if (n >= CORAL_RP_PER_LEVEL) return 0;
+    if (n >= CORAL_RP_PER_LEVEL || !rpInReach(st, alliance, ctx.remaining)) return 0;
     return n === CORAL_RP_PER_LEVEL - 1 ? LEVEL_FILL_VALUE : LEVEL_VALUE;
+  },
+
+  botStationValue(ctx, alliance, stationId) {
+    if (ctx.phase !== 'teleop') return 0;
+    const m = /^reef-algae-(\d)\./.exec(stationId);
+    if (!m) return 0;
+    const k = Number(m[1]);
+    if (state(ctx)[alliance].freed[k]) return 0;
+    return OPEN_BRANCH_VALUE * BLOCKED_BY_ALGAE(k).length * SIDES.length;
   },
 };

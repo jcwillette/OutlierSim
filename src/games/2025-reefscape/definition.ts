@@ -318,6 +318,13 @@ export const CORAL_POINTS: Record<'L1' | Level, { auto: number; teleop: number }
 };
 /** CORAL in the trough of one face: 3 end to end on the ~38 in face, plus any resting on them. */
 const TROUGH_CAPACITY = 4;
+/**
+ * The trough is the whole face wide: a drive team lines up on it in a fraction of the time a BRANCH
+ * takes (`alignScale`, fitted to real robots' L1 share, CALIBRATION.md).
+ */
+const TROUGH_ALIGN = 0.9;
+/** L4 is the most precise placement, at the top of a fully extended elevator (`alignScale`, fitted). */
+const L4_ALIGN = 1.2;
 
 const branchTargets: ScoringTarget[] = FACES.flatMap((k) =>
   LEVELS.flatMap((lvl) =>
@@ -336,6 +343,7 @@ const branchTargets: ScoringTarget[] = FACES.flatMap((k) =>
         points: CORAL_POINTS[lvl],
         tags: [lvl],
         capacity: 1,
+        ...(lvl === 'L4' ? { alignScale: L4_ALIGN } : {}),
         place: {
           zone: faceRect(k, SCORE_R0, SCORE_R1, lat - BRANCH_HALF, lat + BRANCH_HALF),
           facePoint: tip,
@@ -360,6 +368,7 @@ const troughTargets: ScoringTarget[] = FACES.map((k): ScoringTarget => {
     points: CORAL_POINTS.L1,
     tags: ['L1'],
     capacity: TROUGH_CAPACITY,
+    alignScale: TROUGH_ALIGN,
     place: {
       zone: faceRect(k, SCORE_R0, SCORE_R1, -0.45, 0.45),
       facePoint: reefPoint(k, 0),
@@ -463,6 +472,8 @@ const reefAlgae: HumanPlayerStation[] = FACES.map((k) => {
     auto: true,
     // Not a loading area: defenders read the CORAL STATIONS as where robots come from.
     lane: false,
+    // Robots knocked most REEF ALGAE to the floor to open the BRANCHES (CALIBRATION.md).
+    knockOff: true,
     display: { ...reefPoint(k, REEF_APOTHEM - 0.05), z },
     source: `${M(45, '6.3.4.2 6 ALGAE per REEF on pairs of BRANCHES, Fig 6-3 alternating high and low')}; ${M(17, '4 robots harvest ALGAE from the REEF')}`,
   };
@@ -500,7 +511,7 @@ const archetypes: RobotArchetype[] = [
     id: 'elevator',
     name: 'Full-REEF elevator',
     description:
-      'A top-seventh robot: swerve, a ground and CORAL STATION intake, an elevator that scores CORAL on every level up to L4, an ALGAE arm that clears both REEF positions and lifts ALGAE over the BARGE into the NET (or scores the PROCESSOR), and a deep-CAGE climber.',
+      'A top-seventh robot as the best 2025 teams built it: swerve, a ground and CORAL STATION intake, an elevator and wrist that score CORAL on every level, an ALGAE mechanism that clears both REEF positions and the floor and throws ALGAE over the BARGE into the NET (or scores the PROCESSOR), auto-align, a 2-4 CORAL auto and a fast deep-CAGE climb.',
     frame: { length: 0.9, width: 0.9, height: 1.0 },
     mass: onFieldMass(115),
     drive: driveFor(
@@ -510,125 +521,146 @@ const archetypes: RobotArchetype[] = [
     capacity: { coral: 1, algae: 1 },
     totalCapacity: 2,
     intake: { pieceTypes: CORAL_ALGAE, timeSec: 0.3, reach: 0.25, maxHeight: 1.45 },
-    // NET: the elevator lifts the ALGAE over the BARGE's 8 ft 5 in top and drops it in.
-    place: { L1: 0.4, L2: 0.7, L3: 0.9, L4: 1.3, processor: 0.5, net: 1.2 },
-    alignSec: 2.6,
-    auto: { pieces: 3, success: 0.9 },
-    endgame: { deep: 6 },
+    // NET: the elevator lifts the ALGAE over the BARGE's 8 ft 5 in top and throws it in.
+    place: { L1: 0.4, L2: 0.7, L3: 0.9, L4: 1.3, processor: 0.5, net: 2.0 },
+    alignSec: 2.0,
+    auto: { pieces: 3, success: 0.95, driveOut: 0.9 },
+    endgame: { deep: 5 },
     endgameSuccess: { deep: 0.45 },
     reliability: 0.97,
-    source: `${ROBOT_SRC}; 4 Kraken X60 on MK4i L3, 115 lb; tier 7`,
+    source: `${ROBOT_SRC}; 4 Kraken X60 on MK4i L3, 115 lb; tier 7 (CALIBRATION.md)`,
   },
   {
     id: 'coral-elevator',
     name: 'CORAL elevator',
     description:
-      'A second-seventh robot: swerve and an elevator that scores CORAL on L1-L4 from the CORAL STATION or the floor, clears REEF ALGAE into the PROCESSOR (no NET shot), and climbs a deep CAGE.',
+      'A second-seventh robot: swerve and an elevator fed by a funnel at the CORAL STATION that scores CORAL on L1-L4, clears both REEF ALGAE positions into the PROCESSOR (no NET), a one-CORAL auto on L4 and a deep-CAGE climb.',
     frame: { length: 0.88, width: 0.88, height: 1.0 },
     mass: onFieldMass(115),
     drive: driveFor(
-      swerve(MOTORS.falcon500, GEARINGS.mk4L2, 115, { tipping: { cgHeight: 0.38, halfWheelbase: 0.29 } }),
+      swerve(MOTORS.krakenX60, GEARINGS.mk4L2, 115, { tipping: { cgHeight: 0.38, halfWheelbase: 0.29 } }),
       8,
     ),
     capacity: { coral: 1, algae: 1 },
     totalCapacity: 2,
     intake: { pieceTypes: CORAL_ALGAE, timeSec: 0.35, reach: 0.2, maxHeight: 1.4 },
     place: { L1: 0.5, L2: 0.8, L3: 1.0, L4: 1.5, processor: 0.6 },
-    alignSec: 4.6,
-    auto: { pieces: 2, success: 0.85 },
-    endgame: { deep: 7 },
-    endgameSuccess: { deep: 0.32 },
+    alignSec: 3.8,
+    auto: { pieces: 1, success: 0.95, driveOut: 0.9 },
+    endgame: { deep: 6 },
+    endgameSuccess: { deep: 0.22 },
     reliability: 0.95,
-    source: `${ROBOT_SRC}; Falcon 500 on MK4i L2, 115 lb; tier 6`,
+    source: `${ROBOT_SRC}; Kraken X60 on MK4i L2, 115 lb; tier 6 (CALIBRATION.md)`,
   },
   {
     id: 'pivot-arm',
-    name: 'Pivot arm (L1-L3)',
+    name: 'Pivot arm',
     description:
-      'A third-seventh robot: swerve and a pivoting arm that scores CORAL up to L3 (not L4), clears both REEF ALGAE positions into the PROCESSOR, and hangs from a shallow CAGE.',
-    frame: { length: 0.86, width: 0.86, height: 0.8 },
-    mass: onFieldMass(110),
-    drive: driveFor(swerve(MOTORS.neo, GEARINGS.maxSwerveHigh, 110), 8),
+      'A third-seventh robot: swerve and a long pivoting arm that scores CORAL on L1-L4 from the CORAL STATION, knocks both REEF ALGAE off or takes them to the PROCESSOR, and sometimes makes a deep-CAGE climb.',
+    frame: { length: 0.86, width: 0.86, height: 0.9 },
+    mass: onFieldMass(115),
+    drive: driveFor(swerve(MOTORS.neoVortex, GEARINGS.maxSwerveHigh, 115), 8),
     capacity: { coral: 1, algae: 1 },
     totalCapacity: 2,
     intake: { pieceTypes: CORAL_ALGAE, timeSec: 0.4, reach: 0.2, maxHeight: 1.35 },
-    place: { L1: 0.5, L2: 0.9, L3: 1.2, processor: 0.6 },
-    alignSec: 8.9,
-    auto: { pieces: 2, success: 0.75 },
-    endgame: { shallow: 6 },
-    endgameSuccess: { shallow: 0.35 },
+    place: { L1: 0.6, L2: 0.9, L3: 1.1, L4: 1.6, processor: 0.7 },
+    alignSec: 5.5,
+    auto: { pieces: 1, success: 0.6, driveOut: 0.9 },
+    endgame: { deep: 7 },
+    endgameSuccess: { deep: 0.12 },
     reliability: 0.92,
-    source: `${ROBOT_SRC}; NEO MAXSwerve 14T, 110 lb; tier 5`,
+    source: `${ROBOT_SRC}; NEO Vortex MAXSwerve, 115 lb; tier 5 (CALIBRATION.md)`,
   },
   {
-    id: 'tank-arm',
-    name: 'Tank-drive arm',
+    id: 'tank-elevator',
+    name: 'Tank-drive elevator',
     description:
-      'A middle-seventh robot on a West Coast (tank) drive: an arm that scores CORAL on L1-L3, reaches only the low REEF ALGAE, processes it, and sometimes hangs from a shallow CAGE.',
-    frame: { length: 0.9, width: 0.8, height: 0.75 },
+      'A middle-seventh robot on a West Coast (tank) drive with an elevator that scores CORAL on L1-L4, reaches only the low REEF ALGAE (knocked off or processed), and rarely climbs.',
+    frame: { length: 0.9, width: 0.8, height: 0.95 },
     mass: onFieldMass(115),
     drive: driveFor(tank(MOTORS.neo, 4, GEARINGS.tank845, 115), 6),
     capacity: { coral: 1, algae: 1 },
     totalCapacity: 2,
     intake: { pieceTypes: CORAL_ALGAE, timeSec: 0.45, reach: 0.2, maxHeight: 1.0 },
-    place: { L1: 0.6, L2: 1.0, L3: 1.4, processor: 0.7 },
-    alignSec: 12.1,
-    auto: { pieces: 1, success: 0.6 },
-    endgame: { shallow: 7 },
-    endgameSuccess: { shallow: 0.22 },
+    place: { L1: 0.6, L2: 1.0, L3: 1.2, L4: 1.7, processor: 0.7 },
+    alignSec: 8,
+    auto: { pieces: 1, success: 0.36, driveOut: 0.92 },
+    endgame: { deep: 8 },
+    endgameSuccess: { deep: 0.08 },
     reliability: 0.9,
-    source: `${ROBOT_SRC}; 4 NEO tank, 8.45:1 on 6 in wheels, 115 lb; tier 4`,
+    source: `${ROBOT_SRC}; 4 NEO tank, 8.45:1 on 6 in wheels, 115 lb; tier 4 (CALIBRATION.md)`,
   },
   {
-    id: 'l2-scorer',
-    name: 'Trough and L2 scorer',
+    id: 'budget-elevator',
+    name: 'Budget elevator',
     description:
-      'A fifth-seventh robot: swerve and a simple wrist that drops CORAL in the trough or on L2, knocks the low REEF ALGAE free into its PROCESSOR, and rarely climbs.',
-    frame: { length: 0.84, width: 0.84, height: 0.6 },
-    mass: onFieldMass(105),
-    drive: driveFor(swerve(MOTORS.neo, GEARINGS.mk4L2, 105), 8),
+      'A fifth-seventh robot: swerve and a slow single-stage elevator with a simple CORAL end effector that scores L1-L4 when it lines up, knocks the low REEF ALGAE free into its PROCESSOR, and rarely climbs.',
+    frame: { length: 0.84, width: 0.84, height: 0.9 },
+    mass: onFieldMass(110),
+    drive: driveFor(swerve(MOTORS.neo, GEARINGS.mk4L2, 110), 8),
     capacity: { coral: 1, algae: 1 },
     totalCapacity: 2,
     intake: { pieceTypes: CORAL_ALGAE, timeSec: 0.45, reach: 0.2, maxHeight: 0.95 },
-    place: { L1: 0.5, L2: 1.0, processor: 0.8 },
-    alignSec: 13.6,
-    auto: { pieces: 1, success: 0.55 },
-    endgame: { shallow: 8 },
-    endgameSuccess: { shallow: 0.13 },
+    place: { L1: 0.6, L2: 1.0, L3: 1.3, L4: 1.9, processor: 0.8 },
+    alignSec: 11,
+    auto: { pieces: 1, success: 0.23, driveOut: 0.88 },
+    endgame: { deep: 9 },
+    endgameSuccess: { deep: 0.07 },
     reliability: 0.88,
-    source: `${ROBOT_SRC}; NEO on MK4i L2, 105 lb; tier 3`,
+    source: `${ROBOT_SRC}; NEO on MK4i L2, 110 lb; tier 3 (CALIBRATION.md)`,
   },
   {
     id: 'kitbot',
     name: 'KitBot',
     description:
-      'The Kit of Parts robot as most rookies build it: a tank drive and a roller that takes CORAL from the CORAL STATION (no floor intake) and drops it in the trough (L1). No ALGAE mechanism and no climber: it PARKS.',
+      'The 2025 KitBot as most rookies built it: the kit tank drive and a roller that takes CORAL from the CORAL STATION (no floor intake) and drops it in the trough (L1). No ALGAE mechanism and no climber: it PARKS.',
     frame: { length: 0.86, width: 0.76, height: 0.55 },
     mass: onFieldMass(90),
     drive: driveFor(tank(MOTORS.cim, 4, GEARINGS.tank1071, 90, { traction: 1.0 }), 5),
     capacity: { coral: 1 },
     intake: { pieceTypes: ['coral'], timeSec: 0.4, reach: 0.2, maxHeight: 0.3, floor: false },
     place: { L1: 0.6 },
-    alignSec: 16.8,
-    auto: { pieces: 1, success: 0.5 },
+    alignSec: 24,
+    auto: { pieces: 1, success: 0.14, driveOut: 0.85 },
+    dealWeight: 0.6,
     reliability: 0.78,
-    source: `${ROBOT_SRC}; kit chassis, 4 CIM tank, 10.71:1, 90 lb; tier 2 (see SOURCES.md: the KitBot's own documentation wasn't read)`,
+    source: `${ROBOT_SRC}; FIRST's 2025 KitBot (kit chassis, CORAL roller to L1); tier 2 with the Everybot (CALIBRATION.md)`,
+  },
+  {
+    id: 'everybot',
+    name: 'Everybot',
+    description:
+      'The 2025 Robonauts Everybot low-resource build: the kit tank drive, a CORAL roller fed at the CORAL STATION that scores the trough (L1), an ALGAE intake for the floor and the low REEF ALGAE that scores the PROCESSOR, and a CAGE climber.',
+    frame: { length: 0.86, width: 0.76, height: 0.7 },
+    mass: onFieldMass(105),
+    drive: driveFor(tank(MOTORS.cim, 4, GEARINGS.tank1071, 105, { traction: 1.0 }), 5),
+    capacity: { coral: 1, algae: 1 },
+    totalCapacity: 1,
+    intake: { pieceTypes: CORAL_ALGAE, timeSec: 0.5, reach: 0.2, maxHeight: 0.95 },
+    place: { L1: 0.6, processor: 0.8 },
+    alignSec: 18,
+    auto: { pieces: 1, success: 0.14, driveOut: 0.85 },
+    endgame: { deep: 10 },
+    endgameSuccess: { deep: 0.03 },
+    dealWeight: 0.4,
+    reliability: 0.8,
+    source: `${ROBOT_SRC}; Robonauts 2025 Everybot (kit chassis), 105 lb; tier 2 with the KitBot (CALIBRATION.md)`,
   },
   {
     id: 'lowres',
     name: 'Low-resource robot',
     description:
-      'A bottom-seventh robot: a heavy tank drive and a CORAL chute fed at the CORAL STATION that drops CORAL in the trough. Often breaks down; PARKS. Plays defense when given the job.',
+      'A bottom-seventh robot: a heavy tank drive and a CORAL chute fed at the CORAL STATION that drops CORAL in the trough. Its auto usually only drives forward; often breaks down; PARKS. Plays defense when given the job.',
     frame: { length: 0.93, width: 0.93, height: 0.5 },
     mass: onFieldMass(115, { bumpersLb: 15 }),
     drive: driveFor(tank(MOTORS.cim, 6, GEARINGS.tank1071, 115, { traction: 1.1 }), 5),
     capacity: { coral: 1 },
     intake: { pieceTypes: ['coral'], timeSec: 0.5, reach: 0.2, maxHeight: 0.3, floor: false },
     place: { L1: 0.8 },
-    alignSec: 20.2,
-    auto: { pieces: 1, success: 0.3 },
-    reliability: 0.75,
-    source: `${ROBOT_SRC}; 6 CIM tank, 10.71:1, 115 lb with heavy BUMPERS; tier 1`,
+    alignSec: 60,
+    auto: { pieces: 1, success: 0.03, driveOut: 0.72 },
+    reliability: 0.7,
+    source: `${ROBOT_SRC}; 6 CIM tank, 10.71:1, 115 lb with heavy BUMPERS; tier 1 (CALIBRATION.md)`,
   },
   {
     id: 'defender',
@@ -642,7 +674,7 @@ const archetypes: RobotArchetype[] = [
     intake: { pieceTypes: ['coral'], timeSec: 0.5, reach: 0.2, maxHeight: 0.3, floor: false },
     place: { L1: 0.8 },
     alignSec: 14,
-    auto: { pieces: 1, success: 0.6 },
+    auto: { pieces: 1, success: 0.6, driveOut: 0.9 },
     defaultRole: 'defense',
     dealWeight: 0,
     reliability: 0.9,
@@ -904,16 +936,38 @@ export const definition: GameDefinition = {
       robots: [{ archetype: 'elevator' }, { archetype: 'elevator' }, { archetype: 'elevator' }],
     },
     {
+      id: 'einstein',
+      name: 'Triple offense',
+      description:
+        'The Championship playoff alliance: three full-REEF elevators, two on CORAL and one netting the ALGAE (loose ones too), then three fast deep climbs.',
+      robots: [
+        { archetype: 'elevator', role: 'coral' },
+        { archetype: 'elevator', role: 'coral' },
+        { archetype: 'elevator', role: 'algae' },
+      ],
+    },
+    {
       id: 'typical',
       name: 'Typical qualification alliance',
-      description: 'One strong elevator, a trough-and-L2 scorer and a rookie KitBot.',
-      robots: [{ archetype: 'elevator' }, { archetype: 'l2-scorer' }, { archetype: 'kitbot' }],
+      description: 'A CORAL elevator, a budget elevator and a rookie KitBot.',
+      robots: [{ archetype: 'coral-elevator' }, { archetype: 'budget-elevator' }, { archetype: 'kitbot' }],
+    },
+    {
+      id: 'coral-rp',
+      name: 'Fill the REEF',
+      description:
+        'Going for the CORAL RP without Coopertition, as strong alliances did from week 5 on: two elevators on the BRANCHES while a third robot fills the trough (L1).',
+      robots: [
+        { archetype: 'elevator' },
+        { archetype: 'coral-elevator' },
+        { archetype: 'tank-elevator', role: 'trough' },
+      ],
     },
     {
       id: 'reef-and-algae',
       name: 'REEF and ALGAE',
       description:
-        'An elevator keeps scoring CORAL while an arm robot clears the REEF ALGAE and processes it, opening L2 and L3 for its partners.',
+        'Two elevators keep scoring CORAL while a pivot arm clears the REEF ALGAE (opening L2 and L3 for its partners) and scores it.',
       robots: [
         { archetype: 'elevator', role: 'coral' },
         { archetype: 'coral-elevator', role: 'coral' },
@@ -924,7 +978,7 @@ export const definition: GameDefinition = {
       id: 'barge-rp',
       name: 'BARGE first',
       description: 'Three climbers head for the CAGES early to make the BARGE RP (14 BARGE points).',
-      robots: [{ archetype: 'coral-elevator' }, { archetype: 'pivot-arm' }, { archetype: 'tank-arm' }],
+      robots: [{ archetype: 'coral-elevator' }, { archetype: 'pivot-arm' }, { archetype: 'tank-elevator' }],
       strategy: 'early-endgame',
     },
     {
@@ -951,6 +1005,13 @@ export const definition: GameDefinition = {
       ],
     },
     {
+      id: 'low-resource',
+      name: 'Low-resource alliance',
+      description:
+        'A KitBot, an Everybot and a budget elevator: the trough, the PROCESSOR (with Coopertition, the CORAL RP needs only 3 levels) and a hope of a CAGE.',
+      robots: [{ archetype: 'kitbot' }, { archetype: 'everybot' }, { archetype: 'budget-elevator' }],
+    },
+    {
       id: 'rookies',
       name: 'Rookie alliance',
       description: 'Three KitBots: CORAL in the trough from the CORAL STATION, and the occasional breakdown.',
@@ -971,6 +1032,16 @@ export const definition: GameDefinition = {
       description:
         'Clears the REEF ALGAE (which opens L2 and L3 for its partners) and scores it; a CORAL counts half.',
       targetWeights: { ...weights(CORAL_IDS, 0.5), processor: 1.5, net: 1.5 },
+    },
+    {
+      id: 'trough',
+      name: 'Trough filler',
+      description:
+        'Fills the trough (L1) for the CORAL RP, as real alliances gave one robot that job: an L1 CORAL counts three times what the planner would give it.',
+      targetWeights: weights(
+        CORAL_IDS.filter((id) => id.startsWith('l1-')),
+        3,
+      ),
     },
     {
       id: 'station-defense',

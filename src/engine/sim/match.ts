@@ -57,6 +57,17 @@ export interface RobotCommand {
    * shooter with a `passRange`, teleop, and a spot the game allows passing from.
    */
   pass?: Vec2;
+  /**
+   * At a station whose piece can be knocked off (`HumanPlayerStation.knockOff`), knock it to the
+   * floor instead of taking it. A robot that can't hold the piece knocks it off without asking.
+   */
+  knock?: boolean;
+  /**
+   * The station a bot means to load from now ('' for none). A piece resting on a structure
+   * (`HumanPlayerStation.knockOff`) goes only to a robot loading from that station, so a bot scoring
+   * beside it with its intake up doesn't sweep it up. Undefined (a player): any station it stands in.
+   */
+  loadFrom?: string;
 }
 
 export const IDLE: RobotCommand = Object.freeze({
@@ -1171,7 +1182,10 @@ export class Match {
     return this.referee?.pinCounts(r) ?? [];
   }
 
-  /** Stations whose zone the robot is in and that could feed it a piece. */
+  /**
+   * Stations whose zone the robot is in and that could feed it a piece (or whose piece it could knock
+   * off, `HumanPlayerStation.knockOff`).
+   */
   stationsFor(r: Robot): XStation[] {
     if (r.mechDown) return [];
     return this.game.stations.filter(
@@ -1179,18 +1193,34 @@ export class Match {
         (!st.alliance || st.alliance === r.alliance) &&
         canReachHandoff(r, st) &&
         pointInRegion(r, st.zone) &&
-        st.pieceTypes.some((t) => r.canHold(t)),
+        (st.pieceTypes.some((t) => r.canHold(t)) || (st.knockOff === true && !!r.archetype.intake)),
     );
+  }
+
+  /** Whether `r` would knock this station's piece off rather than take it (`knockOff`). */
+  knocks(r: Robot, st: XStation): boolean {
+    return st.knockOff === true && (r.command.knock === true || !st.pieceTypes.some((t) => r.canHold(t)));
   }
 
   private tryStation(r: Robot, dt: number): void {
     const here = this.stationsFor(r);
     if (here.length === 0) r.stationDwell = 0;
     for (const st of here) {
+      if (st.knockOff && r.command.loadFrom !== undefined && r.command.loadFrom !== st.id) continue;
       const key = `${st.id}:${r.alliance}`;
       if ((this.stationCooldown.get(key) ?? 0) > 0) continue;
       const used = this.stationUsed.get(key) ?? 0;
       if (st.supply !== undefined && used >= st.supply) continue;
+      if (this.knocks(r, st)) {
+        if (r.intakeCooldown > 0 || !r.archetype.intake) continue;
+        r.stationDwell += dt; // reaching the piece
+        if (r.stationDwell < (st.handoffSec ?? 0)) return;
+        r.stationDwell = 0;
+        this.knockOff(r, st);
+        this.stationUsed.set(key, used + 1);
+        this.stationCooldown.set(key, st.feedIntervalSec);
+        return;
+      }
       const want = r.command.pieceType;
       const type =
         st.choice && want !== undefined && st.pieceTypes.includes(want) && r.canHold(want)
@@ -1213,6 +1243,36 @@ export class Match {
       this.stationCooldown.set(key, st.feedIntervalSec);
       return;
     }
+  }
+
+  /**
+   * A robot knocks a station's piece off its structure (`knockOff`): it rolls off one side of the
+   * robot (whichever the match's random stream picks) and falls to the floor, a loose piece.
+   */
+  private knockOff(r: Robot, st: XStation): void {
+    const type = st.pieceTypes[0]!;
+    const from = st.display!;
+    // Out of the structure: from where the piece rests toward the robot.
+    const ox = r.x - from.x;
+    const oy = r.y - from.y;
+    const d = Math.hypot(ox, oy) || 1;
+    const out = { x: ox / d, y: oy / d };
+    const side = this.random() < 0.5 ? -1 : 1;
+    const lat = { x: -out.y * side, y: out.x * side };
+    const radius = this.def.pieces.find((p) => p.id === type)?.shape;
+    const pr = radius?.kind === 'sphere' ? radius.radius : 0.15;
+    const off = r.archetype.frame.width / 2 + pr + 0.05;
+    this.spawnPiece(
+      type,
+      { x: from.x + out.x * 0.2 + lat.x * off, y: from.y + out.y * 0.2 + lat.y * off, z: from.z },
+      { x: out.x * 0.6 + lat.x * 0.8, y: out.y * 0.6 + lat.y * 0.8, z: 0 },
+    );
+    r.intakeCooldown = 0.5;
+  }
+
+  /** Extra points the game's rules tell bots clearing station `stationId` is worth (`botStationValue`). */
+  botStationValue(alliance: Alliance, stationId: string): number {
+    return this.def.rules?.botStationValue?.(this.rulesCtx, alliance, stationId) ?? 0;
   }
 
   /** A target is open to this robot now: enabled, not full, and its alliance's (or a scorer-credit one). */
@@ -1238,9 +1298,9 @@ export class Match {
    * Seconds the robot's drive team adds to each pickup and placement now (`RobotArchetype.alignSec`):
    * teleop only, since auto routines are programmed, and not for `alignExempt` robots.
    */
-  alignSec(r: Robot): number {
+  alignSec(r: Robot, target?: { alignScale?: number }): number {
     if (this.scoringPeriod !== 'teleop' || this.alignExempt.has(r.id)) return 0;
-    return (r.archetype.alignSec ?? 0) * r.alignScale;
+    return (r.archetype.alignSec ?? 0) * r.alignScale * (target?.alignScale ?? 1);
   }
 
   /** Place targets this robot can start placing on right now, best first. */
@@ -1252,7 +1312,7 @@ export class Match {
       if (!t.place || !this.canUseTarget(r, ts)) continue;
       const mech = r.placeTime(t);
       if (mech === null) continue;
-      const time = mech + this.alignSec(r);
+      const time = mech + this.alignSec(r, t);
       const pieceType = r.held.find((h) => t.accepts.includes(h));
       if (!pieceType) continue;
       if (!pointInRegion(r, t.place.zone)) continue;

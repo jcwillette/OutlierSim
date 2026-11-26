@@ -125,6 +125,7 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
     const path = `stations[${i}] ${s.id}`;
     for (const a of s.pieceTypes) if (!pieceIds.has(a)) err(path, `unknown piece type '${a}'`);
     if (s.mode === 'drop' && !s.dropPoint) err(path, "mode 'drop' needs dropPoint");
+    if (s.knockOff && (!s.display || s.supply === undefined)) err(path, 'knockOff needs display and supply');
     if (s.feedIntervalSec <= 0) err(path, 'feedIntervalSec must be > 0');
     if (s.choice && s.pieceTypes.length < 2) warn(path, 'choice only matters with two or more piece types');
     checkRegion(`${path}.zone`, s.zone);
@@ -266,6 +267,9 @@ export function validateDefinition(def: GameDefinition): ValidationIssue[] {
         err(path, 'auto.pieces must be a whole number, 0 or more');
       if (success !== undefined && !(success >= 0 && success <= 1))
         err(path, 'auto.success must be between 0 and 1');
+      const driveOut = a.auto.driveOut;
+      if (driveOut !== undefined && !(driveOut >= 0 && driveOut <= 1))
+        err(path, 'auto.driveOut must be between 0 and 1');
     }
     if (a.intake && !(a.intake.timeSec >= 0)) err(path, 'intake.timeSec must be 0 or more');
     if (a.alignSec !== undefined && !(a.alignSec >= 0)) err(path, 'alignSec must be 0 or more');
