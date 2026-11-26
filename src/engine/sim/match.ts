@@ -1789,6 +1789,7 @@ export class Match {
       },
       foul: (against, severity, reason) => m.addFoul(against, severity, reason),
       targetCount: (id) => m.targets.get(id)?.count ?? 0,
+      stationUsed: (id, alliance) => m.stationUsed.get(`${id}:${alliance}`) ?? 0,
       setTargetEnabled: (id, enabled) => {
         const ts = m.targets.get(id);
         if (ts) ts.enabled = enabled;

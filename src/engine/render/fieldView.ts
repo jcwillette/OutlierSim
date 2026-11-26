@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
 import { restHeight, type ExpandedGame, type XElement } from '../sim/expand.ts';
-import { regionOutline } from '../sim/math.ts';
+import { eulerToQuat, regionOutline } from '../sim/math.ts';
 import type { Match, Piece, Robot } from '../sim/match.ts';
 import type { Alliance, PieceShape, Region2D } from '../sim/types.ts';
 
@@ -131,6 +131,8 @@ export class FieldView {
   private readonly pieceGeo = new Map<string, THREE.BufferGeometry>();
   private readonly pieceMat = new Map<string, THREE.Material>();
   private readonly endgameZones: THREE.Object3D[] = [];
+  /** Pieces drawn resting at supply-limited stations (`HumanPlayerStation.display`), by station. */
+  private readonly stationPieces: Array<{ key: string; supply: number; mesh: THREE.Mesh }> = [];
   private readonly playerRing: THREE.Mesh;
 
   constructor(
@@ -212,6 +214,18 @@ export class FieldView {
     }
     for (const st of game.stations) {
       this.scene.add(outline(st.zone, st.alliance ? ALLIANCE_COLOR[st.alliance] : 0xffffff, 0.006, 0.8));
+      const type = game.def.pieces.find((p) => p.id === st.pieceTypes[0]);
+      if (st.display && type) {
+        const mesh = new THREE.Mesh(
+          pieceGeometry(type.shape),
+          new THREE.MeshStandardMaterial({ color: type.color, roughness: 0.5 }),
+        );
+        mesh.position.set(st.display.x, st.display.y, st.display.z);
+        mesh.castShadow = true;
+        this.scene.add(mesh);
+        // A station shared by both alliances (no `alliance`) is drawn until either has used it up.
+        this.stationPieces.push({ key: `${st.id}:${st.alliance ?? 'blue'}`, supply: st.supply ?? 1, mesh });
+      }
     }
     for (const a of game.endgame) {
       for (const z of a.zones) {
@@ -380,13 +394,18 @@ export class FieldView {
     for (const p of match.pieces) {
       const m = this.pieceMesh(p);
       if (p.status === 'scored' && p.scoredIn) {
-        const at = match.targets.get(p.scoredIn)?.target.display;
+        const target = match.targets.get(p.scoredIn)?.target;
+        const at = target?.display;
         m.visible = !!at;
-        if (at) {
+        if (at && target) {
           const n = stacked.get(p.scoredIn) ?? 0;
           stacked.set(p.scoredIn, n + 1);
-          m.position.set(at.x, at.y, at.z + n * 2 * restHeight(p.type.shape));
-          m.quaternion.identity();
+          const step = target.displayStep ?? { x: 0, y: 0, z: 2 * restHeight(p.type.shape) };
+          m.position.set(at.x + n * step.x, at.y + n * step.y, at.z + n * step.z);
+          if (target.displayRotation) {
+            const q = eulerToQuat(target.displayRotation);
+            m.quaternion.set(q.x, q.y, q.z, q.w);
+          } else m.quaternion.identity();
         }
         continue;
       }
@@ -397,6 +416,7 @@ export class FieldView {
       m.position.set(t.x, t.y, t.z);
       m.quaternion.set(q.x, q.y, q.z, q.w);
     }
+    for (const sp of this.stationPieces) sp.mesh.visible = (match.stationUsed.get(sp.key) ?? 0) < sp.supply;
     const pulse = match.isEndgame ? 0.6 + 0.4 * Math.sin(match.time * 6) : 0.35;
     for (const o of this.endgameZones) {
       const mat = (o as THREE.LineLoop).material as THREE.LineBasicMaterial;

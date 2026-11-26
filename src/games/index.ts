@@ -5,6 +5,7 @@ import { calibration as chargedUp2023Calibration } from './2023-chargedup/calibr
 import { definition as chargedUp2023 } from './2023-chargedup/definition.ts';
 import { calibration as crescendo2024Calibration } from './2024-crescendo/calibration.ts';
 import { definition as crescendo2024 } from './2024-crescendo/definition.ts';
+import { definition as reefscape2025 } from './2025-reefscape/definition.ts';
 
 /**
  * Every playable game. Add new seasons here (newest first). `hidden` games are left out of the
@@ -18,6 +19,9 @@ export interface GameEntry {
 }
 
 export const GAMES: GameEntry[] = [
+  // Built blind from the official 2025 materials as of January 2025 (manual, field drawings), with
+  // only the 2023 and 2024 builds as reference models: see its SOURCES.md. No real-match data.
+  { definition: reefscape2025 },
   // Built blind from the kickoff manual (6 Jan 2024), then calibrated to the real 2024 season on the
   // owner's request: see its SOURCES.md and CALIBRATION.md.
   { definition: crescendo2024, calibration: crescendo2024Calibration },

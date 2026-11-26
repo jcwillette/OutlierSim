@@ -656,18 +656,18 @@ export class BotBrain implements RobotController {
         if (this.claimedByOther(m, r, `piece:${p.id}`)) continue;
         best = Math.min(best, this.travelBetween(r, from, p.position) + grab + 0.8);
       }
-      if (m.phase !== 'auto')
-        for (const st of m.game.stations) {
-          if ((st.alliance && st.alliance !== r.alliance) || !canReachHandoff(r, st)) continue;
-          if (!st.pieceTypes.some((t) => intake.pieceTypes.includes(t))) continue;
-          const used = m.stationUsed.get(`${st.id}:${r.alliance}`) ?? 0;
-          if (st.supply !== undefined && used >= st.supply) continue;
-          const c = regionCenter(st.zone);
-          best = Math.min(
-            best,
-            this.travelBetween(r, from, c) + st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + grab + 0.8,
-          );
-        }
+      for (const st of m.game.stations) {
+        if (m.phase === 'auto' && !st.auto) continue; // human players feed in teleop
+        if ((st.alliance && st.alliance !== r.alliance) || !canReachHandoff(r, st)) continue;
+        if (!st.pieceTypes.some((t) => intake.pieceTypes.includes(t))) continue;
+        const used = m.stationUsed.get(`${st.id}:${r.alliance}`) ?? 0;
+        if (st.supply !== undefined && used >= st.supply) continue;
+        const c = regionCenter(st.zone);
+        best = Math.min(
+          best,
+          this.travelBetween(r, from, c) + st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + grab + 0.8,
+        );
+      }
     }
     const t = Number.isFinite(best) ? best : 0;
     this.refillCache.set(key, t);
@@ -762,6 +762,7 @@ export class BotBrain implements RobotController {
       if (nearProtectedZone(m, pos, other(r.alliance), halfSize(r), false)) continue;
       if (this.blacklist.has(p.id) && (this.blacklist.get(p.id) ?? 0) > m.time) continue;
       if (this.leaveForTeammates(m, r, pos)) continue;
+      if (acrossLine(m, r.alliance, pos) && teammateAcross(m, r)) continue;
       const approachYaw = this.approachYaw(m, r, pos);
       if (approachYaw === null) continue; // no way to get an intake on it (e.g. against a wall)
       const point = { x: pos.x, y: pos.y };
@@ -778,7 +779,7 @@ export class BotBrain implements RobotController {
       });
     }
     for (const st of m.game.stations) {
-      if (m.phase === 'auto') break; // human players feed in teleop
+      if (m.phase === 'auto' && !st.auto) continue; // human players feed in teleop
       if (st.alliance && st.alliance !== r.alliance) continue;
       if (!canReachHandoff(r, st)) continue;
       if ((this.spotBlacklist.get(st.id) ?? 0) > m.time) continue;
@@ -972,12 +973,22 @@ export class BotBrain implements RobotController {
     }
     // Stick with the robot already marked unless another is clearly a better use of the time.
     const o = kept > 0 && best && best.u < kept * MARK_HYSTERESIS ? m.robots[current]! : best?.o;
-    if (o) return { plan: { kind: 'defend', opponentId: o.id, point: standPoint(m, r, o) }, utility: 1 };
+    // Only one robot at a time on the opponent's side (`oneAcrossLine`): wait for a teammate there.
+    const across = teammateAcross(m, r);
+    if (o) {
+      const point = standPoint(m, r, o);
+      if (!(across && acrossLine(m, r.alliance, point)))
+        return { plan: { kind: 'defend', opponentId: o.id, point }, utility: 1 };
+    }
     // Nobody who could carry a piece past us (all defending, broken or done): score instead.
     const scorers = m.robots.some(
       (x) => x.alliance !== r.alliance && !x.endgameDone && !x.brokenDown && !x.mechDown && !isDefending(x),
     );
-    return scorers ? { plan: { kind: 'guard', point: this.guardPost(m, r) }, utility: 0 } : null;
+    if (!scorers) return null;
+    const post = this.guardPost(m, r);
+    return across && acrossLine(m, r.alliance, post)
+      ? null
+      : { plan: { kind: 'guard', point: post }, utility: 0 };
   }
 
   /**
@@ -1236,6 +1247,7 @@ export class BotBrain implements RobotController {
       const d = Math.hypot(o.x - r.x, o.y - r.y);
       if (d > 3.5) continue;
       const point = standPoint(m, r, o);
+      if (acrossLine(m, r.alliance, point) && teammateAcross(m, r)) continue;
       // Only worth it if they're actually heading home with it.
       const home = { x: o.alliance === 'blue' ? 0 : m.def.field.length, y: o.y };
       if ((home.x - o.x) * o.vx < 0) continue;
@@ -2123,6 +2135,19 @@ export function zoneCheck(region: Region2D): ZoneCheck {
 }
 
 /** A bot that is defending (role or current plan): not worth defending against. */
+/** Past the game's "one robot at a time" line on `a`'s opponent's side (`BotHints.oneAcrossLine`). */
+function acrossLine(m: Match, a: Alliance, p: Vec2): boolean {
+  const line = m.def.botHints?.oneAcrossLine;
+  if (line === undefined) return false;
+  return a === 'blue' ? p.x > line : p.x < m.def.field.length - line;
+}
+
+/** A teammate of `r` is already past the "one robot at a time" line (it counts, broken or not). */
+function teammateAcross(m: Match, r: Robot): boolean {
+  if (m.def.botHints?.oneAcrossLine === undefined) return false;
+  return m.robots.some((o) => o !== r && o.alliance === r.alliance && acrossLine(m, r.alliance, o));
+}
+
 function isDefending(o: Robot): boolean {
   const b = o.controller instanceof BotBrain ? o.controller : null;
   return !!b && (b.defends || b.currentPlan.kind === 'defend');
