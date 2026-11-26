@@ -8,6 +8,7 @@ import {
   type Robot,
   type RobotCommand,
 } from '../src/engine/sim/index.ts';
+import { calibration } from '../src/games/2025-reefscape/calibration.ts';
 import { definition } from '../src/games/2025-reefscape/definition.ts';
 import {
   ALGAE_HIGH,
@@ -98,7 +99,7 @@ describe('2025 Reefscape: REEF ALGAE', () => {
   });
 
   it('taking a face’s ALGAE opens its BRANCHES; a short arm reaches only the low ALGAE', () => {
-    const m = teleopMatch({ 0: 'elevator', 1: 'l2-scorer' });
+    const m = teleopMatch({ 0: 'elevator', 1: 'budget-elevator' });
     const [tall, short] = [m.robots[0]!, m.robots[1]!];
     park(m, [tall, short]);
     const high = FACES.find((k) => ALGAE_HIGH(k))!;
@@ -109,7 +110,7 @@ describe('2025 Reefscape: REEF ALGAE', () => {
     stepFor(m, 1.5);
     expect(tall.held).toContain('algae');
     expect(m.targets.get(`${branchId('L3', high, 1)}.blue`)!.enabled).toBe(true);
-    // The trough-and-L2 robot can't reach the high position...
+    // The budget elevator's ALGAE reach stops short of the high position...
     const high2 = FACES.find((k) => ALGAE_HIGH(k) && k !== high)!;
     atFace(short, high2);
     short.controller = ctl(() => ({ intake: true }));
@@ -121,6 +122,60 @@ describe('2025 Reefscape: REEF ALGAE', () => {
     expect(short.held).toContain('algae');
     expect(m.targets.get(`${branchId('L2', low, -1)}.blue`)!.enabled).toBe(true);
     expect(m.targets.get(`${branchId('L3', low, -1)}.blue`)!.enabled).toBe(true);
+  });
+
+  it('a robot that can’t hold the ALGAE knocks it to the floor, which opens the BRANCHES too', () => {
+    const m = teleopMatch({ 0: 'elevator' }, { coral: 1 });
+    const r = m.robots[0]!;
+    park(m, [r]);
+    const low = FACES.find((k) => !ALGAE_HIGH(k))!;
+    // Holding a CORAL and an ALGAE already: no room for this one.
+    r.held.push('algae');
+    atFace(r, low);
+    r.controller = ctl(() => ({ intake: true }));
+    stepFor(m, 1.5);
+    expect(r.held).toEqual(['coral', 'algae']);
+    expect(m.targets.get(`${branchId('L3', low, 1)}.blue`)!.enabled).toBe(true);
+    stepFor(m, 2);
+    const loose = m.pieces.filter((p) => p.type.id === 'algae' && p.status === 'field');
+    expect(loose.length).toBe(1);
+    expect(loose[0]!.position.z).toBeLessThan(0.3); // on the carpet
+  });
+
+  it('a robot asked to knock it off does, even with room for it', () => {
+    const m = teleopMatch({ 0: 'elevator' });
+    const r = m.robots[0]!;
+    park(m, [r]);
+    atFace(r, FACES[0]!);
+    r.controller = ctl(() => ({ intake: true, knock: true }));
+    stepFor(m, 1.5);
+    expect(r.held).toEqual([]);
+    expect(m.targets.get(`${branchId('L3', FACES[0]!, 1)}.blue`)!.enabled).toBe(true);
+  });
+
+  it('a bot scoring beside a REEF ALGAE with its intake up doesn’t sweep it up (loadFrom)', () => {
+    const m = teleopMatch({ 0: 'elevator' });
+    const r = m.robots[0]!;
+    park(m, [r]);
+    const k = FACES[1]!;
+    atFace(r, k);
+    r.controller = ctl(() => ({ intake: true, loadFrom: '' }));
+    stepFor(m, 1.5);
+    expect(r.held).toEqual([]);
+    expect(m.targets.get(`${branchId('L3', k, 1)}.blue`)!.enabled).toBe(false);
+    r.controller = ctl(() => ({ intake: true, loadFrom: `reef-algae-${k}.blue` }));
+    stepFor(m, 1.5);
+    expect(r.held).toEqual(['algae']);
+  });
+
+  it('bots count the BRANCHES a REEF ALGAE blocks as worth clearing, in TELEOP only', () => {
+    const m = teleopMatch();
+    const value = (k: number) => m.botStationValue('blue', `reef-algae-${k}.blue`);
+    const high = FACES.find((kk) => ALGAE_HIGH(kk))!;
+    const low = FACES.find((kk) => !ALGAE_HIGH(kk))!;
+    expect(value(low)).toBeGreaterThan(value(high)); // L2 and L3 against L3 alone
+    expect(value(high)).toBeGreaterThan(0);
+    expect(m.botStationValue('blue', 'coral-station-left.blue')).toBe(0);
   });
 });
 
@@ -163,6 +218,25 @@ describe('2025 Reefscape: PROCESSOR and the HUMAN PLAYER', () => {
     // stands behind blue's PROCESSOR).
     expect(loose[0]!.position.x).toBeGreaterThan(5);
     expect(loose[0]!.position.x).toBeLessThan(BARGE_ZONE.min.x);
+  });
+
+  it('bots play for Coopertition only when their alliance agreed to, and never put ALGAE in AUTO', () => {
+    let willing = 0;
+    let unwilling = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const m = new Match({ ...definition, staging: [] }, { seed });
+      m.start();
+      while (m.phase !== 'teleop') m.step();
+      const v = m.botValue('blue', 'processor.blue');
+      if (v > 0) willing++;
+      else unwilling++;
+    }
+    expect(willing).toBeGreaterThan(3);
+    expect(unwilling).toBeGreaterThan(willing);
+    const m = new Match({ ...definition, staging: [] }, { seed: 1 });
+    m.start();
+    expect(m.botValue('blue', 'net.blue')).toBeLessThan(-4);
+    expect(m.botValue('blue', 'processor.blue')).toBeLessThan(-4);
   });
 
   it('the HUMAN PLAYER doesn’t throw in AUTO (G404)', () => {
@@ -255,5 +329,33 @@ describe('2025 Reefscape: ranking points', () => {
     expect(
       barge(s(), s({ foulCalls: { 'G428 contact with an opponent on its CAGE in the last 20 s': 1 } })),
     ).toBe(true);
+  });
+});
+
+describe('2025 Reefscape: calibration (TBA REEF accounting)', () => {
+  const metric = (name: string) => calibration.metrics.find((m) => m.name === name)!;
+  const nodes = (...on: string[]) =>
+    Object.fromEntries('ABCDEFGHIJKL'.split('').map((n) => [`node${n}`, on.includes(n)]));
+  // Two L4 CORAL in AUTO (A, B), one later knocked off (B); TELEOP adds C and D on L4, one on L2,
+  // and 3 in the trough on top of 1 from AUTO.
+  const b = {
+    autoReef: { topRow: nodes('A', 'B'), midRow: nodes(), botRow: nodes(), trough: 1 },
+    teleopReef: { topRow: nodes('A', 'C', 'D'), midRow: nodes(), botRow: nodes('E'), trough: 3 },
+    autoPoints: 17,
+    teleopCoralPoints: 19,
+  };
+  it('counts TELEOP CORAL as what was added after AUTO, so each CORAL counts once', () => {
+    expect(metric('Auto CORAL').real(b, 0, {})).toBe(3);
+    expect(metric('Auto CORAL on L4').real(b, 0, {})).toBe(2);
+    expect(metric('Teleop CORAL on L4').real(b, 0, {})).toBe(2);
+    expect(metric('Teleop CORAL on L2').real(b, 0, {})).toBe(1);
+    expect(metric('Teleop CORAL on L1').real(b, 0, {})).toBe(3);
+    // TBA's own TELEOP CORAL points agree: 2 × 5 (L4) + 3 (L2) + 3 × 2 (trough).
+    expect(2 * 5 + 3 + 3 * 2).toBe(b.teleopCoralPoints);
+  });
+  it('reads Coopertition per alliance, and both alliances from the opponent’s breakdown', () => {
+    const coop = metric('Coopertition, both alliances (share)');
+    expect(coop.real({ coopertitionCriteriaMet: true }, 0, { coopertitionCriteriaMet: true })).toBe(1);
+    expect(coop.real({ coopertitionCriteriaMet: true }, 0, { coopertitionCriteriaMet: false })).toBe(0);
   });
 });
