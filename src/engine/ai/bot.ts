@@ -76,7 +76,7 @@ export const SKILL: Record<Difficulty, Skill> = {
 type Plan =
   | { kind: 'acquire'; pieceId: number; point: Vec2; approachYaw: number }
   /** `pieceType`: what to ask for at a station that offers a `choice`. */
-  | { kind: 'station'; stationId: string; point: Vec2; pieceType?: string }
+  | { kind: 'station'; stationId: string; point: Vec2; pieceType?: string; knock?: boolean }
   | { kind: 'place'; targetId: string; point: Vec2; face?: Vec2 }
   | { kind: 'shoot'; targetId: string; point: Vec2; aim: Vec2 }
   /** Feeder: lob the held piece from `point` so it lands at `to` (`GameDefinition.passing`). */
@@ -373,7 +373,7 @@ export class BotBrain implements RobotController {
    * The archetype's auto routine this match (`RobotArchetype.auto`), set on the first auto tick:
    * whether it runs, and the robot's intake count and held pieces then, to count pieces it let go.
    */
-  private autoRun: { runs: boolean; intakes: number; held: number } | null = null;
+  private autoRun: { runs: boolean; leaveOnly: boolean; intakes: number; held: number } | null = null;
 
   constructor(opts: BotOptions = {}) {
     this.skill = SKILL[opts.difficulty ?? 'normal'];
@@ -392,8 +392,11 @@ export class BotBrain implements RobotController {
     if (!this.autoRun) {
       const chance = auto.success ?? 1;
       const runs = !this.autoCanFail || chance >= 1 || m.random() < chance;
-      this.autoRun = { runs, intakes: r.stats.intakes, held: r.held.length };
+      // A routine that doesn't run may still drive forward out of the starting zone (`driveOut`).
+      const leaveOnly = !runs && (auto.driveOut ?? 0) > 0 && m.random() < auto.driveOut!;
+      this.autoRun = { runs: runs || leaveOnly, leaveOnly, intakes: r.stats.intakes, held: r.held.length };
     }
+    if (this.autoRun.leaveOnly) return { runs: true, piecesLeft: 0 };
     // Pieces that left the robot since auto started (scored, shot or dropped).
     const used = r.stats.intakes - this.autoRun.intakes + this.autoRun.held - r.held.length;
     return { runs: this.autoRun.runs, piecesLeft: (auto.pieces ?? Infinity) - used };
@@ -520,8 +523,13 @@ export class BotBrain implements RobotController {
         const piece = m.pieces[p.pieceId];
         return !!piece && piece.status === 'field' && r.canHold(piece.type.id);
       }
-      case 'station':
+      case 'station': {
+        if (p.knock) {
+          const st = m.game.stations.find((x) => x.id === p.stationId)!;
+          return (m.stationUsed.get(`${st.id}:${r.alliance}`) ?? 0) < (st.supply ?? Infinity);
+        }
         return r.held.length < r.totalCapacity && (p.pieceType === undefined || r.canHold(p.pieceType));
+      }
       case 'place':
       case 'shoot': {
         const ts = m.targets.get(p.targetId);
@@ -603,7 +611,7 @@ export class BotBrain implements RobotController {
       const pts = (t.points[per] + m.botValue(r.alliance, t.id)) * this.weight(m, t);
       const placeTime = t.place ? r.placeTime(t) : null;
       if (t.place && placeTime !== null)
-        consider(pts, this.travelBetween(r, from, regionCenter(t.place.zone)) + placeTime + m.alignSec(r));
+        consider(pts, this.travelBetween(r, from, regionCenter(t.place.zone)) + placeTime + m.alignSec(r, t));
       const sh = r.archetype.shooter;
       if (t.aperture && sh?.pieceTypes.includes(type)) {
         const spot = shotSpots(m, r, t).nearest(from);
@@ -614,10 +622,10 @@ export class BotBrain implements RobotController {
   }
 
   /** Utility of fetching a piece of `type` at `at`: points per second over the whole resulting cycle. */
-  private fetchUtility(m: Match, r: Robot, at: Vec2, type: string, fetchTime: number): number {
+  private fetchUtility(m: Match, r: Robot, at: Vec2, type: string, fetchTime: number, bonus = 0): number {
     const trip = this.scoreTrip(m, r, at, type);
     if (!trip) return 0;
-    let pts = trip.pts;
+    let pts = bonus === 0 ? trip.pts : trip.pts + bonus;
     let time = this.travelTime(m, r, at) + fetchTime + trip.time;
     // Pieces already held get scored on the same trip (roughly one extra action each).
     for (const h of r.held) {
@@ -695,7 +703,7 @@ export class BotBrain implements RobotController {
       if ((this.spotBlacklist.get(t.id) ?? 0) > m.time) continue;
       if (t.place && r.held.some((h) => t.accepts.includes(h))) {
         const mech = r.placeTime(t);
-        const time = mech === null ? null : mech + m.alignSec(r);
+        const time = mech === null ? null : mech + m.alignSec(r, t);
         if (time !== null) {
           const point = gridFor(m, r).nearestFree(regionCenter(t.place.zone));
           if (pointInRegion(point, t.place.zone) && !this.spotTaken(m, r, point)) {
@@ -793,6 +801,8 @@ export class BotBrain implements RobotController {
       const wait =
         (this.claimedByOther(m, r, claim) ? st.feedIntervalSec * 2 : 0) +
         (this.teammateHeadedTo(m, r, point) ? 3 : 0);
+      // What clearing the station is worth on top of the piece (`GameRules.botStationValue`).
+      const clear = m.def.rules?.botStationValue ? m.botStationValue(r.alliance, st.id) : 0;
       // A station that lets the robot choose: weigh each piece it could ask for. Otherwise it hands
       // out the first type the robot can hold.
       for (const type of st.choice ? types : types.slice(0, 1)) {
@@ -805,10 +815,46 @@ export class BotBrain implements RobotController {
               point,
               type,
               st.feedIntervalSec * 0.5 + (st.handoffSec ?? 0) + grab + 0.8 + wait,
+              clear,
             ) * this.noise(m),
           claim,
         });
       }
+    }
+    return out;
+  }
+
+  /**
+   * Knocking a piece off a structure to clear it (`HumanPlayerStation.knockOff`): worth what the
+   * game's rules say clearing it is (`GameRules.botStationValue`), over the time it takes. Needs no
+   * room for the piece. Teleop, and only for games that value clearing.
+   */
+  private knockOptions(m: Match, r: Robot): Option[] {
+    const out: Option[] = [];
+    if (!m.def.rules?.botStationValue || m.phase !== 'teleop' || !r.archetype.intake) return out;
+    const grid = gridFor(m, r);
+    for (const st of m.game.stations) {
+      if (!st.knockOff || (st.alliance && st.alliance !== r.alliance) || !canReachHandoff(r, st)) continue;
+      if ((this.spotBlacklist.get(st.id) ?? 0) > m.time) continue;
+      const used = m.stationUsed.get(`${st.id}:${r.alliance}`) ?? 0;
+      if (used >= (st.supply ?? Infinity)) continue;
+      const clear = m.botStationValue(r.alliance, st.id);
+      if (clear <= 0) continue;
+      const point = grid.nearestFree(regionCenter(st.zone));
+      if (!pointInRegion(point, st.zone)) continue;
+      const claim = `station:${st.id}`;
+      const wait = this.claimedByOther(m, r, claim) || this.teammateHeadedTo(m, r, point) ? 3 : 0;
+      const time =
+        this.travelTime(m, r, point) +
+        (st.handoffSec ?? 0) +
+        r.archetype.intake.timeSec +
+        m.alignSec(r) +
+        wait;
+      out.push({
+        plan: { kind: 'station', stationId: st.id, point, knock: true },
+        utility: (clear / time) * this.noise(m),
+        claim,
+      });
     }
     return out;
   }
@@ -857,7 +903,7 @@ export class BotBrain implements RobotController {
     switch (p.kind) {
       case 'place': {
         const t = m.targets.get(p.targetId)?.target;
-        return drive + (t ? (r.placeTime(t) ?? 0) : 0) + m.alignSec(r);
+        return drive + (t ? (r.placeTime(t) ?? 0) + m.alignSec(r, t) : m.alignSec(r));
       }
       case 'station': {
         const st = m.game.stations.find((x) => x.id === p.stationId);
@@ -1139,6 +1185,7 @@ export class BotBrain implements RobotController {
     const opts = [
       ...(pass ? [pass] : score ? this.scoreOptions(m, r) : []),
       ...(fetch ? this.acquireOptions(m, r) : []),
+      ...(routine ? [] : this.knockOptions(m, r)),
       ...(harass ? [harass] : []),
     ];
     // Don't start a pickup or placement that would still keep the robot busy when it has to leave
@@ -1493,7 +1540,7 @@ export class BotBrain implements RobotController {
     // An auto routine that has all the pieces it will score keeps its intake up.
     const routine = this.routine(m, r);
     const wants = !routine || routine.piecesLeft > r.held.length;
-    const cmd: RobotCommand = { ...IDLE, intake: wants && r.held.length < r.totalCapacity };
+    const cmd: RobotCommand = { ...IDLE, intake: wants && r.held.length < r.totalCapacity, loadFrom: '' };
     if (this.detour) {
       const s = this.steer(m, r, this.detour, true);
       if (s.dist < 0.3) this.detour = null;
@@ -1531,6 +1578,8 @@ export class BotBrain implements RobotController {
           vy: inside ? 0 : s.vy,
           intake: true,
           ...(p.pieceType ? { pieceType: p.pieceType } : {}),
+          ...(p.knock ? { knock: true } : {}),
+          loadFrom: p.stationId,
         };
       }
       case 'place': {
@@ -1744,7 +1793,12 @@ function samePlan(a: Plan, b: Plan): boolean {
     case 'acquire':
       return b.kind === 'acquire' && a.pieceId === b.pieceId;
     case 'station':
-      return b.kind === 'station' && a.stationId === b.stationId && a.pieceType === b.pieceType;
+      return (
+        b.kind === 'station' &&
+        a.stationId === b.stationId &&
+        a.pieceType === b.pieceType &&
+        a.knock === b.knock
+      );
     case 'place':
       return b.kind === 'place' && a.targetId === b.targetId;
     case 'shoot':
